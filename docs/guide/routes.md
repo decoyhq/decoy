@@ -103,6 +103,38 @@ The default `kind`. All fields are optional:
 | `headers` | none    | string map                                                                          |
 | `body`    | empty   | object/array → JSON with `content-type: application/json` unless set; string → text |
 
+### Templates
+
+Any string in `status`, `headers`, or `body`, at any depth, can use `${ <jmespath> }` over the same
+request shape as [predicates](#predicates). Keys are never templated.
+
+```yaml
+behaviors:
+  echo:
+    status: '${ query.status || `201` }'
+    headers:
+      x-user: 'user-${ pathParams.id }'
+    body:
+      id: '${ pathParams.id }' # exactly one ${ } keeps the type: here a string
+      age: '${ body.age }' # …here a number
+      greeting: 'Hello, ${ body.name }!' # mixed text interpolates (null → "")
+      requestId: '${ uuid() }'
+      literal: '\${ not a template }' # \${ is a literal ${
+```
+
+A templated `status` must render an integer from 100 to 599; otherwise the request gets a `500`
+explaining which Behavior failed. Invalid expressions fail startup, naming the `route:case:behavior`.
+Behaviors without `${` are served as written.
+
+Built-in functions, next to [JMESPath's own](https://jmespath.org/specification.html#built-in-functions):
+
+| function                | returns                                       |
+| ----------------------- | --------------------------------------------- |
+| `uuid()`                | random v4 UUID string                         |
+| `now()` / `now('unix')` | RFC 3339 UTC timestamp / seconds since epoch  |
+| `random_int(min, max)`  | random integer, both bounds inclusive         |
+| `random_item(array)`    | one random element, `null` for an empty array |
+
 ## Passthrough Behavior
 
 Forwards the matched request (method, path and query, headers, body) to a real upstream instead of

@@ -4,6 +4,12 @@ match:
   method: GET
   path: /api/users/{id}
 cases:
+  any:
+    behaviors:
+      generated: # templated from the request: works for every id
+        body:
+          id: '${ pathParams.id }'
+          name: 'User ${ pathParams.id }'
   user-1:
     match:
       pathParams:
