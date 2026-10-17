@@ -10,6 +10,10 @@ use axum::http::{HeaderName, HeaderValue, Request, Response, StatusCode};
 use axum::routing::any;
 use clap::{Parser, Subcommand};
 use decoy_runtime::config::{ServeCliOptions, ServeConfig};
+use decoy_runtime::control_api::{
+    ControlApiRequest, ControlApiResponse, HEALTH_PATH, handle_control_request, is_control_path,
+    session_id,
+};
 use decoy_runtime::engine::{Controller, HttpExecutionOutcome, HttpExecutionRequest};
 use decoy_runtime::http::{
     BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig,
@@ -19,9 +23,6 @@ use decoy_runtime::schema::{HttpMethod, PassthroughTarget};
 use decoy_runtime::startup::load_catalog_from_files;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
-
-const DEFAULT_SESSION: &str = "__decoy_default_session__";
-const SESSION_HEADER: &str = "x-mock-session";
 
 #[derive(Debug, Parser)]
 #[command(name = "decoy")]
@@ -117,20 +118,13 @@ async fn handle_request(
     OriginalUri(uri): OriginalUri,
     request: Request<Body>,
 ) -> Response<Body> {
-    let session = request
-        .headers()
-        .get(SESSION_HEADER)
-        .and_then(|value| value.to_str().ok())
-        .filter(|value| !value.is_empty())
-        .unwrap_or(DEFAULT_SESSION)
-        .to_owned();
-    let method = match http_method(request.method()) {
-        Some(method) => method,
-        None => {
-            return response_from_plan(ResponsePlan::fail_closed_miss("unsupported http method"));
-        }
-    };
+    if uri.path() == HEALTH_PATH && request.method() == axum::http::Method::GET {
+        return json_response(StatusCode::OK, serde_json::json!({ "status": "ok" }));
+    }
+
     let headers = request_headers(request.headers());
+    let session = session_id(&headers);
+    let request_method = request.method().clone();
     let metadata = RequestMetadata {
         original_base_url: original_base_url(&headers),
     };
@@ -142,6 +136,23 @@ async fn handle_request(
                 serde_json::json!({ "error": format!("failed to read request body: {error}") }),
             );
         }
+    };
+
+    if is_control_path(uri.path()) {
+        let response = handle_control_request(
+            &mut *controller.write().await,
+            ControlApiRequest {
+                method: request_method.as_str().to_owned(),
+                path: uri.path().to_owned(),
+                headers,
+                body: Some(String::from_utf8_lossy(&body).into_owned()),
+            },
+        );
+        return control_response(response);
+    }
+
+    let Some(method) = http_method(&request_method) else {
+        return response_from_plan(ResponsePlan::fail_closed_miss("unsupported http method"));
     };
     let controller = controller.read().await.clone();
     let outcome = controller
@@ -175,6 +186,21 @@ fn response_from_execution_outcome(outcome: HttpExecutionOutcome) -> Response<Bo
             }),
         ),
     }
+}
+
+fn control_response(control: ControlApiResponse) -> Response<Body> {
+    let mut response = Response::new(Body::from(control.body));
+    *response.status_mut() =
+        StatusCode::from_u16(control.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
+    for (name, value) in control.headers {
+        if let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(&value),
+        ) {
+            response.headers_mut().insert(name, value);
+        }
+    }
+    response
 }
 
 fn response_from_plan(plan: ResponsePlan) -> Response<Body> {
