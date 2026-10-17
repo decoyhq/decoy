@@ -512,6 +512,89 @@ cases:
     );
 }
 
+#[tokio::test]
+async fn extra_listeners_serve_the_same_routes_and_sessions() {
+    let fixture = Fixture::new();
+    fixture.write_route("who.yaml", route_response("who", "MAIN"));
+    fixture.write_route(
+        "who-alt.yaml",
+        r#"
+id: who-alt
+transport: http
+match: { method: GET, path: /who }
+cases:
+  any:
+    behaviors:
+      ok: { body: ALT }
+"#,
+    );
+    fixture.write_collections(
+        "- id: main\n  routes: [who:any:ok]\n- id: alt\n  routes: [who-alt:any:ok]\n",
+    );
+    let (port, extra) = (unused_port(), unused_port());
+    fixture.write_config(format!(
+        "routes: routes\ncollections: collections.yaml\nport: {port}\nports: {{ grpc: {extra} }}\n"
+    ));
+    let _server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    wait_for_server(port).await;
+    wait_for_server(extra).await;
+
+    let get = |port: u16, session: &'static str| async move {
+        reqwest::Client::new()
+            .get(format!("http://127.0.0.1:{port}/who"))
+            .header("x-mock-session", session)
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap()
+    };
+    assert_eq!(get(extra, "s").await, "MAIN");
+
+    // A Control call on one listener changes the Session on the other.
+    let response = reqwest::Client::new()
+        .post(format!(
+            "http://127.0.0.1:{extra}/__decoy__/control/useCollection"
+        ))
+        .header("x-mock-session", "s")
+        .body(r#"{"collection":"alt"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(get(port, "s").await, "ALT");
+    assert_eq!(get(port, "other").await, "MAIN");
+}
+
+#[test]
+fn taken_extra_port_fails_startup() {
+    let fixture = Fixture::new();
+    fixture.write_route("who.yaml", route_response("who", "MAIN"));
+    fixture.write_collections("- id: main\n  routes: [who:any:ok]\n");
+    let taken = TcpListener::bind("127.0.0.1:0").unwrap();
+    let taken_port = taken.local_addr().unwrap().port();
+    fixture.write_config(format!(
+        "routes: routes\ncollections: collections.yaml\nport: {}\nports: {{ grpc: {taken_port} }}\n",
+        unused_port()
+    ));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_decoy"))
+        .args(["serve", "--config", "decoy.yaml"])
+        .current_dir(fixture.temp.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(&format!(
+            "cannot listen on `ports.grpc` (127.0.0.1:{taken_port})"
+        )),
+        "{stderr}"
+    );
+}
+
 #[derive(Debug)]
 struct CapturedRequest {
     request_line: String,
