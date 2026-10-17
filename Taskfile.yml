@@ -1,0 +1,81 @@
+# One entry point for Rust + JS commands: `task --list`. Each task wraps the plain cargo/pnpm
+# commands documented in CONTRIBUTING.md, so nothing here is required to work on the repo.
+version: '3'
+
+tasks:
+  install:
+    desc: Install JS dependencies
+    cmds:
+      - pnpm install
+
+  build:
+    desc: Build the Rust workspace and every JS package
+    deps: [build:rust, build:js]
+
+  build:rust:
+    internal: true
+    cmds:
+      - cargo build --workspace
+
+  build:js:
+    internal: true
+    cmds:
+      - pnpm build
+
+  test:
+    desc: Run Rust and JS unit/integration tests
+    deps: [test:rust, test:js]
+
+  test:rust:
+    internal: true
+    cmds:
+      - cargo test --workspace
+
+  test:js:
+    internal: true
+    cmds:
+      - pnpm test
+
+  lint:
+    desc: Check formatting and lint (cargo fmt, clippy, ESLint, Prettier)
+    deps: [lint:rust, lint:js]
+
+  lint:rust:
+    internal: true
+    cmds:
+      - cargo fmt --check
+      - cargo clippy --workspace --all-targets -- -D warnings
+
+  lint:js:
+    internal: true
+    cmds:
+      - pnpm check
+
+  fmt:
+    desc: Apply formatters and lint autofixes
+    cmds:
+      - cargo fmt
+      - pnpm fix
+
+  typecheck:
+    desc: Type-check every JS package (TypeScript 7)
+    cmds:
+      - pnpm typecheck
+
+  check:
+    desc: Everything CI gates on (lint, typecheck, tests)
+    cmds:
+      - task: lint
+      - task: typecheck
+      - task: test
+
+  e2e:
+    desc: Build packages and the decoy binary, then run every example's test:e2e
+    cmds:
+      - task: build
+      - pnpm test:e2e
+
+  serve:
+    desc: 'Run decoy serve from source, e.g. task serve -- --config examples/playwright-ts-e2e/mocks/decoy.yaml'
+    cmds:
+      - cargo run --quiet -p decoy-runtime -- serve {{.CLI_ARGS}}

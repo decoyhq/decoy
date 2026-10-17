@@ -14,6 +14,9 @@ pnpm install            # use --frozen-lockfile in CI
 
 ## Commands
 
+With [go-task](https://taskfile.dev) installed, `task --list` shows the shortcuts (`task check` runs
+what CI gates on). Without it, use the underlying commands:
+
 | Command                                                 | What it does                |
 | ------------------------------------------------------- | --------------------------- |
 | `cargo test --workspace`                                | Rust unit/integration tests |
