@@ -1,4 +1,3 @@
-import { createServer } from 'node:http'
 import { describe, expect, test } from '@rstest/core'
 import {
   type DecoyFetch,
@@ -103,52 +102,18 @@ describe('forwardToDecoy', () => {
 })
 
 describe('routeToDecoy', () => {
-  const fetch: DecoyFetch = async () => response(200, {}, '')
-
-  function fakeContext() {
+  test('routes every configured pattern to Decoy', async () => {
     const patterns: Array<string | RegExp> = []
-    return {
-      patterns,
-      context: {
-        route: async (url: string | RegExp) => {
-          patterns.push(url)
-        },
+    const context = {
+      route: async (url: string | RegExp) => {
+        patterns.push(url)
       },
     }
-  }
+    const fetch: DecoyFetch = async () => response(200, {}, '')
 
-  test('leaves browser networking alone when Decoy is not configured or has no urls', async () => {
-    const { context, patterns } = fakeContext()
-    await routeToDecoy(context, fetch, undefined, 's')
-    await routeToDecoy(context, fetch, { url: 'http://127.0.0.1:1' }, 's')
-    expect(patterns).toEqual([])
-  })
+    await routeToDecoy(context, fetch, 'http://127.0.0.1:8080', '**/api/**', 's')
+    await routeToDecoy(context, fetch, 'http://127.0.0.1:8080', ['/a/', /\/graphql$/], 's')
 
-  test('fails clearly when Decoy is configured but unreachable', async () => {
-    const { context } = fakeContext()
-    await expect(
-      routeToDecoy(context, fetch, { url: 'http://127.0.0.1:1', urls: '**/api/**' }, 's'),
-    ).rejects.toThrow(/not reachable at http:\/\/127\.0\.0\.1:1/)
-  })
-
-  test('routes every configured pattern when Decoy is healthy', async () => {
-    const server = createServer((_req, res) => res.writeHead(200).end())
-    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
-    const address = server.address()
-    if (address === null || typeof address === 'string') {
-      throw new Error('expected a TCP address')
-    }
-    const { context, patterns } = fakeContext()
-    try {
-      await routeToDecoy(
-        context,
-        fetch,
-        { url: `http://127.0.0.1:${address.port}`, urls: ['**/api/**', /\/graphql$/] },
-        's',
-      )
-    } finally {
-      await new Promise((done) => server.close(done))
-    }
-    expect(patterns).toEqual(['**/api/**', /\/graphql$/])
+    expect(patterns).toEqual(['**/api/**', '/a/', /\/graphql$/])
   })
 })

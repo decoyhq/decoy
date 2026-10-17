@@ -3,7 +3,7 @@
   // which the build config (./tsconfig.json) deliberately excludes from emit.
   // `typecheck` points here; the build still emits non-test source only.
   "extends": "./tsconfig.json",
-  "compilerOptions": { "noEmit": true },
-  "include": ["src"],
+  "compilerOptions": { "noEmit": true, "rootDir": "." },
+  "include": ["src", "fixtures"],
   "exclude": []
 }
