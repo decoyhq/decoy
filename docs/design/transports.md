@@ -15,7 +15,6 @@ match: <where: transport-specific address>
 pipeline: <optional: how bytes become JSON (ADR 0002)>
 cases:
   <case>:
-    on: request | connect | message | close # which event the Case answers; default per transport
     match: <literal fields and/or ${ } predicates over the envelope, as for HTTP today>
     behaviors:
       <behavior>: <transport-specific outcome, templated, optional delay>
