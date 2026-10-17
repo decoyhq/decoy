@@ -31,13 +31,18 @@ pnpm@11 · Node ≥24. Install with `pnpm install` (use `--frozen-lockfile` in C
 
 ## Commands
 
-| command          | what it does                           |
-| ---------------- | -------------------------------------- |
-| `pnpm build`     | build every workspace package          |
-| `pnpm check`     | ESLint + Prettier check                |
-| `pnpm typecheck` | type-check every package (TS 7 `tsc`)  |
-| `pnpm test`      | unit/integration tests across packages |
-| `pnpm fix`       | ESLint autofix + Prettier write        |
+Prefer [`task`](https://taskfile.dev) (`Taskfile.yml`); each task wraps the plain command shown.
+
+| task                   | runs                                                          |
+| ---------------------- | ------------------------------------------------------------- |
+| `task check`           | `lint` + `typecheck` + `test` — what CI gates on              |
+| `task lint`            | `cargo fmt --check`, `cargo clippy -D warnings`, `pnpm check` |
+| `task fmt`             | `cargo fmt`, `pnpm fix`                                       |
+| `task typecheck`       | `pnpm typecheck` (TS 7 `tsc`)                                 |
+| `task test`            | `cargo test --workspace`, `pnpm test`                         |
+| `task build`           | `cargo build --workspace`, `pnpm build`                       |
+| `task e2e`             | `build`, then every example's `test:e2e`                      |
+| `task serve -- <args>` | `cargo run -p decoy-runtime -- serve <args>`                  |
 
 Examples (`examples/*`) are the e2e tier and run their own `test:e2e` per workspace.
 
