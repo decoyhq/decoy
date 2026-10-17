@@ -232,8 +232,8 @@ cases: # each Case answers an inbound message
 - **Outbound:** `send` items go out in order, each after its own `delay`. A `message` that is an
   object or array is sent as JSON text unless a pipeline encodes it. `close` closes the connection
   afterwards.
-- **Unmatched message:** fail-closed means Decoy sends nothing and records a miss (visible in logs
-  and via `decoy.connection().misses`). The connection stays open (**Q4**).
+- **Unmatched message:** skipped. Decoy sends nothing, logs a miss, and keeps the connection open
+  (**Q4**).
 - **Connecting:** an upgrade to a `ws` Route's path is always accepted, and the server says nothing
   until a message arrives or the test calls `send` (section 9). An upgrade to a path no `ws` Route
   matches is rejected with the HTTP miss.
@@ -308,8 +308,8 @@ content-type: application/json
   item.
 - **Response:** `200 { "delivered": <n> }`. `404` for an unknown Route, `409` for a Route that isn't
   ws/sse/streaming gRPC.
-- **No live connection:** `wait` (milliseconds, optional) holds the call until a connection opens,
-  then delivers; otherwise it returns `delivered: 0` (**Q5**).
+- **No live connection:** the call waits for one up to `timeout` (milliseconds, default 5000), then
+  delivers. On timeout it fails with `408`: something is wrong with the test or app (**Q5**).
 
 ### Playwright
 
@@ -348,8 +348,8 @@ test('shows the approval as soon as the server pushes it', async ({ page, decoy 
 | Q1  | One port for HTTP/WS/SSE/gRPC, or a separate `grpcPort`?          | **Decided:** one port by default (per-request dispatch on `content-type`); extra listeners via config, e.g. `ports: { grpc: 50051 }`.                             |
 | Q2  | Implicit `[grpc-frame, protobuf]` pipeline for gRPC Routes?       | **Decided:** per-transport defaults (gRPC → `[grpc-frame, protobuf]`); an explicit `pipeline` replaces the default entirely, in written order.                    |
 | Q3  | Validate gRPC message literals against the proto at startup?      | **Decided:** yes, wherever a `protobuf` step runs: response literals and literal `match` fields; `${ }` is checked at render time.                                |
-| Q4  | Unmatched WS message: silent + recorded, or close the socket?     | Silent + recorded. Closing would break UIs that send messages the mocks don't care about (heartbeats, analytics).                                                 |
-| Q5  | `send` with no live connection: wait or fail fast?                | `wait` opt-in; the Playwright helper always waits through `decoy.connection()` first, so tests don't race.                                                        |
+| Q4  | Unmatched WS message: silent + recorded, or close the socket?     | **Decided:** skip it: send nothing, log a miss, keep the connection open.                                                                                         |
+| Q5  | `send` with no live connection: wait or fail fast?                | **Decided:** wait for a connection up to `timeout` (default 5 s); fail with `408` on timeout.                                                                     |
 | Q6  | WebSocket routing in Playwright: bridge via `routeWebSocket`?     | **Decided:** yes; the fixture adds the Session header, same as `context.route` for HTTP.                                                                          |
 | Q7  | SSE in Playwright needs app and Decoy on the same protocol. OK?   | OK for now (tests run on http locally); revisit if someone runs https apps under test.                                                                            |
 | Q8  | `__decoy_session` query fallback for browsers outside Playwright? | **Deferred** until non-Playwright runners (Cypress, Selenium) are in scope.                                                                                       |
