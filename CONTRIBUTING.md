@@ -34,6 +34,16 @@ Examples (`examples/*`) are the e2e tier and run their own `test:e2e` per worksp
 - **Don't reach for the real network in tests** — Decoy is fail-closed by default; a test that
   leaks to a live upstream is a bug.
 
+## Releasing
+
+One version covers the `decoy` binary and every published npm package. It lives in
+`[workspace.package]` in `Cargo.toml`; `pnpm check` fails if a package drifts from it.
+
+```sh
+task release -- 0.1.0-alpha.1   # set every version, commit, tag (no push)
+git push --follow-tags          # CI builds and publishes from the tag
+```
+
 ## TypeScript
 
 `tsc` is TypeScript 7 (`@typescript/native` → `typescript@7`). The `typescript` package itself is
