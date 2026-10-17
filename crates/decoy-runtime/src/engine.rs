@@ -75,6 +75,7 @@ impl Catalog {
 
         for route in routes {
             route.validate()?;
+            crate::grpc_schema::check_route(&route, &runtime.protos).map_err(CatalogError::Grpc)?;
             if by_id.insert(route.id.clone(), route).is_some() {
                 return Err(CatalogError::DuplicateRoute);
             }
@@ -374,6 +375,8 @@ pub enum CatalogError {
     Validation(#[from] crate::schema::ValidationError),
     #[error("duplicate route id")]
     DuplicateRoute,
+    #[error("{0}")]
+    Grpc(String),
     #[error(transparent)]
     Collection(#[from] CollectionError),
 }

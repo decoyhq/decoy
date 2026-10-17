@@ -2,8 +2,15 @@
 //! startup against the loaded `DescriptorPool` (design note `docs/design/transports.md` §4, Q3):
 //! the service and method exist, and literal `match.message` / response `message` values fit the
 //! method's input / output types as protobuf JSON. `${ }` strings are skipped (checked at render).
+//!
+//! Response literals may use any form protobuf JSON accepts. Match literals are compared with the
+//! decoded request as [`request_json_options`] renders it, so they must use that canonical form:
+//! camelCase field names, 64-bit integers as strings, enums as names.
 
-use prost_reflect::{DescriptorPool, FieldDescriptor, Kind, MessageDescriptor, MethodDescriptor};
+use prost_reflect::{
+    DescriptorPool, DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, MethodDescriptor,
+    SerializeOptions,
+};
 use serde_json::Value;
 
 use crate::schema::{Behavior, ResponseBehavior, Route, RouteMatch};
@@ -30,6 +37,12 @@ pub const STATUS_CODES: [&str; 17] = [
     "UNAUTHENTICATED",
 ];
 
+/// How a decoded request message becomes the envelope's `message`: protobuf JSON with default
+/// fields included, so a match on a zero value (`priority: 0`, `state: STATE_UNSPECIFIED`) works.
+pub fn request_json_options() -> SerializeOptions {
+    SerializeOptions::new().skip_default_fields(false)
+}
+
 /// Shape of a gRPC response Behavior: `message` (success), or `status` plus an optional `message`
 /// string (error); `metadata` for trailers. No HTTP fields.
 pub fn validate_response(response: &ResponseBehavior) -> Result<(), String> {
@@ -46,11 +59,15 @@ pub fn validate_response(response: &ResponseBehavior) -> Result<(), String> {
             ));
         }
     }
-    match (&response.message, is_error(response)) {
-        (None, _) | (Some(Value::String(_)), true) | (Some(Value::Object(_)), false) => {}
-        (Some(Value::String(text)), false) if text.contains("${") => {}
-        (Some(_), true) => return Err("an error status takes a string `message`".into()),
-        (Some(_), false) => return Err("`message` must be a mapping of response fields".into()),
+    match (&response.message, status_kind(response)) {
+        (None, _)
+        | (Some(Value::String(_)), StatusKind::Error | StatusKind::Templated)
+        | (Some(Value::Object(_)), StatusKind::Ok | StatusKind::Templated) => {}
+        (Some(Value::String(text)), StatusKind::Ok) if text.contains("${") => {}
+        (Some(_), StatusKind::Error) => {
+            return Err("an error status takes a string `message`".into());
+        }
+        (Some(_), _) => return Err("`message` must be a mapping of response fields".into()),
     }
     for value in response.metadata.values() {
         validate_string(value)?;
@@ -58,13 +75,22 @@ pub fn validate_response(response: &ResponseBehavior) -> Result<(), String> {
     response.message.iter().try_for_each(validate_value)
 }
 
-/// A Behavior with a non-`OK` `status` answers with an error; templated statuses count as errors
-/// here, so their `message` is a status string.
-fn is_error(response: &ResponseBehavior) -> bool {
-    response
-        .status
-        .as_ref()
-        .is_some_and(|status| status.as_str() != Some("OK"))
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StatusKind {
+    /// No `status`, or `OK`: `message` is the response message.
+    Ok,
+    /// Any other status name: `message` is the status message.
+    Error,
+    /// Known only at render time; a mapping `message` is a response, a string one a status message.
+    Templated,
+}
+
+fn status_kind(response: &ResponseBehavior) -> StatusKind {
+    match response.status.as_ref().and_then(Value::as_str) {
+        None | Some("OK") => StatusKind::Ok,
+        Some(text) if text.contains("${") => StatusKind::Templated,
+        Some(_) => StatusKind::Error,
+    }
 }
 
 /// Check a gRPC Route against the loaded protos. Errors name the Route, Case, or Behavior and the
@@ -73,6 +99,12 @@ pub fn check_route(route: &Route, pool: &DescriptorPool) -> Result<(), String> {
     let RouteMatch::Grpc(address) = &route.route_match else {
         return Ok(());
     };
+    if route.passthrough.is_some() {
+        return Err(format!(
+            "route `{}`: gRPC Routes do not support passthrough",
+            route.id
+        ));
+    }
     let method = find_method(pool, &address.service, &address.method)
         .map_err(|reason| format!("route `{}`: {reason}", route.id))?;
     if method.is_client_streaming() || method.is_server_streaming() {
@@ -87,23 +119,19 @@ pub fn check_route(route: &Route, pool: &DescriptorPool) -> Result<(), String> {
         if let Some(pattern) = case.case_match.get("message")
             && !is_template(pattern)
         {
-            check_message(pattern, &method.input(), "message")
+            check_message(pattern, &method.input(), "message", Form::Canonical)
                 .map_err(|reason| format!("case `{}:{case_id}` match: {reason}", route.id))?;
         }
         for (behavior_id, behavior) in &case.behaviors {
             let Behavior::Response(response) = behavior else {
                 continue;
             };
-            if is_error(response) {
+            let Some(message @ Value::Object(_)) = &response.message else {
                 continue;
-            }
-            if let Some(message) = &response.message
-                && !is_template(message)
-            {
-                check_message(message, &method.output(), "message").map_err(|reason| {
-                    format!("behavior `{}:{case_id}:{behavior_id}`: {reason}", route.id)
-                })?;
-            }
+            };
+            check_response_message(message, &method.output()).map_err(|reason| {
+                format!("behavior `{}:{case_id}:{behavior_id}`: {reason}", route.id)
+            })?;
         }
     }
     Ok(())
@@ -127,7 +155,41 @@ fn is_template(value: &Value) -> bool {
     value.as_str().is_some_and(|text| text.contains("${"))
 }
 
-fn check_message(value: &Value, message: &MessageDescriptor, path: &str) -> Result<(), String> {
+fn has_template(value: &Value) -> bool {
+    match value {
+        Value::String(text) => text.contains("${"),
+        Value::Array(items) => items.iter().any(has_template),
+        Value::Object(fields) => fields.values().any(has_template),
+        _ => false,
+    }
+}
+
+/// Which protobuf JSON spellings a literal may use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Form {
+    /// Anything protobuf JSON parsing accepts (response literals).
+    Any,
+    /// Only what [`request_json_options`] produces (match literals).
+    Canonical,
+}
+
+/// The field walk gives paths for the common mistakes; a fully literal message is then parsed
+/// for real, which also catches oneof conflicts, bad base64, map keys, and well-known types.
+fn check_response_message(value: &Value, message: &MessageDescriptor) -> Result<(), String> {
+    check_message(value, message, "message", Form::Any)?;
+    if !has_template(value) {
+        DynamicMessage::deserialize(message.clone(), value.clone())
+            .map_err(|error| format!("`message` does not fit {}: {error}", message.full_name()))?;
+    }
+    Ok(())
+}
+
+fn check_message(
+    value: &Value,
+    message: &MessageDescriptor,
+    path: &str,
+    form: Form,
+) -> Result<(), String> {
     let Value::Object(fields) = value else {
         return Err(format!(
             "`{path}` must be a mapping for {}, got {value}",
@@ -135,16 +197,31 @@ fn check_message(value: &Value, message: &MessageDescriptor, path: &str) -> Resu
         ));
     };
     for (key, field_value) in fields {
-        let field = message
-            .get_field_by_json_name(key)
-            .or_else(|| message.get_field_by_name(key))
-            .ok_or_else(|| format!("unknown field `{path}.{key}` in {}", message.full_name()))?;
-        check_field(field_value, &field, &format!("{path}.{key}"))?;
+        let field = message.get_field_by_json_name(key).or_else(|| match form {
+            Form::Any => message.get_field_by_name(key),
+            Form::Canonical => None,
+        });
+        let Some(field) = field else {
+            let hint = match message.get_field_by_name(key) {
+                Some(field) => format!("; match uses the JSON name `{}`", field.json_name()),
+                None => String::new(),
+            };
+            return Err(format!(
+                "unknown field `{path}.{key}` in {}{hint}",
+                message.full_name()
+            ));
+        };
+        check_field(field_value, &field, &format!("{path}.{key}"), form)?;
     }
     Ok(())
 }
 
-fn check_field(value: &Value, field: &FieldDescriptor, path: &str) -> Result<(), String> {
+fn check_field(
+    value: &Value,
+    field: &FieldDescriptor,
+    path: &str,
+    form: Form,
+) -> Result<(), String> {
     if value.is_null() || is_template(value) {
         return Ok(());
     }
@@ -158,7 +235,7 @@ fn check_field(value: &Value, field: &FieldDescriptor, path: &str) -> Result<(),
             .expect("map fields are messages")
             .map_entry_value_field();
         return entries.iter().try_for_each(|(key, entry)| {
-            check_kind(entry, &value_field.kind(), &format!("{path}.{key}"))
+            check_kind(entry, &value_field.kind(), &format!("{path}.{key}"), form)
         });
     }
     if field.is_list() {
@@ -166,20 +243,20 @@ fn check_field(value: &Value, field: &FieldDescriptor, path: &str) -> Result<(),
             return Err(format!("`{path}` must be a list, got {value}"));
         };
         return items.iter().enumerate().try_for_each(|(index, item)| {
-            check_kind(item, &field.kind(), &format!("{path}[{index}]"))
+            check_kind(item, &field.kind(), &format!("{path}[{index}]"), form)
         });
     }
-    check_kind(value, &field.kind(), path)
+    check_kind(value, &field.kind(), path, form)
 }
 
-fn check_kind(value: &Value, kind: &Kind, path: &str) -> Result<(), String> {
+fn check_kind(value: &Value, kind: &Kind, path: &str, form: Form) -> Result<(), String> {
     if value.is_null() || is_template(value) {
         return Ok(());
     }
     let fits = match kind {
         // Well-known types have special JSON forms (timestamps as strings, etc.); accept them.
         Kind::Message(message) if message.full_name().starts_with("google.protobuf.") => true,
-        Kind::Message(message) => return check_message(value, message, path),
+        Kind::Message(message) => return check_message(value, message, path, form),
         Kind::Enum(descriptor) => match value {
             Value::String(name) => {
                 if descriptor.get_value_by_name(name).is_some() {
@@ -196,25 +273,32 @@ fn check_kind(value: &Value, kind: &Kind, path: &str) -> Result<(), String> {
                     ));
                 }
             }
-            Value::Number(number) => number.is_i64(),
+            Value::Number(number) => {
+                form == Form::Any
+                    && number
+                        .as_i64()
+                        .is_some_and(|number| i32::try_from(number).is_ok())
+            }
             _ => false,
         },
         Kind::String | Kind::Bytes => value.is_string(),
         Kind::Bool => value.is_boolean(),
-        Kind::Int32
-        | Kind::Sint32
-        | Kind::Sfixed32
-        | Kind::Int64
-        | Kind::Sint64
-        | Kind::Sfixed64 => integer(value).is_some_and(|number| {
-            let is_32 = matches!(kind, Kind::Int32 | Kind::Sint32 | Kind::Sfixed32);
-            !is_32 || i32::try_from(number).is_ok()
-        }),
-        Kind::Uint32 | Kind::Fixed32 | Kind::Uint64 | Kind::Fixed64 => {
-            integer(value).is_some_and(|number| {
-                let is_32 = matches!(kind, Kind::Uint32 | Kind::Fixed32);
-                number >= 0 && (!is_32 || u32::try_from(number).is_ok())
-            })
+        Kind::Int32 | Kind::Sint32 | Kind::Sfixed32 => {
+            (value.is_number() || form == Form::Any)
+                && integer(value).is_some_and(|number| i32::try_from(number).is_ok())
+        }
+        Kind::Uint32 | Kind::Fixed32 => {
+            (value.is_number() || form == Form::Any)
+                && integer(value).is_some_and(|number| u32::try_from(number).is_ok())
+        }
+        // Canonical protobuf JSON writes 64-bit integers as strings.
+        Kind::Int64 | Kind::Sint64 | Kind::Sfixed64 => {
+            (value.is_string() || form == Form::Any)
+                && integer(value).is_some_and(|number| i64::try_from(number).is_ok())
+        }
+        Kind::Uint64 | Kind::Fixed64 => {
+            (value.is_string() || form == Form::Any)
+                && integer(value).is_some_and(|number| u64::try_from(number).is_ok())
         }
         Kind::Float | Kind::Double => match value {
             Value::Number(_) => true,
@@ -373,6 +457,14 @@ cases:
                 "{ reviewer: { admin: yes } }",
                 "`message.reviewer.admin` expects bool",
             ),
+            (
+                "{ createdAtMs: '99999999999999999999' }",
+                "`message.createdAtMs` expects int64",
+            ),
+            (
+                "{ state: 3000000000 }",
+                "`message.state` expects approvals.v1.State",
+            ),
         ] {
             let error = check(&format!(
                 "  any:\n    behaviors:\n      ok:\n        message: {message}\n"
@@ -380,6 +472,88 @@ cases:
             .unwrap_err();
             assert!(error.contains(expected), "{message}: {error}");
         }
+    }
+
+    #[test]
+    fn match_literals_must_use_the_canonical_request_form() {
+        let pool = pool();
+        let input = pool.get_message_by_name("approvals.v1.Approval").unwrap();
+        let canonical = |value: Value| check_message(&value, &input, "message", Form::Canonical);
+        canonical(serde_json::json!({ "createdAtMs": "5", "state": "PENDING", "priority": 0 }))
+            .unwrap();
+        assert!(
+            canonical(serde_json::json!({ "created_at_ms": "5" }))
+                .unwrap_err()
+                .contains("match uses the JSON name `createdAtMs`")
+        );
+        assert!(
+            canonical(serde_json::json!({ "createdAtMs": 5 }))
+                .unwrap_err()
+                .contains("expects int64")
+        );
+        assert!(
+            canonical(serde_json::json!({ "state": 1 }))
+                .unwrap_err()
+                .contains("expects approvals.v1.State")
+        );
+    }
+
+    #[test]
+    fn response_literals_are_parsed_as_protobuf_json() {
+        let error = check(
+            r#"
+  any:
+    behaviors:
+      ok:
+        message: { evidence: 'not base64!' }
+"#,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("`message` does not fit approvals.v1.Approval"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn templated_status_accepts_either_message_form() {
+        check(
+            r#"
+  any:
+    behaviors:
+      maybe:
+        status: '${ metadata.status }'
+        message: { id: a-1 }
+      maybe-error:
+        status: '${ metadata.status }'
+        message: 'failed for ${ message.id }'
+"#,
+        )
+        .unwrap();
+        let error = check(
+            r#"
+  any:
+    behaviors:
+      maybe:
+        status: '${ metadata.status }'
+        message: { nope: 1 }
+"#,
+        )
+        .unwrap_err();
+        assert!(error.contains("unknown field `message.nope`"), "{error}");
+    }
+
+    #[test]
+    fn rejects_route_level_passthrough() {
+        let mut route = route("GetApproval", "  any:\n    behaviors:\n      ok: {}\n");
+        route.passthrough = Some(crate::schema::PassthroughTarget {
+            base_url: "http://x".to_owned(),
+        });
+        assert!(
+            check_route(&route, &pool())
+                .unwrap_err()
+                .contains("do not support passthrough")
+        );
     }
 
     #[test]

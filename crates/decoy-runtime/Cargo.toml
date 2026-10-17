@@ -25,7 +25,7 @@ jmespath = "0.5"
 fastrand = "2"
 humantime = "2"
 protox = "0.10.0"
-prost-reflect = "0.16.5"
+prost-reflect = { version = "0.16.5", features = ["serde"] }
 
 [dev-dependencies]
 pretty_assertions = "1"
