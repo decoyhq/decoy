@@ -1,0 +1,26 @@
+{
+  "name": "@decoy/cli",
+  "version": "0.1.0-alpha.0",
+  "description": "The decoy command: a portable local mock tool. Installs the native binary for your platform.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/what3verCODE/decoy.git",
+    "directory": "packages/cli"
+  },
+  "bin": {
+    "decoy": "./dist/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rslib build",
+    "test": "rstest run",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0"
+  }
+}
