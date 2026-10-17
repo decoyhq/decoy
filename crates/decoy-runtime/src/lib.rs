@@ -29,7 +29,7 @@ pub use http::{
     BodyPlan, HttpResponsePlan, PassthroughPlan, RequestMetadata, ResponsePlan, RuntimeConfig,
 };
 pub use http_forward::{ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough};
-pub use request::RequestContext;
+pub use request::RequestEnvelope;
 pub use schema::{
     Behavior, BehaviorKind, Case, HttpMethod, HttpRouteMatch, Route, Transport, ValidationError,
 };
