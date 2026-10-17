@@ -1,0 +1,13 @@
+id: profile
+transport: http
+match:
+  method: GET
+  path: /api/profile
+cases:
+  any:
+    match: {}
+    behaviors:
+      upstream:
+        kind: passthrough
+        target:
+          baseUrl: http://127.0.0.1:4174

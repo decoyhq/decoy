@@ -1,6 +1,7 @@
 - id: happy-path
   routes:
     - users-by-id:user-1:ada
+    - profile:any:upstream
 
 - id: no-users
   from: happy-path

@@ -11,7 +11,8 @@ pnpm --filter ./examples/playwright-ts-e2e test:e2e
 What happens:
 
 1. Playwright starts the static app (`app/serve.mjs`, port 4173) as its `webServer`.
-2. Global setup (`global-setup.ts`) starts Decoy with `cargo run -p decoy-runtime -- serve --config
+2. Global setup (`global-setup.ts`) starts a local Passthrough upstream on `127.0.0.1:4174`
+   (failing if the port is taken), then Decoy with `cargo run -p decoy-runtime -- serve --config
    mocks/decoy.yaml` (port 8080), or reuses one already running locally.
 3. Each test gets its own Decoy Session on the `happy-path` Collection. Browser requests matching
    `**/api/**` go to Decoy; nothing reaches a real backend.
@@ -22,3 +23,4 @@ What happens:
 | `collections.spec.ts` › switching the Collection | `decoy.useCollection('no-users')` before the click makes the same action show `Error 404: user not found` (`mocks/collections.yaml`). |
 | `overrides.spec.ts` › overriding one route | `decoy.useRoute('users-by-id', 'user-1', 'grace')` swaps one Behavior (`Grace Hopper`); `decoy.reset()` drops the override (`Ada Lovelace` again). |
 | `overrides.spec.ts` › unmapped API call | **Load orders** hits `/api/orders`, which no Route serves. Decoy answers `501` with `x-mock-miss: true`, shown as `Error 501 (Decoy miss): …`; the request never reaches a real backend. |
+| `passthrough.spec.ts` › Passthrough | **Load profile** hits `/api/profile`; its Behavior is `kind: passthrough` (`mocks/routes/profile.yaml`), so Decoy forwards it to the local upstream and the page shows the upstream's answer. |
