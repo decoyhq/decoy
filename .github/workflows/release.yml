@@ -86,7 +86,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: decoy-${{ matrix.target }}
-          path: dist/*.*
+          # Archives only: the staging folders (decoy-<version>-<target>/) also contain dots.
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
           if-no-files-found: error
 
   release:
@@ -103,7 +106,7 @@ jobs:
 
       - name: Checksums
         working-directory: dist
-        run: sha256sum * > SHA256SUMS && cat SHA256SUMS
+        run: sha256sum *.tar.gz *.zip > SHA256SUMS && cat SHA256SUMS
 
       - name: Publish GitHub Release
         env:
@@ -112,7 +115,7 @@ jobs:
         run: |
           prerelease=()
           case "$VERSION" in *-*) prerelease=(--prerelease) ;; esac
-          gh release create "$GITHUB_REF_NAME" dist/* \
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
