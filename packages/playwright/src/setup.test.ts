@@ -1,0 +1,116 @@
+import { createServer, type Server } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { resolve } from 'node:path'
+import type { FullConfig } from '@playwright/test'
+import { afterEach, describe, expect, test } from '@rstest/core'
+import { type DecoyOptions, isHealthy, resolveOptions } from './options'
+import { setup, type Teardown } from './setup'
+
+const FAKE_DECOY = resolve(process.cwd(), 'fixtures/fake-decoy.mjs')
+
+function config(decoyOptions: DecoyOptions | undefined): FullConfig {
+  return { projects: [{ use: { decoyOptions } }], configFile: undefined } as unknown as FullConfig
+}
+
+async function freePort(): Promise<number> {
+  const server = createServer()
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  const { port } = server.address() as AddressInfo
+  await new Promise((done) => server.close(done))
+  return port
+}
+
+async function runningDecoy(): Promise<{ url: string; server: Server }> {
+  const server = createServer((_req, res) => {
+    res.writeHead(200).end('{"status":"ok"}')
+  })
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  const { port } = server.address() as AddressInfo
+  return { url: `http://127.0.0.1:${port}`, server }
+}
+
+const cleanups: Array<() => Promise<unknown>> = []
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) {
+    await cleanup()
+  }
+})
+
+describe('resolveOptions', () => {
+  test('applies defaults matching native decoy serve', () => {
+    expect(resolveOptions({}, {})).toEqual({
+      url: 'http://127.0.0.1:8080',
+      command: 'decoy serve',
+      cwd: undefined,
+      reuseExistingServer: true,
+      timeout: 60_000,
+    })
+  })
+
+  test('requires a fresh server in CI and trims trailing slashes', () => {
+    const options = resolveOptions({ url: 'http://127.0.0.1:9000/' }, { CI: 'true' })
+    expect(options.reuseExistingServer).toBe(false)
+    expect(options.url).toBe('http://127.0.0.1:9000')
+  })
+})
+
+describe('setup', () => {
+  test('does nothing when Decoy is not configured', async () => {
+    const teardown = await setup(config(undefined))
+    await teardown()
+  })
+
+  test('reuses a healthy Decoy without running the command', async () => {
+    const { url, server } = await runningDecoy()
+    cleanups.push(() => new Promise((done) => server.close(done)))
+
+    const teardown = await setup(config({ url, command: 'exit 1', reuseExistingServer: true }))
+    await teardown()
+
+    expect(await isHealthy(url)).toBe(true)
+  })
+
+  test('refuses to share a healthy Decoy when reuse is disabled', async () => {
+    const { url, server } = await runningDecoy()
+    cleanups.push(() => new Promise((done) => server.close(done)))
+
+    await expect(setup(config({ url, reuseExistingServer: false }))).rejects.toThrow(
+      /already serving/,
+    )
+  })
+
+  test('starts the command, waits for health, and teardown stops it', async () => {
+    const port = await freePort()
+    const url = `http://127.0.0.1:${port}`
+
+    const teardown: Teardown = await setup(
+      config({ url, command: `node ${FAKE_DECOY} ${port}`, reuseExistingServer: false }),
+    )
+    expect(await isHealthy(url)).toBe(true)
+
+    await teardown()
+    expect(await isHealthy(url)).toBe(false)
+  })
+
+  test('fails clearly when the command exits before serving', async () => {
+    const port = await freePort()
+    await expect(
+      setup(config({ url: `http://127.0.0.1:${port}`, command: 'exit 3' })),
+    ).rejects.toThrow(/exited before serving \(code 3\)/)
+  })
+
+  test('fails clearly and stops the command when health never succeeds', async () => {
+    const port = await freePort()
+    const other = await freePort()
+    await expect(
+      setup(
+        config({
+          url: `http://127.0.0.1:${port}`,
+          command: `node ${FAKE_DECOY} ${other}`,
+          timeout: 500,
+        }),
+      ),
+    ).rejects.toThrow(/did not become healthy .* within 500ms/)
+    expect(await isHealthy(`http://127.0.0.1:${other}`)).toBe(false)
+  })
+})
