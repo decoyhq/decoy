@@ -40,8 +40,9 @@ One version covers the `decoy` binary and every published npm package. It lives 
 `[workspace.package]` in `Cargo.toml`; `pnpm check` fails if a package drifts from it.
 
 ```sh
-task release -- 0.1.0-alpha.1   # set every version, commit, tag (no push)
-git push --follow-tags          # CI builds and publishes from the tag
+task release -- 0.1.0-alpha.1       # branch release/v…, bump versions, push, open PR
+# merge the PR, then:
+task release:tag -- 0.1.0-alpha.1   # tag origin/main and push the tag; CI builds and publishes
 ```
 
 ## TypeScript
