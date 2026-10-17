@@ -95,9 +95,9 @@ tasks:
 
   release:tag:
     desc: 'After the release PR merges, tag origin/main and push the tag (CI publishes): task release:tag -- 0.1.0'
+    preconditions:
+      - sh: git fetch --quiet origin main && git show origin/main:Cargo.toml | grep -q '^version = "{{.CLI_ARGS}}"$'
+        msg: origin/main is not at {{.CLI_ARGS}} yet; merge the release PR first.
     cmds:
-      - git fetch --quiet origin main
-      - cmd: git show origin/main:Cargo.toml | grep -q '^version = "{{.CLI_ARGS}}"$'
-        # fails unless the release PR is merged
       - git tag --annotate v{{.CLI_ARGS}} --message v{{.CLI_ARGS}} origin/main
       - git push origin v{{.CLI_ARGS}}
