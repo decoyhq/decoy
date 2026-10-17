@@ -4,6 +4,8 @@ import { defineConfig, devices } from '@playwright/test'
 export default defineConfig<DecoyTestOptions>({
   testDir: './tests',
   globalSetup: './global-setup.ts',
+  // Spec files run concurrently against one Decoy runtime; each test's Session keeps it isolated.
+  fullyParallel: true,
   forbidOnly: !!process.env.CI,
   reporter: process.env.CI ? 'list' : 'line',
   webServer: {
