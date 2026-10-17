@@ -103,6 +103,18 @@ The default `kind`. All fields are optional:
 | `headers` | none    | string map                                                                          |
 | `body`    | empty   | object/array → JSON with `content-type: application/json` unless set; string → text |
 
+### Delay
+
+Any Behavior, Response or Passthrough, can wait before answering: `delay: 250` (milliseconds) or
+a duration such as `500ms`, `2s`, `1m 30s`. Other requests are not held up while one waits.
+
+```yaml
+behaviors:
+  slow:
+    delay: 2s
+    status: 504
+```
+
 ### Templates
 
 Any string in `status`, `headers`, or `body`, at any depth, can use `${ <jmespath> }` over the same

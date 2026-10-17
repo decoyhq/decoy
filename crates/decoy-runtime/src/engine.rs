@@ -45,6 +45,8 @@ pub enum ResolveOutcome {
         activation: Activation,
         path_params: BTreeMap<String, String>,
         plan: ResponsePlan,
+        /// The selected Behavior's `delay`, applied before responding or forwarding.
+        delay: Option<std::time::Duration>,
     },
     Miss(MissDiagnostic),
 }
@@ -169,33 +171,43 @@ impl Catalog {
             &request.metadata,
         ) {
             ResolveOutcome::Matched {
-                activation, plan, ..
-            } => match plan {
-                ResponsePlan::Response(response) => HttpExecutionOutcome::Response {
-                    activation: Some(activation),
-                    response: response.into(),
-                },
-                ResponsePlan::Passthrough(plan) => {
-                    let source = forward_passthrough(
-                        &plan,
-                        ForwardRequest {
-                            method: request.method,
-                            path_and_query: request.path_and_query,
-                            headers: request.headers,
-                            body: request.body,
-                        },
-                    )
-                    .await;
+                activation,
+                plan,
+                delay,
+                ..
+            } => {
+                if let Some(delay) = delay {
+                    tokio::time::sleep(delay).await;
+                }
+                match plan {
+                    ResponsePlan::Response(response) => HttpExecutionOutcome::Response {
+                        activation: Some(activation),
+                        response: response.into(),
+                    },
+                    ResponsePlan::Passthrough(plan) => {
+                        let source = forward_passthrough(
+                            &plan,
+                            ForwardRequest {
+                                method: request.method,
+                                path_and_query: request.path_and_query,
+                                headers: request.headers,
+                                body: request.body,
+                            },
+                        )
+                        .await;
 
-                    match source {
-                        Ok(response) => HttpExecutionOutcome::Response {
-                            activation: Some(activation),
-                            response,
-                        },
-                        Err(source) => HttpExecutionOutcome::ForwardingError { activation, source },
+                        match source {
+                            Ok(response) => HttpExecutionOutcome::Response {
+                                activation: Some(activation),
+                                response,
+                            },
+                            Err(source) => {
+                                HttpExecutionOutcome::ForwardingError { activation, source }
+                            }
+                        }
                     }
                 }
-            },
+            }
             ResolveOutcome::Miss(miss) => HttpExecutionOutcome::Response {
                 activation: None,
                 response: match ResponsePlan::fail_closed_miss(miss.reason) {
@@ -290,6 +302,7 @@ impl Catalog {
                 activation: activation.clone(),
                 path_params,
                 plan,
+                delay: behavior.delay(),
             };
         }
 
@@ -699,6 +712,7 @@ cases:
             activation,
             path_params,
             plan,
+            ..
         } = outcome
         else {
             panic!("expected match")
