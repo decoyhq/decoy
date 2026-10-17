@@ -8,6 +8,7 @@
     <h1>Users</h1>
     <button id="load-user" type="button">Load user</button>
     <button id="load-orders" type="button">Load orders</button>
+    <button id="load-profile" type="button">Load profile</button>
     <p id="result" role="status"></p>
     <script type="module">
       const result = document.querySelector('#result')
@@ -27,6 +28,8 @@
       document.querySelector('#load-user').addEventListener('click', () => show('/api/users/1'))
       // No Decoy Route serves /api/orders: it demonstrates the fail-closed miss.
       document.querySelector('#load-orders').addEventListener('click', () => show('/api/orders'))
+      // Decoy forwards /api/profile to the example's local upstream (Passthrough).
+      document.querySelector('#load-profile').addEventListener('click', () => show('/api/profile'))
     </script>
   </body>
 </html>
