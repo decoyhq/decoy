@@ -12,6 +12,8 @@ The native prototype exposes command-shaped Controller verbs below the reserved 
 | `useRoute` | `POST /__decoy__/control/useRoute` | `{ "route": "<route-id>", "case": "<case-id>", "behavior": "<behavior-id>" }` |
 | `reset` | `POST /__decoy__/control/reset` | empty or omitted JSON body |
 
+Liveness: `GET /__decoy__/health` returns `200 {"status":"ok"}` while the runtime serves. It is not Session-scoped and does not touch Selection.
+
 Callers identify the Session to mutate with the canonical `x-mock-session` header. Missing or blank values target the default Session.
 
 Successful responses return HTTP `200` with the resulting Selection snapshot as JSON. Invalid JSON, unknown Collections, and unknown Behavior addresses return HTTP `400` with `{ "error": "<clear message>" }`. Unknown control paths return HTTP `404` with the same error envelope.

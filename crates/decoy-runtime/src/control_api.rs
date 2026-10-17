@@ -8,6 +8,9 @@ use crate::engine::{ControlError, Controller, SelectionSnapshot};
 pub const CONTROL_PREFIX: &str = "/__decoy__";
 pub const SESSION_HEADER: &str = "x-mock-session";
 pub const DEFAULT_SESSION: &str = "default";
+/// Liveness probe for tools waiting on a runtime. It reports only that Decoy is serving; it
+/// exposes no diagnostics or identity and never reads or mutates Selection.
+pub const HEALTH_PATH: &str = "/__decoy__/health";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControlApiRequest {
