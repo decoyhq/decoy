@@ -179,8 +179,8 @@ cases:
         message: { received: '${ length(messages) }' }
 ```
 
-**Bidirectional:** works like WebSocket (section 6). `on: message` Cases answer each inbound
-message, and `on: connect` can send first.
+**Bidirectional:** works like WebSocket (section 6). Cases answer each inbound message; the server
+speaking first is a test-driven `send`.
 
 ```yaml
 id: approvals-review
@@ -188,7 +188,6 @@ transport: grpc
 match: { service: approvals.v1.Approvals, method: Review }
 cases:
   comment:
-    on: message
     match: { message: { kind: COMMENT } }
     behaviors:
       ack:
@@ -201,15 +200,8 @@ cases:
 id: notifications
 transport: ws
 match: { path: /ws/notifications }
-cases:
-  hello: # server-first message, sent right after the upgrade
-    on: connect
-    behaviors:
-      greet:
-        send:
-          - { message: { type: hello, version: 2 } }
+cases: # each Case answers an inbound message
   subscribe:
-    on: message # default for ws
     match: { message: { type: subscribe } }
     behaviors:
       updates:
@@ -225,17 +217,17 @@ cases:
       pong: { send: [{ message: pong }] }
 ```
 
-- **Connection envelope** (`on: connect`): `{ path, pathParams, query, headers, cookies }` of the
-  upgrade request.
-- **Message envelope** (`on: message`): the connection fields plus `message`, which is the decoded
-  inbound message: JSON when it parses, the text otherwise, or the pipeline's output.
+- **Message envelope:** `{ path, pathParams, query, headers, cookies }` of the upgrade request plus
+  `message`, which is the decoded inbound message: JSON when it parses, the text otherwise, or the
+  pipeline's output.
 - **Outbound:** `send` items go out in order, each after its own `delay`. A `message` that is an
   object or array is sent as JSON text unless a pipeline encodes it. `close` closes the connection
   afterwards.
 - **Unmatched message:** fail-closed means Decoy sends nothing and records a miss (visible in logs
   and via `decoy.connection().misses`). The connection stays open (**Q4**).
-- **No `on: connect` Case:** the upgrade is still accepted, because tests push with `send` (section
-  9). An upgrade to a path no `ws` Route matches is rejected with the HTTP miss.
+- **Connecting:** an upgrade to a `ws` Route's path is always accepted, and the server says nothing
+  until a message arrives or the test calls `send` (section 9). An upgrade to a path no `ws` Route
+  matches is rejected with the HTTP miss.
 
 ## 7. WebSocket + msgpack envelope + protobuf payload
 
@@ -283,7 +275,8 @@ cases:
         events: [] # open stream; the test pushes events with `send`
 ```
 
-- **Envelope:** the connection fields (as for WebSocket `on: connect`).
+- **Envelope:** the request fields `{ path, pathParams, query, headers, cookies }`, so Cases can
+  match the subscription like any GET.
 - **`data`:** an object or array is serialized as JSON, a string is sent as-is. `event`, `id` and
   `retry` map to the SSE fields.
 - **Unmatched GET:** the HTTP miss (501).
@@ -291,7 +284,7 @@ cases:
 ## 9. Pushing from a test: Control API `send`
 
 Long-lived connections need test-driven messages, for example "the client's logic depends on the
-server's first message", or "trigger a UI update now".
+server's first message", or "trigger a UI update now". This is the only way the server speaks first.
 
 ```http
 POST /__decoy__/control/send
@@ -341,14 +334,14 @@ test('shows the approval as soon as the server pushes it', async ({ page, decoy 
 
 ## 11. Open questions
 
-| #   | question                                                                   | recommendation                                                                                                                                                    |
-| --- | -------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Q1  | One port for HTTP/WS/SSE/gRPC, or a separate `grpcPort`?                   | One port (hyper serves HTTP/1.1 and h2c together), with an optional `grpcPort` if a client insists on a dedicated one.                                            |
-| Q2  | Implicit `[grpc-frame, protobuf]` pipeline for gRPC Routes?                | Yes: gRPC is always protobuf over gRPC framing, so the method's types make it implicit. An explicit `pipeline` adds steps after those (e.g. a decrypt plugin).    |
-| Q3  | Validate gRPC message literals against the proto at startup?               | Yes: typos in field or enum names are the most common mock bug, and the proto lets us catch them early.                                                           |
-| Q4  | Unmatched WS message: silent + recorded, or close the socket?              | Silent + recorded. Closing would break UIs that send messages the mocks don't care about (heartbeats, analytics).                                                 |
-| Q5  | `send` with no live connection: wait or fail fast?                         | `wait` opt-in; the Playwright helper always waits through `decoy.connection()` first, so tests don't race.                                                        |
-| Q6  | WebSocket routing in Playwright: bridge via `routeWebSocket`?              | Yes: it's the only way to add the Session header without changing app code.                                                                                       |
-| Q7  | SSE in Playwright needs app and Decoy on the same protocol. OK?            | OK for now (tests run on http locally); revisit if someone runs https apps under test.                                                                            |
-| Q8  | `__decoy_session` query fallback for browsers outside Playwright?          | Yes, stripped before matching so it never shows up in `query`.                                                                                                    |
-| Q9  | Glossary: "Request envelope" / "Message envelope" / "Connection envelope". | Adopt them in `CONTEXT.md` when #217/#218 start. The HTTP code currently says `RequestContext`; rename it to `RequestEnvelope` for consistency (small follow-up). |
+| #   | question                                                          | recommendation                                                                                                                                                    |
+| --- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Q1  | One port for HTTP/WS/SSE/gRPC, or a separate `grpcPort`?          | One port (hyper serves HTTP/1.1 and h2c together), with an optional `grpcPort` if a client insists on a dedicated one.                                            |
+| Q2  | Implicit `[grpc-frame, protobuf]` pipeline for gRPC Routes?       | Yes: gRPC is always protobuf over gRPC framing, so the method's types make it implicit. An explicit `pipeline` adds steps after those (e.g. a decrypt plugin).    |
+| Q3  | Validate gRPC message literals against the proto at startup?      | Yes: typos in field or enum names are the most common mock bug, and the proto lets us catch them early.                                                           |
+| Q4  | Unmatched WS message: silent + recorded, or close the socket?     | Silent + recorded. Closing would break UIs that send messages the mocks don't care about (heartbeats, analytics).                                                 |
+| Q5  | `send` with no live connection: wait or fail fast?                | `wait` opt-in; the Playwright helper always waits through `decoy.connection()` first, so tests don't race.                                                        |
+| Q6  | WebSocket routing in Playwright: bridge via `routeWebSocket`?     | Yes: it's the only way to add the Session header without changing app code.                                                                                       |
+| Q7  | SSE in Playwright needs app and Decoy on the same protocol. OK?   | OK for now (tests run on http locally); revisit if someone runs https apps under test.                                                                            |
+| Q8  | `__decoy_session` query fallback for browsers outside Playwright? | Yes, stripped before matching so it never shows up in `query`.                                                                                                    |
+| Q9  | Glossary: "Request envelope" / "Message envelope".                | Adopt them in `CONTEXT.md` when #217/#218 start. The HTTP code currently says `RequestContext`; rename it to `RequestEnvelope` for consistency (small follow-up). |
