@@ -17,17 +17,12 @@ pub fn load_descriptor_pool(sources: &ProtoSources) -> Result<DescriptorPool, St
     let mut pool = if files.is_empty() {
         DescriptorPool::new()
     } else {
-        let mut compiler = protox::Compiler::new(&sources.roots).map_err(|error| {
-            StartupError::new(
-                StartupDiagnosticKind::Io,
-                &sources.roots[0],
-                error.to_string(),
-            )
-        })?;
+        let mut compiler =
+            protox::Compiler::new(&sources.roots).expect("protox include resolver never fails");
         compiler
             .include_imports(true)
             .open_files(&files)
-            .map_err(|error| proto_error(&sources.roots, &files, error))?;
+            .map_err(|error| proto_error(&sources.roots, error))?;
         compiler.descriptor_pool()
     };
 
@@ -54,14 +49,21 @@ fn discover_proto_files(roots: &[PathBuf]) -> Result<Vec<PathBuf>, StartupError>
                 "proto root is not a directory",
             ));
         }
-        for entry in WalkDir::new(root).sort_by_file_name() {
+        // A root nested in another root is walked on its own, so each file gets one name.
+        let walk = WalkDir::new(root)
+            .sort_by_file_name()
+            .into_iter()
+            .filter_entry(|entry| entry.path() == root || !roots.iter().any(|r| r == entry.path()));
+        for entry in walk {
             let entry = entry.map_err(|error| {
                 StartupError::new(StartupDiagnosticKind::Io, root, error.to_string())
             })?;
             if entry.file_type().is_file()
                 && entry.path().extension().is_some_and(|ext| ext == "proto")
             {
-                files.push(entry.into_path());
+                // Open by import name so protox resolves it like an `import`, not by first root.
+                let name = entry.path().strip_prefix(root).unwrap_or(entry.path());
+                files.push(name.to_path_buf());
             }
         }
     }
@@ -69,15 +71,15 @@ fn discover_proto_files(roots: &[PathBuf]) -> Result<Vec<PathBuf>, StartupError>
 }
 
 /// Points the diagnostic at the failing file when protox names one.
-fn proto_error(roots: &[PathBuf], files: &[PathBuf], error: protox::Error) -> StartupError {
+fn proto_error(roots: &[PathBuf], error: protox::Error) -> StartupError {
     let path = error
         .file()
-        .and_then(|name| resolve_proto_name(roots, files, name))
+        .and_then(|name| resolve_proto_name(roots, name))
         .unwrap_or_else(|| roots[0].clone());
     StartupError::new(StartupDiagnosticKind::Parse, path, error.to_string())
 }
 
-fn resolve_proto_name(roots: &[PathBuf], files: &[PathBuf], name: &str) -> Option<PathBuf> {
+fn resolve_proto_name(roots: &[PathBuf], name: &str) -> Option<PathBuf> {
     let name = Path::new(name);
     if name.is_absolute() {
         return Some(name.to_path_buf());
@@ -85,7 +87,7 @@ fn resolve_proto_name(roots: &[PathBuf], files: &[PathBuf], name: &str) -> Optio
     roots
         .iter()
         .map(|root| root.join(name))
-        .find(|path| files.contains(path) || path.is_file())
+        .find(|path| path.is_file())
 }
 
 #[cfg(test)]
@@ -113,6 +115,36 @@ mod tests {
                 .any(|method| method.name() == "GetApproval")
         );
         assert!(pool.get_message_by_name("approvals.v1.Approval").is_some());
+    }
+
+    #[test]
+    fn nested_roots_load_each_file_once_in_any_order() {
+        let dir = tempdir().unwrap();
+        let proto = dir.path().join("proto");
+        let vendored = proto.join("third_party");
+        fs::create_dir_all(vendored.join("ext")).unwrap();
+        fs::write(
+            vendored.join("ext/common.proto"),
+            "syntax = \"proto3\";\npackage ext;\nmessage Money { int64 units = 1; }\n",
+        )
+        .unwrap();
+        fs::write(
+            proto.join("api.proto"),
+            "syntax = \"proto3\";\nimport \"ext/common.proto\";\nmessage Price { ext.Money amount = 1; }\n",
+        )
+        .unwrap();
+
+        for roots in [
+            vec![proto.clone(), vendored.clone()],
+            vec![vendored.clone(), proto.clone()],
+        ] {
+            let pool = load_descriptor_pool(&ProtoSources {
+                roots,
+                descriptor_sets: vec![],
+            })
+            .unwrap();
+            assert!(pool.get_message_by_name("Price").is_some());
+        }
     }
 
     #[test]
