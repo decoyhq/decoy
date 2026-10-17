@@ -45,20 +45,16 @@ pub fn request_json_options() -> SerializeOptions {
     SerializeOptions::new().skip_default_fields(false)
 }
 
-/// A Route's Pipeline: steps run in order, at most once each, and `protobuf` (if present) last,
-/// since it turns bytes into JSON and nothing after it takes JSON.
+/// A Route's Pipeline: steps run in order, at most once each. gRPC bodies are always framed, so
+/// `grpc-frame` comes first. With only the two built-ins, that leaves `protobuf` last.
 pub fn validate_pipeline(steps: &[PipelineStep]) -> Result<(), String> {
+    if steps.first() != Some(&PipelineStep::GrpcFrame) {
+        return Err("gRPC calls are framed, so `grpc-frame` must be the first step".to_owned());
+    }
     for (index, step) in steps.iter().enumerate() {
         if steps[..index].contains(step) {
             return Err(format!("step `{}` appears twice", step_name(*step)));
         }
-    }
-    if steps
-        .iter()
-        .position(|step| *step == PipelineStep::Protobuf)
-        .is_some_and(|index| index + 1 != steps.len())
-    {
-        return Err("`protobuf` must be the last step".to_owned());
     }
     Ok(())
 }
@@ -673,8 +669,16 @@ cases:
         raw("{ message: '${ message }' }").unwrap();
 
         for (steps, expected) in [
-            ("[protobuf, grpc-frame]", "`protobuf` must be the last step"),
-            ("[protobuf, protobuf]", "step `protobuf` appears twice"),
+            (
+                "[protobuf, grpc-frame]",
+                "`grpc-frame` must be the first step",
+            ),
+            (
+                "[grpc-frame, protobuf, protobuf]",
+                "step `protobuf` appears twice",
+            ),
+            ("[protobuf]", "`grpc-frame` must be the first step"),
+            ("[]", "`grpc-frame` must be the first step"),
         ] {
             let error = Route::from_yaml(&format!(
                 "id: r\ntransport: grpc\nmatch: {{ service: s, method: m }}\npipeline: {steps}\ncases:\n  any:\n    behaviors:\n      ok: {{}}\n"

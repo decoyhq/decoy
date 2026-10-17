@@ -91,7 +91,8 @@ Every string can be a `${ }` template, including `status`.
 - Literal response `message` values fit the method's output type: no unknown fields, valid enum
   names, scalar types and ranges. A message with no `${ }` is also parsed as protobuf JSON.
 - Literal `match.message` values fit the input type in the envelope's form above. `created_at_ms`
-  or `createdAtMs: 5` would never match a decoded request, so they fail with a hint.
+  or `createdAtMs: 5` would never match a decoded request, so they fail: use JSON names, and write
+  64-bit values as strings (`createdAtMs: '5'`).
 - Metadata names are lowercase header names and not `grpc-*`.
 
 Templated values are checked when they render. A render or encode failure answers `INTERNAL` with
@@ -102,6 +103,7 @@ the Behavior address.
 | Situation                         | Status             | Notes                                 |
 | --------------------------------- | ------------------ | ------------------------------------- |
 | no active Case matches the call   | `UNIMPLEMENTED`    | trailer `x-mock-miss: true`           |
+| the call is compressed            | `INVALID_ARGUMENT` | turn off client compression           |
 | the request body doesn't decode   | `INVALID_ARGUMENT` | message names the Route and the error |
 | a Behavior can't render or encode | `INTERNAL`         | message names `route:case:behavior`   |
 
@@ -123,7 +125,8 @@ Then switch that Session's Collection or Behaviors with the
 ## Pipelines
 
 A gRPC Route decodes calls with the default Pipeline `[grpc-frame, protobuf]`. An explicit
-`pipeline` replaces it, steps in order. Each step can appear once, and `protobuf` must come last.
+`pipeline` replaces it, steps in order. Each step can appear once, `grpc-frame` must come first
+(gRPC bodies are always framed); `protobuf`, if present, follows it.
 Without `protobuf`, the Route sees and answers raw bytes: `message` is a base64 string.
 
 ```yaml

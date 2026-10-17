@@ -50,8 +50,11 @@ void test('useRoute overrides one Behavior for a Session', async () => {
   assert.equal(reply.state, 'APPROVED')
 })
 
-void test('an unmapped call fails closed with UNIMPLEMENTED', async () => {
+void test('an unmapped call fails closed with UNIMPLEMENTED', async (t) => {
   const miss = new grpc.Client('127.0.0.1:8091', grpc.credentials.createInsecure())
+  t.after(() => {
+    miss.close()
+  })
   await assert.rejects(
     new Promise((resolve, reject) => {
       miss.makeUnaryRequest(
@@ -75,5 +78,4 @@ void test('an unmapped call fails closed with UNIMPLEMENTED', async () => {
       return true
     },
   )
-  miss.close()
 })
