@@ -208,7 +208,9 @@ async fn handle_request(
 fn is_grpc(headers: &BTreeMap<String, String>) -> bool {
     headers
         .get("content-type")
-        .is_some_and(|value| value.starts_with("application/grpc"))
+        .and_then(|value| value.strip_prefix("application/grpc"))
+        // `application/grpc`, `+proto`, `;charset`; not grpc-web, which frames trailers in the body.
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(['+', ';']))
 }
 
 /// A gRPC answer: HTTP 200, the framed message, then `grpc-status`/`grpc-message` and metadata as

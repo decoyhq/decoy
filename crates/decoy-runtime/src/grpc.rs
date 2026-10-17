@@ -296,13 +296,18 @@ mod tests {
     use crate::protos::load_descriptor_pool;
 
     fn catalog(cases: &str, collection: &str) -> Catalog {
+        catalog_with_pipeline(None, cases, collection)
+    }
+
+    fn catalog_with_pipeline(pipeline: Option<&str>, cases: &str, collection: &str) -> Catalog {
         let protos = load_descriptor_pool(&ProtoSources {
             roots: vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proto")],
             descriptor_sets: vec![],
         })
         .unwrap();
         let route = Route::from_yaml(&format!(
-            "id: get\ntransport: grpc\nmatch: {{ service: approvals.v1.Approvals, method: GetApproval }}\ncases:\n{cases}"
+            "id: get\ntransport: grpc\nmatch: {{ service: approvals.v1.Approvals, method: GetApproval }}\n{}cases:\n{cases}",
+            pipeline.map(|steps| format!("pipeline: {steps}\n")).unwrap_or_default()
         ))
         .unwrap();
         Catalog::new(
@@ -491,6 +496,24 @@ mod tests {
             response.status_message.contains("5-byte header"),
             "{response:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn raw_pipelines_answer_with_literal_bytes() {
+        let catalog = catalog_with_pipeline(
+            Some("[grpc-frame]"),
+            "  any:\n    behaviors:\n      ok: { message: CgNhLTE= }\n",
+            "get:any:ok",
+        );
+        let response = catalog
+            .execute_grpc(
+                "default",
+                &BTreeMap::new(),
+                request(&catalog, json!({ "id": "x" })),
+            )
+            .await;
+        assert_eq!(response.status, OK, "{response:?}");
+        assert_eq!(decoded(&catalog, &response), json!({ "id": "a-1" }));
     }
 
     #[test]

@@ -80,6 +80,13 @@ impl Route {
         Ok(route)
     }
 
+    /// Whether the envelope's `message` is protobuf JSON (the default) rather than raw bytes.
+    pub fn decodes_protobuf(&self) -> bool {
+        self.pipeline
+            .as_ref()
+            .is_none_or(|steps| steps.contains(&PipelineStep::Protobuf))
+    }
+
     pub fn validate(&self) -> Result<(), ValidationError> {
         validate_id("route", &self.id)?;
 
@@ -88,6 +95,15 @@ impl Route {
                 route: self.id.clone(),
                 reason: "HTTP Routes do not take a `pipeline` yet".to_owned(),
             });
+        }
+
+        if let Some(steps) = &self.pipeline {
+            crate::grpc_schema::validate_pipeline(steps).map_err(|reason| {
+                ValidationError::InvalidPipeline {
+                    route: self.id.clone(),
+                    reason,
+                }
+            })?;
         }
 
         if self.cases.is_empty() {
@@ -113,7 +129,7 @@ impl Route {
                         crate::template::validate_response(response)
                     }
                     (Transport::Grpc, Behavior::Response(response)) => {
-                        crate::grpc_schema::validate_response(response)
+                        crate::grpc_schema::validate_response(response, self.decodes_protobuf())
                     }
                     (Transport::Http, Behavior::Passthrough(_)) => Ok(()),
                     (Transport::Grpc, Behavior::Passthrough(_)) => {
