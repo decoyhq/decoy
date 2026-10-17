@@ -24,3 +24,4 @@ What happens:
 | `overrides.spec.ts` › overriding one route | `decoy.useRoute('users-by-id', 'user-1', 'grace')` swaps one Behavior (`Grace Hopper`); `decoy.reset()` drops the override (`Ada Lovelace` again). |
 | `overrides.spec.ts` › unmapped API call | **Load orders** hits `/api/orders`, which no Route serves. Decoy answers `501` with `x-mock-miss: true`, shown as `Error 501 (Decoy miss): …`; the request never reaches a real backend. |
 | `passthrough.spec.ts` › Passthrough | **Load profile** hits `/api/profile`; its Behavior is `kind: passthrough` (`mocks/routes/profile.yaml`), so Decoy forwards it to the local upstream and the page shows the upstream's answer. |
+| `isolation.spec.ts` › Sessions | One test switches its Session to `no-users`; the next test, in a fresh context with a different Session id, still sees `Ada Lovelace`. All spec files also run in parallel (`fullyParallel`) against the same Decoy. |
