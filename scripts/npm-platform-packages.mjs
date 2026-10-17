@@ -1,4 +1,4 @@
-// Turn release archives into @decoy/cli-<os>-<arch> npm packages, and pin them as
+// Turn release archives into @decoyhq/cli-<os>-<arch> npm packages, and pin them as
 // optionalDependencies of packages/cli (done at publish time: they only exist once released).
 //   node scripts/npm-platform-packages.mjs <archives-dir> <out-dir>
 import { execFileSync } from 'node:child_process'
@@ -25,7 +25,7 @@ const cli = JSON.parse(readFileSync(cliManifestPath, 'utf8'))
 const optionalDependencies = {}
 
 for (const [target, { os, cpu }] of Object.entries(TARGETS)) {
-  const name = `@decoy/cli-${os}-${cpu}`
+  const name = `@decoyhq/cli-${os}-${cpu}`
   const exe = os === 'win32' ? 'decoy.exe' : 'decoy'
   const archive = join(
     archives,
@@ -47,7 +47,7 @@ for (const [target, { os, cpu }] of Object.entries(TARGETS)) {
       {
         name,
         version: cli.version,
-        description: `The decoy binary for ${os}-${cpu}. Install @decoy/cli instead.`,
+        description: `The decoy binary for ${os}-${cpu}. Install @decoyhq/cli instead.`,
         license: cli.license,
         repository: cli.repository,
         os: [os],

@@ -1,7 +1,7 @@
 # Playwright (TypeScript) E2E
 
 A static page calls its API with plain `fetch()`. Playwright tests route those calls to native
-Decoy through `@decoy/playwright`, so the UI renders mocked data without a backend.
+Decoy through `@decoyhq/playwright`, so the UI renders mocked data without a backend.
 
 ```sh
 pnpm --filter ./examples/playwright-ts-e2e exec playwright install chromium   # once

@@ -30,7 +30,7 @@ Examples (`examples/*`) are the e2e tier and run their own `test:e2e` per worksp
 ## Conventions
 
 - **Conventional Commits**, small **vertical-slice** PRs.
-- `@decoy/*` is the package scope; the CLI bin is `decoy`.
+- `@decoyhq/*` is the package scope; the CLI bin is `decoy`.
 - **Don't reach for the real network in tests** — Decoy is fail-closed by default; a test that
   leaks to a live upstream is a bug.
 

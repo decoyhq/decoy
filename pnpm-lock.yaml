@@ -56,7 +56,7 @@ importers:
 
   examples/playwright-ts-e2e:
     devDependencies:
-      '@decoy/playwright':
+      '@decoyhq/playwright':
         specifier: workspace:*
         version: link:../../packages/playwright
       '@playwright/test':

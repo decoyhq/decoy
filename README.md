@@ -8,8 +8,12 @@ diagnostic miss, never the real upstream.
 
 ## Status
 
-Pre-alpha. The native Rust runtime (`crates/decoy-runtime`) serves HTTP today. Not published yet;
-build from source.
+Alpha. The native Rust runtime (`crates/decoy-runtime`) serves HTTP today. Install with
+`npm i -D @decoyhq/cli` or from GitHub Releases once the first release is out; see
+[Install](docs/guide/install.md).
+
+Full docs: **[the guide](docs/guide/README.md)**: install, Routes, Collections, Sessions, config,
+Playwright.
 
 ## Quickstart
 
