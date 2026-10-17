@@ -82,8 +82,8 @@ identity, and bindings captured while matching the Route and Case.
 _Avoid_: exposing arbitrary internals such as logs, route definitions, environment, or server state.
 
 **Standard function**:
-A built-in portable function available to matching/template expressions. Custom functions are not
-part of the initial portable model; future plugins may add extension points.
+A built-in portable function available to matching/template expressions. **Plugins** may add
+named functions later.
 _Avoid_: "helper", "custom JS function" for portable semantics.
 
 ### Invariants
@@ -123,27 +123,20 @@ Different integrations may implement it in-process, through a sidecar runtime, o
 must preserve the same semantic contract.
 _Avoid_: "client" when referring to the per-Session handle.
 
-### Future extension concepts
+### Extension concepts
+
+**Pipeline**:
+The ordered list of **Pipeline steps** between wire data and the decoded data Cases match. Inbound
+runs in order; outbound runs reversed. Declared per Route or as a config default. See ADR 0002.
+_Avoid_: separate config fields per extension kind, implicit step ordering.
+
+**Pipeline step**:
+One named transform in a **Pipeline**, such as `grpc-frame`, `protobuf`, `msgpack`, or a plugin
+step. Built-in and plugin steps share one contract.
+_Avoid_: "codec" or "codec stage" (retired), "message transform stage" (retired), "middleware".
 
 **Plugin**:
-An advanced extension package for edge cases such as codecs, data transforms, recording import/export,
-or protocol support. Decoy is a mock tool with plugins for advanced cases, not a plugin framework
-first.
-_Avoid_: using plugins to redefine core matching/session semantics before those semantics are stable.
-
-**Plugin pipeline seam**:
-The future extension seam where ordered plugin stages may adapt transport data before or after Decoy's
-core matching and behavior semantics. Codec stages are the first likely stage, but not the whole
-plugin model.
-_Avoid_: treating every plugin concern as a codec concern, or using plugins to bypass
-Route/Case/Behavior semantics.
-
-**Codec stage**:
-A plugin pipeline stage that converts wire bytes to logical messages and logical messages back to
-wire bytes, especially for WebSocket/gRPC/custom protocol envelopes.
-_Avoid_: putting protocol plumbing into every Route YAML, or using "codec" for logical message transforms.
-
-**Message transform stage**:
-A plugin pipeline stage that receives a logical message/envelope and returns a modified logical
-message/envelope without owning the wire-byte encoding.
-_Avoid_: using transforms to redefine core matching/session semantics before those semantics are stable.
+A long-running external process, declared in config, that exports named **Pipeline steps** and/or
+named JMESPath functions. Started once with the runtime, never per request. Plugins format data;
+they do not redefine Route/Case/Behavior, Selection, or Session semantics.
+_Avoid_: "hook", "extension" for this concept, spawning one process per message.

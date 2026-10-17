@@ -1,7 +1,0 @@
-# Scenarios this example can switch between in-process via control.useCollection.
-- id: happy-path
-  routes:
-    - users-by-id:default:ada
-- id: error-state
-  routes:
-    - users-by-id:default:boom

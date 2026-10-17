@@ -1,7 +1,0 @@
-# Scenarios this standalone server can switch between over /__decoy__.
-- id: happy-path
-  routes:
-    - users-by-id:default:ada
-- id: error-state
-  routes:
-    - users-by-id:default:boom

@@ -1,12 +1,12 @@
 # Contributing to Decoy
 
-How to run the monorepo locally and the rules a change should follow. For what Decoy **is** and
-how it behaves, read the [documentation site](apps/docs) (or its built `/llms.txt`) — the docs are
-the single explainer; this file stays narrow.
+How to run the repo locally and the rules a change should follow. Vocabulary lives in
+[`CONTEXT.md`](CONTEXT.md); decisions in [`docs/adr/`](docs/adr).
 
 ## Toolchain
 
-- **pnpm 11** · **Node ≥ 24**
+- **Rust** (stable) for `crates/*`
+- **pnpm 11** · **Node ≥ 24** for wrappers in `packages/*` and `examples/*`
 
 ```sh
 pnpm install            # use --frozen-lockfile in CI
@@ -16,17 +16,13 @@ pnpm install            # use --frozen-lockfile in CI
 
 | Command | What it does |
 | --- | --- |
-| `pnpm build` | Build every workspace package (includes `apps/docs`). |
-| `pnpm check` | Biome lint/format check. |
-| `pnpm typecheck` | Type-check every package. |
-| `pnpm test` | Unit/integration tests across packages. |
-| `pnpm fix` | Apply Biome autofixes. |
-| `pnpm docs:build` | Build just the docs site (the dead-link check is the docs test seam). |
-| `pnpm --filter @decoy/docs dev` | Run the docs dev server. |
+| `cargo test --workspace` | Rust unit/integration tests |
+| `cargo clippy --workspace --all-targets -- -D warnings` | Rust lint |
+| `cargo fmt --check` | Rust format check |
+| `pnpm build` / `pnpm typecheck` / `pnpm test` | JS workspace packages |
+| `pnpm check` / `pnpm fix` | Biome lint/format |
 
-Examples (`examples/*`) are the e2e tier and run their own `test:e2e` per workspace — a browser
-example also needs its Playwright binary once (`pnpm --filter <example> exec playwright install
-chromium`).
+Examples (`examples/*`) are the e2e tier and run their own `test:e2e` per workspace.
 
 ## Conventions
 
@@ -34,13 +30,3 @@ chromium`).
 - `@decoy/*` is the package scope; the CLI bin is `decoy`.
 - **Don't reach for the real network in tests** — Decoy is fail-closed by default; a test that
   leaks to a live upstream is a bug.
-- `@decoy/core` is **IO-free** — keep Node built-ins out of it.
-- Run `pnpm check` and `pnpm typecheck` before opening a PR.
-
-## Where prose lives
-
-User-facing rationale and behaviour belong in the docs site (`apps/docs/`), not in source comments
-or scattered READMEs — the **one-explainer doctrine**. Each package carries a short structural
-`README.md` (its role, exports, and dependency direction) that points into the site rather than
-restating it; the generated [API reference](apps/docs/docs/en/reference) covers every exported
-symbol from JSDoc.

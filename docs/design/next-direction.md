@@ -61,26 +61,35 @@ Ship first:
 - Control: `useCollection`, `useRoute`, `reset`.
 - Golden tests for matching, response plan, collection inheritance/order, passthrough plan, and session isolation.
 
-## Roadmap, not first milestone
+## Milestone order
 
-- Flow/sequences, likely as a `behavior.kind`.
-- WebSocket/SSE/gRPC transports.
-- Recording/import/export.
-- Codec plugins.
-- Data transform plugins.
-- Protocol plugins.
-- Browser extension/UI.
+Agreed 2026-10-17. The HTTP milestone above is done (#154).
 
-## Plugin posture
+1. Repo cleanup: legacy TS packages and examples removed; TS lives on in git history as prior art.
+2. Playwright E2E fixture (#178): native-runtime-backed fixture plus `examples/playwright-e2e`.
+3. Alpha release: cross-compiled binaries on GitHub Releases, npm wrapper (esbuild/biome pattern),
+   Rspress docs site with generated `llms.txt`. Until then, guide pages are Markdown in
+   `docs/guide/`.
+4. Matching parity: query/headers/body Case matching, JMESPath predicates, templating, delay.
+5. Transports design note: worked examples for HTTP, gRPC unary/streaming, WebSocket, SSE,
+   WebSocket + msgpack + protobuf, and test-driven `send`. Reviewed before gRPC code.
+6. gRPC unary, then streaming.
+7. WebSocket and SSE: `onConnect`, Behaviors as lists of outgoing messages with delays, Control API
+   `send` to a Route's live connections in a Session, Playwright `decoy.connection(routeId)`.
+8. Plugin worker (ADR 0002).
 
-Decoy is a mock tool with plugins for advanced cases, not a plugin framework first.
+Deferred: client message/request log for assertions, flows/sequences, recording, UI, custom
+matchers or Behavior kinds, plugin network access, WASM plugin loader.
 
-The broad future extension seam is the plugin pipeline: ordered stages that may adapt transport data
-before or after Decoy's core matching and behavior semantics. The first likely stage is a codec
-stage: `wire bytes <-> logical message`. This keeps complicated WebSocket/msgpack/protobuf plumbing
-out of route YAML while preserving simple route/case/behavior UX. Message transform stages are also
-part of the broader pipeline model, but they must not redefine core matching/session semantics.
+## Languages and wrappers
 
-Herdr-style external command plugins are attractive for early pipeline stages: manifest + executable
-command + host-provided context/API. Avoid broad lifecycle hooks until Decoy's own semantics are
-stable.
+The `decoy` binary is the product. Wrappers in other languages (Node Playwright first, then Python
+and Go Playwright) are thin clients: start or reuse the binary, stamp the Session header, call the
+HTTP Control API. No FFI bindings. The Control API must be frozen as a public contract before the
+second-language wrapper.
+
+## Extension model
+
+See ADR 0002: one ordered `pipeline` of steps (built-in `grpc-frame`, `protobuf` from proto roots,
+`msgpack`, `json`, or plugin steps), JMESPath for matching and templating, and plugins as
+long-running external processes that export steps and functions.
