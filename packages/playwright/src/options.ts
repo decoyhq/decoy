@@ -10,6 +10,11 @@ export interface DecoyOptions {
   reuseExistingServer?: boolean
   /** How long `setup` waits for health after starting `command`, in ms. Default 60000. */
   timeout?: number
+  /**
+   * Browser request URL patterns (Playwright `context.route` globs or RegExps) to send to Decoy.
+   * Matching requests always go to Decoy; everything else continues normally.
+   */
+  urls?: string | RegExp | ReadonlyArray<string | RegExp>
 }
 
 export interface ResolvedDecoyOptions {
