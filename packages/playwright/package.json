@@ -4,6 +4,11 @@
   "description": "Playwright fixtures and global setup for the native Decoy runtime.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/what3verCODE/decoy.git",
+    "directory": "packages/playwright"
+  },
   "exports": {
     ".": {
       "source": "./src/index.ts",
