@@ -1,0 +1,16 @@
+{
+  "name": "@decoy-examples/playwright-ts-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node app/serve.mjs",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@decoy/playwright": "workspace:*",
+    "@playwright/test": "^1.56.0",
+    "@types/node": "^24.0.0"
+  }
+}

@@ -159,6 +159,10 @@ jobs:
       - name: Build @decoy packages
         run: pnpm build
 
+      # Examples start native Decoy with `cargo run`; build it up front so startup is quick.
+      - name: Build decoy binary
+        run: cargo build -p decoy-runtime
+
       - name: Install Chromium (+ system deps)
         run: pnpm --filter "./examples/${{ matrix.example }}" exec playwright install --with-deps chromium
 

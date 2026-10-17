@@ -10,12 +10,11 @@ dist/
 build/
 *.tsbuildinfo
 
-# --- generated TypeDoc API (rebuilt from source JSDoc on every docs build) ---
-apps/docs/docs/en/reference/api/
-
 # --- test / coverage ---
 coverage/
 .rstest/
+test-results/
+playwright-report/
 
 # --- env & secrets ---
 .env

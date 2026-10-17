@@ -1,0 +1,3 @@
+- id: happy-path
+  routes:
+    - users-by-id:user-1:ada

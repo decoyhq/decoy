@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Decoy Playwright E2E</title>
+  </head>
+  <body>
+    <h1>Users</h1>
+    <button id="load-user" type="button">Load user</button>
+    <p id="user" role="status"></p>
+    <script type="module">
+      const output = document.querySelector('#user')
+      document.querySelector('#load-user').addEventListener('click', async () => {
+        const response = await fetch('/api/users/1')
+        output.textContent = response.ok
+          ? (await response.json()).name
+          : `Error ${response.status}`
+      })
+    </script>
+  </body>
+</html>
