@@ -15,7 +15,7 @@
     "test": "pnpm -r run test",
     "test:e2e": "pnpm -r --if-present run test:e2e",
     "typecheck": "pnpm -r run typecheck",
-    "check": "eslint . && prettier --check .",
+    "check": "node scripts/versions.mjs check && eslint . && prettier --check .",
     "fix": "eslint . --fix && prettier --write ."
   },
   "devDependencies": {
