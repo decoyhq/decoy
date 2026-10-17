@@ -13,7 +13,7 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup toolchain (proto reads .prototools)
         uses: moonrepo/setup-toolchain@v0
@@ -38,7 +38,7 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup toolchain (proto reads .prototools)
         uses: moonrepo/setup-toolchain@v0
@@ -70,7 +70,7 @@ jobs:
       browser-examples: ${{ steps.find.outputs.browser-examples }}
       has-browser-examples: ${{ steps.find.outputs.has-browser-examples }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: find
         run: |
           shopt -s nullglob
@@ -111,7 +111,7 @@ jobs:
       matrix:
         example: ${{ fromJSON(needs.discover-examples.outputs.examples) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup toolchain (proto reads .prototools)
         uses: moonrepo/setup-toolchain@v0
@@ -144,7 +144,7 @@ jobs:
       matrix:
         example: ${{ fromJSON(needs.discover-examples.outputs.browser-examples) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup toolchain (proto reads .prototools)
         uses: moonrepo/setup-toolchain@v0

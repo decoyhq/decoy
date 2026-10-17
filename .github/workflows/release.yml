@@ -19,7 +19,7 @@ jobs:
     outputs:
       version: ${{ steps.read.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: read
         name: Read the workspace version
         run: |
@@ -44,7 +44,7 @@ jobs:
           - { target: aarch64-apple-darwin, runner: macos-14 }
           - { target: x86_64-pc-windows-msvc, runner: windows-latest }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup toolchain (proto reads .prototools)
         uses: moonrepo/setup-toolchain@v0
@@ -83,7 +83,7 @@ jobs:
           echo "$out"
           [ "$out" = "decoy ${{ needs.version.outputs.version }}" ]
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: decoy-${{ matrix.target }}
           # Archives only: the staging folders (decoy-<version>-<target>/) also contain dots.
@@ -99,7 +99,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
@@ -125,14 +125,14 @@ jobs:
     needs: [version, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup toolchain (proto reads .prototools)
         uses: moonrepo/setup-toolchain@v0
         with:
           auto-install: true
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: archives
           merge-multiple: true
@@ -168,14 +168,14 @@ jobs:
       NPM_CONFIG_PROVENANCE: 'true'
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Setup toolchain (proto reads .prototools)
         uses: moonrepo/setup-toolchain@v0
         with:
           auto-install: true
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: archives
           merge-multiple: true
