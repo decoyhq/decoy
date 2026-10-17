@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 
 use crate::expression::{predicate_holds, validate_predicate};
 use crate::request::RequestEnvelope;
-use crate::schema::HttpMethod;
+use crate::schema::{HttpMethod, Transport};
 
 /// The request as Case matching sees it.
 pub struct MatchInput<'a> {
@@ -19,13 +19,18 @@ pub struct MatchInput<'a> {
     pub envelope: &'a RequestEnvelope,
 }
 
-const FIELDS: [&str; 5] = ["pathParams", "query", "headers", "cookies", "body"];
+const HTTP_FIELDS: [&str; 5] = ["pathParams", "query", "headers", "cookies", "body"];
+const GRPC_FIELDS: [&str; 2] = ["message", "metadata"];
 
 /// Pattern value meaning "present, with any value" in the string-valued fields.
 const ANY: &str = "*";
 
 /// Reject `match` shapes the matcher would silently misread.
-pub fn validate_case_match(case_match: &Value) -> Result<(), String> {
+pub fn validate_case_match(transport: &Transport, case_match: &Value) -> Result<(), String> {
+    let (allowed, free_form): (&[&str], &str) = match transport {
+        Transport::Http => (&HTTP_FIELDS, "body"),
+        Transport::Grpc => (&GRPC_FIELDS, "message"),
+    };
     let fields = match case_match {
         Value::Null => return Ok(()),
         Value::String(predicate) => return validate_predicate(predicate),
@@ -38,15 +43,15 @@ pub fn validate_case_match(case_match: &Value) -> Result<(), String> {
         }
     };
     for (field, pattern) in fields {
-        if !FIELDS.contains(&field.as_str()) {
+        if !allowed.contains(&field.as_str()) {
             return Err(format!(
                 "unknown match field `{field}`; expected one of {}",
-                FIELDS.join(", ")
+                allowed.join(", ")
             ));
         }
         match pattern {
             Value::String(text) if is_predicate(text) => validate_predicate(text)?,
-            _ if field == "body" || pattern.is_object() => {}
+            _ if field == free_form || pattern.is_object() => {}
             _ => {
                 return Err(format!(
                     "match field `{field}` must be a mapping or a `${{ }}` predicate, got {}",
@@ -322,23 +327,35 @@ mod tests {
     }
 
     #[test]
-    fn validation_rejects_unknown_fields_and_non_mapping_shapes() {
-        assert!(validate_case_match(&json!({ "body": [1] })).is_ok());
+    fn grpc_validation_allows_message_and_metadata_only() {
+        let grpc = Transport::Grpc;
+        assert!(validate_case_match(&grpc, &json!({ "message": { "id": "a-1" } })).is_ok());
+        assert!(validate_case_match(&grpc, &json!({ "metadata": { "x-tenant": "a" } })).is_ok());
         assert!(
-            validate_case_match(&json!({ "querry": {} }))
+            validate_case_match(&grpc, &json!({ "body": {} }))
+                .unwrap_err()
+                .contains("expected one of message, metadata")
+        );
+    }
+
+    #[test]
+    fn validation_rejects_unknown_fields_and_non_mapping_shapes() {
+        assert!(validate_case_match(&Transport::Http, &json!({ "body": [1] })).is_ok());
+        assert!(
+            validate_case_match(&Transport::Http, &json!({ "querry": {} }))
                 .unwrap_err()
                 .contains("unknown match field `querry`")
         );
         assert!(
-            validate_case_match(&json!({ "query": "x" }))
+            validate_case_match(&Transport::Http, &json!({ "query": "x" }))
                 .unwrap_err()
                 .contains("must be a mapping")
         );
-        assert!(validate_case_match(&json!("${ `true` }")).is_ok());
-        assert!(validate_case_match(&json!("plain")).is_err());
-        assert!(validate_case_match(&json!({ "query": "${ query.x }" })).is_ok());
+        assert!(validate_case_match(&Transport::Http, &json!("${ `true` }")).is_ok());
+        assert!(validate_case_match(&Transport::Http, &json!("plain")).is_err());
+        assert!(validate_case_match(&Transport::Http, &json!({ "query": "${ query.x }" })).is_ok());
         assert!(
-            validate_case_match(&json!({ "query": "${ query.[ }" }))
+            validate_case_match(&Transport::Http, &json!({ "query": "${ query.[ }" }))
                 .unwrap_err()
                 .contains("invalid JMESPath")
         );

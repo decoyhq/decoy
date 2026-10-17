@@ -7,7 +7,7 @@ use crate::http::{BodyPlan, RequestMetadata, ResponsePlan, RuntimeConfig};
 use crate::http_forward::{ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough};
 use crate::matching::{MatchInput, case_matches};
 use crate::request::RequestEnvelope;
-use crate::schema::{Behavior, HttpMethod, Route};
+use crate::schema::{Behavior, HttpMethod, Route, RouteMatch};
 use crate::template::{has_templates, render_response};
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -253,11 +253,15 @@ impl Catalog {
                 continue;
             };
 
-            if route.route_match.method != request.method {
+            let RouteMatch::Http(route_match) = &route.route_match else {
+                continue;
+            };
+
+            if route_match.method != request.method {
                 continue;
             }
 
-            let Some(path_params) = match_path(&route.route_match.path, &request.path) else {
+            let Some(path_params) = match_path(&route_match.path, &request.path) else {
                 continue;
             };
 
@@ -683,6 +687,7 @@ cases:
                 passthrough: Some(PassthroughTarget {
                     base_url: "https://runtime.example.test".to_owned(),
                 }),
+                ..RuntimeConfig::default()
             },
         )
         .unwrap()
@@ -922,6 +927,7 @@ cases:
                 passthrough: Some(PassthroughTarget {
                     base_url: "https://runtime.example.test".to_owned(),
                 }),
+                ..RuntimeConfig::default()
             },
         )
         .unwrap();
@@ -979,6 +985,7 @@ cases:
                 passthrough: Some(PassthroughTarget {
                     base_url: "https://runtime.example.test".to_owned(),
                 }),
+                ..RuntimeConfig::default()
             },
         )
         .unwrap();

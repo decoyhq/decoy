@@ -15,6 +15,15 @@ message Approval {
   string id = 1;
   State state = 2;
   repeated string approvers = 3;
+  map<string, string> labels = 4;
+  Reviewer reviewer = 5;
+  int32 priority = 6;
+  int64 created_at_ms = 7;
+}
+
+message Reviewer {
+  string name = 1;
+  bool admin = 2;
 }
 
 enum State {

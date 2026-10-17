@@ -8,6 +8,7 @@ pub mod config;
 pub mod control_api;
 pub mod engine;
 pub mod expression;
+pub mod grpc_schema;
 pub mod http;
 pub mod http_forward;
 pub mod matching;
@@ -32,7 +33,8 @@ pub use http::{
 pub use http_forward::{ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough};
 pub use request::RequestEnvelope;
 pub use schema::{
-    Behavior, BehaviorKind, Case, HttpMethod, HttpRouteMatch, Route, Transport, ValidationError,
+    Behavior, BehaviorKind, Case, GrpcRouteMatch, HttpMethod, HttpRouteMatch, Route, RouteMatch,
+    Transport, ValidationError,
 };
 pub use startup::{
     SourceLocation, Startup, StartupDiagnostic, StartupDiagnosticKind, StartupError,

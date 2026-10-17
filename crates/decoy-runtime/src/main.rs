@@ -83,8 +83,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         },
         &cwd,
     )?;
-    // No gRPC Routes consume the pool yet (#244); loading it fails startup on bad protos.
-    let _proto_pool = load_descriptor_pool(&config.protos)?;
+    let protos = load_descriptor_pool(&config.protos)?;
     let startup = load_catalog_from_files(
         &config.routes,
         &config.collections,
@@ -92,6 +91,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             passthrough: config
                 .passthrough_base_url
                 .map(|base_url| PassthroughTarget { base_url }),
+            protos,
         },
         config.collection.as_deref(),
     )?;

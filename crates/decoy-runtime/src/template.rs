@@ -27,6 +27,11 @@ fn value_has_templates(value: &Value) -> bool {
 
 /// Startup check: every template parses, and `status` is an integer 100–599 or a template.
 pub fn validate_response(response: &ResponseBehavior) -> Result<(), String> {
+    if response.message.is_some() || !response.metadata.is_empty() {
+        return Err(
+            "`message` and `metadata` are for gRPC Routes; use `body` and `headers`".to_owned(),
+        );
+    }
     match &response.status {
         None => {}
         Some(Value::Number(number)) => {
@@ -46,7 +51,7 @@ pub fn validate_response(response: &ResponseBehavior) -> Result<(), String> {
     response.body.iter().try_for_each(validate_value)
 }
 
-fn validate_value(value: &Value) -> Result<(), String> {
+pub(crate) fn validate_value(value: &Value) -> Result<(), String> {
     match value {
         Value::String(text) => validate_string(text),
         Value::Array(items) => items.iter().try_for_each(validate_value),
@@ -55,7 +60,7 @@ fn validate_value(value: &Value) -> Result<(), String> {
     }
 }
 
-fn validate_string(text: &str) -> Result<(), String> {
+pub(crate) fn validate_string(text: &str) -> Result<(), String> {
     for segment in segments(text)? {
         if let Segment::Expression(source) = segment {
             validate_expression(&source)?;
@@ -96,6 +101,8 @@ pub fn render_response(
         status,
         headers,
         body,
+        message: response.message.clone(),
+        metadata: response.metadata.clone(),
         delay: response.delay,
     })
 }
@@ -161,6 +168,8 @@ mod tests {
                 .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
                 .collect::<BTreeMap<_, _>>(),
             body: Some(body),
+            message: None,
+            metadata: BTreeMap::new(),
             delay: None,
         }
     }

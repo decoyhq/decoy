@@ -452,6 +452,66 @@ protos:
     assert!(stderr.contains("expected"), "{stderr}");
 }
 
+#[test]
+fn grpc_routes_are_checked_against_protos_at_startup() {
+    let fixture = Fixture::new();
+    fixture.write_collections("- id: default\n  routes: []\n");
+    fixture.write_config(format!(
+        r#"
+routes: routes
+collections: collections.yaml
+protos:
+  roots: [{}]
+"#,
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/proto")
+            .display()
+    ));
+    let start = |route: &str| {
+        fixture.write_route("approvals.yaml", route);
+        let output = Command::new(env!("CARGO_BIN_EXE_decoy"))
+            .args(["serve", "--config", "decoy.yaml", "--port", "1"])
+            .current_dir(fixture.temp.path())
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    };
+
+    let stderr = start(
+        r#"
+id: approvals-get
+transport: grpc
+match: { service: approvals.v1.Nope, method: GetApproval }
+cases:
+  any:
+    behaviors:
+      ok: { message: {} }
+"#,
+    );
+    assert!(stderr.contains("approvals.yaml"), "{stderr}");
+    assert!(
+        stderr.contains("unknown gRPC service `approvals.v1.Nope`"),
+        "{stderr}"
+    );
+
+    let stderr = start(
+        r#"
+id: approvals-get
+transport: grpc
+match: { service: approvals.v1.Approvals, method: GetApproval }
+cases:
+  any:
+    behaviors:
+      ok: { message: { state: DONE } }
+"#,
+    );
+    assert!(
+        stderr.contains("behavior `approvals-get:any:ok`: `message.state` has unknown"),
+        "{stderr}"
+    );
+}
+
 #[derive(Debug)]
 struct CapturedRequest {
     request_line: String,
