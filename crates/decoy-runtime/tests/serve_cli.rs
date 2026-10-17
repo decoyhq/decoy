@@ -963,3 +963,94 @@ cases:
         "{stderr}"
     );
 }
+
+#[tokio::test]
+async fn serve_matches_cases_with_jmespath_predicates() {
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "graphql.yaml",
+        r#"
+id: graphql
+transport: http
+match:
+  method: POST
+  path: /graphql
+cases:
+  get-user:
+    match:
+      headers: { x-client: web }
+      body: "${ body.operationName == 'GetUser' }"
+    behaviors:
+      ok:
+        body: { data: { user: { name: Ada } } }
+  big-order:
+    match: "${ body.variables.amount > `1000` }"
+    behaviors:
+      ok:
+        body: { data: { order: big } }
+"#,
+    );
+    fixture.write_collections(
+        "- id: default\n  routes:\n    - graphql:get-user:ok\n    - graphql:big-order:ok\n",
+    );
+    let port = unused_port();
+    let _server = fixture.spawn(port, &[]);
+    wait_for_server(port).await;
+    let client = reqwest::Client::new();
+    let post = |body: &'static str| {
+        client
+            .post(format!("http://127.0.0.1:{port}/graphql"))
+            .header("content-type", "application/json")
+            .header("x-client", "web")
+            .body(body)
+            .send()
+    };
+
+    let user = post(r#"{"operationName":"GetUser"}"#).await.unwrap();
+    assert_eq!(
+        user.json::<serde_json::Value>().await.unwrap(),
+        serde_json::json!({ "data": { "user": { "name": "Ada" } } })
+    );
+    let order = post(r#"{"operationName":"Order","variables":{"amount":1500}}"#)
+        .await
+        .unwrap();
+    assert_eq!(
+        order.json::<serde_json::Value>().await.unwrap(),
+        serde_json::json!({ "data": { "order": "big" } })
+    );
+    let miss = post(r#"{"operationName":"Order","variables":{"amount":10}}"#)
+        .await
+        .unwrap();
+    assert_eq!(miss.status(), 501);
+}
+
+#[test]
+fn invalid_predicate_fails_startup() {
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "users.yaml",
+        r#"
+id: users
+transport: http
+match:
+  method: GET
+  path: /users
+cases:
+  broken:
+    match: "${ query.[ }"
+    behaviors:
+      ok:
+        status: 200
+"#,
+    );
+    fixture.write_collections("- id: default\n  routes:\n    - users:broken:ok\n");
+
+    let output = fixture.output(&[]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("users:broken") && stderr.contains("invalid JMESPath"),
+        "{stderr}"
+    );
+}

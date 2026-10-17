@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use serde_json::Value;
+use serde_json::{Value, json};
+
+use crate::schema::HttpMethod;
 
 /// What Case matching (and later predicates and templates) can see about an HTTP request, besides
 /// method, path, and path params.
@@ -19,6 +21,37 @@ pub struct RequestContext {
 }
 
 impl RequestContext {
+    /// What predicates and templates see: `{ method, url, path, pathParams, query, headers,
+    /// cookies, body }`. A query key is a string, or an array when it repeats.
+    pub fn to_json(
+        &self,
+        method: &HttpMethod,
+        path: &str,
+        path_params: &BTreeMap<String, String>,
+    ) -> Value {
+        let query: serde_json::Map<String, Value> = self
+            .query
+            .iter()
+            .map(|(key, values)| {
+                let value = match values.as_slice() {
+                    [single] => json!(single),
+                    many => json!(many),
+                };
+                (key.clone(), value)
+            })
+            .collect();
+        json!({
+            "method": method,
+            "url": self.url,
+            "path": path,
+            "pathParams": path_params,
+            "query": query,
+            "headers": self.headers,
+            "cookies": self.cookies,
+            "body": self.body,
+        })
+    }
+
     pub fn from_parts(
         base_url: Option<&str>,
         path_and_query: &str,
