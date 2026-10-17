@@ -52,9 +52,16 @@ cases:
     - users-by-id:user-123:missing
 ```
 
-Switch Scenarios at runtime through the Control API under `/__decoy__/control`, per Session
-(`x-mock-session` header). See [`docs/design/native-control-api-shape.md`](docs/design/native-control-api-shape.md).
-Not yet mounted by `decoy serve` ([#194](https://github.com/what3verCODE/decoy/issues/194)).
+Switch Scenarios at runtime through the Control API, per Session (`x-mock-session` header):
+
+```sh
+curl -X POST localhost:8080/__decoy__/control/useCollection -d '{"collection":"user-missing"}'
+curl -i localhost:8080/users/123   # 404
+curl -X POST localhost:8080/__decoy__/control/useCollection -d '{"collection":"happy-path"}'
+```
+
+Verbs: `useCollection`, `useRoute` (override one Behavior), `reset` (drop overrides). See
+[`docs/design/native-control-api-shape.md`](docs/design/native-control-api-shape.md).
 
 ## Roadmap
 

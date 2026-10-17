@@ -9,7 +9,6 @@ pub mod control_api;
 pub mod engine;
 pub mod http;
 pub mod http_forward;
-pub mod native_http;
 pub mod schema;
 pub mod startup;
 
@@ -26,7 +25,6 @@ pub use http::{
     BodyPlan, HttpResponsePlan, PassthroughPlan, RequestMetadata, ResponsePlan, RuntimeConfig,
 };
 pub use http_forward::{ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough};
-pub use native_http::{NativeHttpError, NativeHttpRuntime, NativeHttpServer};
 pub use schema::{
     Behavior, BehaviorKind, Case, HttpMethod, HttpRouteMatch, Route, Transport, ValidationError,
 };

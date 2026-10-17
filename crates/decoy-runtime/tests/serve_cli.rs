@@ -613,3 +613,202 @@ async fn wait_for_server(port: u16) {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
 }
+
+const CONTROL_ROUTE: &str = r#"
+id: get-user
+transport: http
+match:
+  method: GET
+  path: /users/{id}
+cases:
+  user-123:
+    match:
+      pathParams:
+        id: "123"
+    behaviors:
+      success:
+        status: 200
+        body:
+          id: "123"
+      missing:
+        status: 404
+        body:
+          error: missing
+      broken:
+        status: 500
+        body:
+          error: broken
+"#;
+
+const CONTROL_COLLECTIONS: &str = r#"
+- id: happy
+  routes:
+    - get-user:user-123:success
+- id: not-found
+  routes:
+    - get-user:user-123:missing
+"#;
+
+struct ControlServer {
+    _server: Server,
+    _fixture: Fixture,
+    port: u16,
+    client: reqwest::Client,
+}
+
+impl ControlServer {
+    async fn start() -> Self {
+        let fixture = Fixture::new();
+        fixture.write_route("user.yaml", CONTROL_ROUTE);
+        fixture.write_collections(CONTROL_COLLECTIONS);
+        let port = unused_port();
+        let server = fixture.spawn(port, &[]);
+        wait_for_server(port).await;
+        Self {
+            _server: server,
+            _fixture: fixture,
+            port,
+            client: reqwest::Client::new(),
+        }
+    }
+
+    async fn get_user(&self, session: Option<&str>) -> u16 {
+        let mut request = self
+            .client
+            .get(format!("http://127.0.0.1:{}/users/123", self.port));
+        if let Some(session) = session {
+            request = request.header("x-mock-session", session);
+        }
+        request.send().await.unwrap().status().as_u16()
+    }
+
+    async fn post(&self, path: &str, session: Option<&str>, body: &str) -> (u16, String) {
+        let mut request = self
+            .client
+            .post(format!("http://127.0.0.1:{}{path}", self.port))
+            .body(body.to_owned());
+        if let Some(session) = session {
+            request = request.header("x-mock-session", session);
+        }
+        let response = request.send().await.unwrap();
+        let status = response.status().as_u16();
+        (status, response.text().await.unwrap())
+    }
+}
+
+#[tokio::test]
+async fn serve_control_verbs_mutate_only_targeted_session_and_reset_independently() {
+    let server = ControlServer::start().await;
+
+    assert_eq!(server.get_user(Some("a")).await, 200);
+    assert_eq!(server.get_user(Some("b")).await, 200);
+
+    let (status, body) = server
+        .post(
+            "/__decoy__/control/useCollection",
+            Some("a"),
+            r#"{"collection":"not-found"}"#,
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(server.get_user(Some("a")).await, 404);
+    assert_eq!(server.get_user(Some("b")).await, 200);
+
+    let (status, _) = server
+        .post(
+            "/__decoy__/control/useRoute",
+            Some("b"),
+            r#"{"route":"get-user","case":"user-123","behavior":"broken"}"#,
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(server.get_user(Some("a")).await, 404);
+    assert_eq!(server.get_user(Some("b")).await, 500);
+
+    let (status, _) = server.post("/__decoy__/control/reset", Some("b"), "").await;
+    assert_eq!(status, 200);
+    assert_eq!(server.get_user(Some("a")).await, 404);
+    assert_eq!(server.get_user(Some("b")).await, 200);
+}
+
+#[tokio::test]
+async fn serve_control_without_session_header_targets_the_default_session() {
+    let server = ControlServer::start().await;
+
+    let (status, _) = server
+        .post(
+            "/__decoy__/control/useCollection",
+            None,
+            r#"{"collection":"not-found"}"#,
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(server.get_user(None).await, 404);
+    assert_eq!(server.get_user(Some("other")).await, 200);
+}
+
+#[tokio::test]
+async fn serve_control_returns_clear_errors_for_invalid_addresses() {
+    let server = ControlServer::start().await;
+
+    let (status, body) = server
+        .post(
+            "/__decoy__/control/useCollection",
+            None,
+            r#"{"collection":"ghost"}"#,
+        )
+        .await;
+    assert_eq!(status, 400);
+    assert_eq!(body, r#"{"error":"unknown collection `ghost`"}"#);
+
+    let (status, body) = server
+        .post(
+            "/__decoy__/control/useRoute",
+            None,
+            r#"{"route":"get-user","case":"user-123","behavior":"ghost"}"#,
+        )
+        .await;
+    assert_eq!(status, 400);
+    assert_eq!(
+        body,
+        r#"{"error":"unknown behavior `get-user:user-123:ghost`"}"#
+    );
+}
+
+#[tokio::test]
+async fn serve_control_rejects_malformed_reset_json_without_mutating_selection() {
+    let server = ControlServer::start().await;
+
+    let (status, _) = server
+        .post(
+            "/__decoy__/control/useRoute",
+            None,
+            r#"{"route":"get-user","case":"user-123","behavior":"broken"}"#,
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(server.get_user(None).await, 500);
+
+    let (status, body) = server.post("/__decoy__/control/reset", None, "{").await;
+    assert_eq!(status, 400);
+    assert!(body.contains("failed to parse control JSON body"), "{body}");
+    assert_eq!(server.get_user(None).await, 500);
+}
+
+#[tokio::test]
+async fn serve_reserves_decoy_namespace_but_not_lookalike_paths() {
+    let server = ControlServer::start().await;
+
+    let (status, body) = server.post("/__decoy__/control/ghost", None, "").await;
+    assert_eq!(status, 404);
+    assert!(body.contains("is not defined"), "{body}");
+
+    let lookalike = server
+        .client
+        .get(format!("http://127.0.0.1:{}/__decoy__foo", server.port))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(lookalike.status(), 501);
+    assert_eq!(lookalike.headers()["x-mock-miss"], "true");
+}
