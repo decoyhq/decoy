@@ -20,6 +20,7 @@ message Approval {
   int32 priority = 6;
   int64 created_at_ms = 7;
   bytes evidence = 8;
+  double score = 9;
 }
 
 message Reviewer {

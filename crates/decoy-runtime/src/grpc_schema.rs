@@ -7,6 +7,8 @@
 //! decoded request as [`request_json_options`] renders it, so they must use that canonical form:
 //! camelCase field names, 64-bit integers as strings, enums as names.
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use prost_reflect::{
     DescriptorPool, DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, MethodDescriptor,
     SerializeOptions,
@@ -281,7 +283,14 @@ fn check_kind(value: &Value, kind: &Kind, path: &str, form: Form) -> Result<(), 
             }
             _ => false,
         },
-        Kind::String | Kind::Bytes => value.is_string(),
+        Kind::String => value.is_string(),
+        // Canonical bytes are padded standard base64, exactly as the request renders them.
+        Kind::Bytes => value.as_str().is_some_and(|text| {
+            form == Form::Any
+                || BASE64
+                    .decode(text)
+                    .is_ok_and(|bytes| BASE64.encode(bytes) == text)
+        }),
         Kind::Bool => value.is_boolean(),
         Kind::Int32 | Kind::Sint32 | Kind::Sfixed32 => {
             (value.is_number() || form == Form::Any)
@@ -294,17 +303,21 @@ fn check_kind(value: &Value, kind: &Kind, path: &str, form: Form) -> Result<(), 
         // Canonical protobuf JSON writes 64-bit integers as strings.
         Kind::Int64 | Kind::Sint64 | Kind::Sfixed64 => {
             (value.is_string() || form == Form::Any)
-                && integer(value).is_some_and(|number| i64::try_from(number).is_ok())
+                && integer(value).is_some_and(|number| {
+                    i64::try_from(number).is_ok() && canonical_integer(value, number, form)
+                })
         }
         Kind::Uint64 | Kind::Fixed64 => {
             (value.is_string() || form == Form::Any)
-                && integer(value).is_some_and(|number| u64::try_from(number).is_ok())
+                && integer(value).is_some_and(|number| {
+                    u64::try_from(number).is_ok() && canonical_integer(value, number, form)
+                })
         }
         Kind::Float | Kind::Double => match value {
             Value::Number(_) => true,
             Value::String(text) => {
                 matches!(text.as_str(), "NaN" | "Infinity" | "-Infinity")
-                    || text.parse::<f64>().is_ok()
+                    || (form == Form::Any && text.parse::<f64>().is_ok())
             }
             _ => false,
         },
@@ -314,6 +327,11 @@ fn check_kind(value: &Value, kind: &Kind, path: &str, form: Form) -> Result<(), 
     } else {
         Err(format!("`{path}` expects {}, got {value}", kind_name(kind)))
     }
+}
+
+/// A canonical 64-bit string has no sign, padding, or leading zeros (`"5"`, not `"+05"`).
+fn canonical_integer(value: &Value, number: i128, form: Form) -> bool {
+    form == Form::Any || value.as_str() == Some(number.to_string().as_str())
 }
 
 /// Protobuf JSON integers: a JSON integer, or a decimal string (the 64-bit form).
@@ -491,6 +509,18 @@ cases:
                 .unwrap_err()
                 .contains("expects int64")
         );
+        for (literal, expected) in [
+            (serde_json::json!({ "createdAtMs": "+05" }), "expects int64"),
+            (serde_json::json!({ "evidence": "hello" }), "expects bytes"),
+            (serde_json::json!({ "score": "1.5" }), "expects double"),
+        ] {
+            assert!(
+                canonical(literal.clone()).unwrap_err().contains(expected),
+                "{literal}"
+            );
+        }
+        canonical(serde_json::json!({ "evidence": "aGVsbG8=", "score": 1.5 })).unwrap();
+        canonical(serde_json::json!({ "score": "NaN" })).unwrap();
         assert!(
             canonical(serde_json::json!({ "state": 1 }))
                 .unwrap_err()

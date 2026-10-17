@@ -248,6 +248,7 @@ name = "decoy-runtime"
 version = "0.1.0-alpha.5"
 dependencies = [
  "axum",
+ "base64",
  "clap",
  "fastrand",
  "humantime",
