@@ -96,6 +96,7 @@ pub fn render_response(
         status,
         headers,
         body,
+        delay: response.delay,
     })
 }
 
@@ -160,6 +161,7 @@ mod tests {
                 .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
                 .collect::<BTreeMap<_, _>>(),
             body: Some(body),
+            delay: None,
         }
     }
 

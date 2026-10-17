@@ -1140,3 +1140,87 @@ cases:
         "{stderr}"
     );
 }
+
+#[tokio::test]
+async fn serve_delays_behaviors_without_blocking_other_requests() {
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "timing.yaml",
+        r#"
+id: timing
+transport: http
+match:
+  method: GET
+  path: /timing/{speed}
+cases:
+  slow:
+    match: { pathParams: { speed: slow } }
+    behaviors:
+      wait:
+        delay: 300ms
+        body: slow
+  fast:
+    match: { pathParams: { speed: fast } }
+    behaviors:
+      now:
+        body: fast
+"#,
+    );
+    fixture.write_collections(
+        "- id: default\n  routes:\n    - timing:slow:wait\n    - timing:fast:now\n",
+    );
+    let port = unused_port();
+    let _server = fixture.spawn(port, &[]);
+    wait_for_server(port).await;
+    let client = reqwest::Client::new();
+    let get = |speed: &str| {
+        client
+            .get(format!("http://127.0.0.1:{port}/timing/{speed}"))
+            .send()
+    };
+
+    let started = Instant::now();
+    let slow = tokio::spawn(get("slow"));
+    let fast = get("fast").await.unwrap();
+    let fast_elapsed = started.elapsed();
+    assert_eq!(fast.text().await.unwrap(), "fast");
+    let slow = slow.await.unwrap().unwrap();
+    let slow_elapsed = started.elapsed();
+
+    assert_eq!(slow.text().await.unwrap(), "slow");
+    assert!(
+        slow_elapsed >= Duration::from_millis(300),
+        "{slow_elapsed:?}"
+    );
+    assert!(
+        fast_elapsed < Duration::from_millis(300),
+        "{fast_elapsed:?}"
+    );
+}
+
+#[test]
+fn invalid_delay_fails_startup() {
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "users.yaml",
+        r#"
+id: users
+transport: http
+match:
+  method: GET
+  path: /users
+cases:
+  any:
+    behaviors:
+      slow:
+        delay: soon
+"#,
+    );
+    fixture.write_collections("- id: default\n  routes:\n    - users:any:slow\n");
+
+    let output = fixture.output(&[]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("must be integer milliseconds"), "{stderr}");
+}
