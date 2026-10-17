@@ -95,8 +95,14 @@ impl ServeConfig {
             .as_ref()
             .map(|config| config.ports.clone())
             .unwrap_or_default();
-        let mut taken = BTreeMap::from([(port, "port".to_owned())]);
-        for (name, extra) in &ports {
+        let main = if options.port.is_some() {
+            "--port"
+        } else {
+            "port"
+        };
+        let mut taken = BTreeMap::from([(port, main.to_owned())]);
+        // Port 0 asks the OS for a free port, so several 0s never collide.
+        for (name, extra) in ports.iter().filter(|(_, extra)| **extra != 0) {
             if let Some(first) = taken.insert(*extra, format!("ports.{name}")) {
                 return Err(ConfigError::PortConflict {
                     port: *extra,
@@ -343,6 +349,16 @@ collection: config-collection
         );
     }
 
+    fn load_raw(base: &Path) -> Result<ServeConfig, ConfigError> {
+        ServeConfig::from_options(
+            ServeCliOptions {
+                config_file: Some(base.join("decoy.yaml")),
+                ..ServeCliOptions::default()
+            },
+            base,
+        )
+    }
+
     #[test]
     fn extra_ports_are_named_and_must_not_collide() {
         let dir = tempdir().unwrap();
@@ -374,7 +390,16 @@ collection: config-collection
             load("{ a: 5000, b: 5000 }", None).unwrap_err().to_string(),
             "`ports.b` uses port 5000, already taken by `ports.a`"
         );
-        assert!(load("{ grpc: 4200 }", Some(4200)).is_err());
+        assert_eq!(
+            load("{ grpc: 4200 }", Some(4200)).unwrap_err().to_string(),
+            "`ports.grpc` uses port 4200, already taken by `--port`"
+        );
+        fs::write(
+            base.join("decoy.yaml"),
+            "routes: r\ncollections: c.yaml\nport: 0\nports: { a: 0, b: 0 }\n",
+        )
+        .unwrap();
+        assert!(load_raw(base).is_ok());
     }
 
     #[test]

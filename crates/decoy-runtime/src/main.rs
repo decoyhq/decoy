@@ -108,15 +108,22 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         .fallback(any(handle_request))
         .with_state(controller);
     // Bind every listener before serving any, so a taken port fails startup cleanly (Q1).
-    let mut listeners = vec![bind("port", config.port).await?];
+    let mut listeners = vec![("port".to_owned(), bind("port", config.port).await?)];
     for (name, port) in &config.ports {
-        listeners.push(bind(&format!("ports.{name}"), *port).await?);
+        let name = format!("ports.{name}");
+        let listener = bind(&name, *port).await?;
+        listeners.push((name, listener));
     }
 
     let (shutdown, _) = tokio::sync::watch::channel(());
     let mut servers = tokio::task::JoinSet::new();
-    for listener in listeners {
-        eprintln!("decoy serve listening on http://{}", listener.local_addr()?);
+    for (name, listener) in listeners {
+        let addr = listener.local_addr()?;
+        if name == "port" {
+            eprintln!("decoy serve listening on http://{addr}");
+        } else {
+            eprintln!("decoy serve listening on http://{addr} ({name})");
+        }
         let mut stop = shutdown.subscribe();
         servers.spawn(
             axum::serve(listener, app.clone())
