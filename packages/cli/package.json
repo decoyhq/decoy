@@ -10,7 +10,7 @@
     "directory": "packages/cli"
   },
   "bin": {
-    "decoy": "./dist/bin.js"
+    "decoy": "dist/bin.js"
   },
   "files": [
     "dist"
