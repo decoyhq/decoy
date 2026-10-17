@@ -19,3 +19,4 @@ What happens:
 | Test | Proves |
 | --- | --- |
 | `users.spec.ts` › loading a user | Clicking **Load user** fetches `/api/users/1`, Decoy answers from `mocks/routes/users.yaml`, and the page shows `Ada Lovelace`. |
+| `collections.spec.ts` › switching the Collection | `decoy.useCollection('no-users')` before the click makes the same action show `Error 404: user not found` (`mocks/collections.yaml`). |
