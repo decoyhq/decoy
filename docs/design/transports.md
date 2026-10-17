@@ -35,8 +35,11 @@ and the shape of a Behavior's outcome.
 | --------- | ------------------- | --------------------------------- | ------------------------------------------------ |
 | `http`    | `method`, `path`    | one request                       | `status`, `headers`, `body` / passthrough        |
 | `grpc`    | `service`, `method` | one call (unary), or each message | `message` / `status` error; `stream` of messages |
-| `ws`      | `path`              | connect, each inbound message     | `send` list of messages, `close`                 |
-| `sse`     | `path` (GET)        | connect                           | `events` list                                    |
+| `ws`      | `path`              | each inbound message              | `send` list of messages, `close`                 |
+| `sse`     | `path` (GET)        | the subscribing request           | `events` list                                    |
+
+Server-first messages (WebSocket, streaming gRPC, SSE pushes) come from the test via the Control
+API `send` (section 9), not from connect-time Cases.
 
 ## 2. Config: protos and pipelines
 
