@@ -1,15 +1,19 @@
 import { createServer, type Server } from 'node:http'
 import { resolve } from 'node:path'
-import type { FullConfig } from '@playwright/test'
+import { defineConfig, type FullConfig } from '@playwright/test'
 import { afterEach, describe, expect, test } from '@rstest/core'
+import type { DecoyTestOptions } from './fixtures'
 import { type DecoyOptions, isHealthy, resolveOptions } from './options'
 import { type SetupConfig, setup, type Teardown } from './setup'
 
 const FAKE_DECOY = resolve(process.cwd(), 'fixtures/fake-decoy.mjs')
 
-// Compile-time guard: what Playwright passes to global setup must satisfy `SetupConfig`.
-const acceptsPlaywrightConfig: (config: FullConfig) => SetupConfig = (config) => config
+// Compile-time guard: a typed Playwright config must satisfy `SetupConfig`.
+const acceptsPlaywrightConfig: (config: FullConfig<DecoyTestOptions>) => SetupConfig = (config) =>
+  config
 void acceptsPlaywrightConfig
+// Compile-time guard: users type their config with the same generic.
+void defineConfig<DecoyTestOptions>({ use: { decoyOptions: { url: 'http://127.0.0.1:8080' } } })
 
 function config(decoyOptions: DecoyOptions | undefined): SetupConfig {
   return { projects: [{ use: { decoyOptions } }] }

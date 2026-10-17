@@ -1,3 +1,8 @@
-export { createDecoyFixtures, type DecoyFixtures, type DecoyRouter } from './fixtures'
+export {
+  createDecoyFixtures,
+  type DecoyFixtures,
+  type DecoyRouter,
+  type DecoyTestOptions,
+} from './fixtures'
 export type { DecoyOptions } from './options'
-export { setup, type Teardown } from './setup'
+export { type SetupConfig, setup, type Teardown } from './setup'

@@ -8,9 +8,13 @@ export interface DecoyRouter {
   readonly sessionId: string
 }
 
-export interface DecoyFixtures {
+/** Option fixtures, for typing config: `defineConfig<DecoyTestOptions>({ use: { decoyOptions } })`. */
+export interface DecoyTestOptions {
   /** Decoy config; `undefined` (the default) leaves Decoy disabled. */
   decoyOptions: DecoyOptions | undefined
+}
+
+export interface DecoyFixtures extends DecoyTestOptions {
   decoy: DecoyRouter
 }
 

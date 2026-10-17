@@ -1,13 +1,14 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import { dirname } from 'node:path'
+import type { FullConfig, FullProject } from '@playwright/test'
+import type { DecoyTestOptions } from './fixtures'
 import { type DecoyOptions, isHealthy, type ResolvedDecoyOptions, resolveOptions } from './options'
 
 export type Teardown = () => Promise<void>
 
-/** The part of Playwright's `FullConfig` that `setup` reads. */
-export interface SetupConfig {
-  configFile?: string
-  projects: ReadonlyArray<{ use: object }>
+/** The part of Playwright's `FullConfig<DecoyTestOptions>` that `setup` reads. */
+export type SetupConfig = Pick<FullConfig<DecoyTestOptions>, 'configFile'> & {
+  projects: ReadonlyArray<Pick<FullProject<DecoyTestOptions>, 'use'>>
 }
 
 /**
@@ -52,16 +53,7 @@ export async function setup(config: SetupConfig): Promise<Teardown> {
 }
 
 function findDecoyOptions(config: SetupConfig): DecoyOptions | undefined {
-  for (const { use } of config.projects) {
-    if ('decoyOptions' in use && isDecoyOptions(use.decoyOptions)) {
-      return use.decoyOptions
-    }
-  }
-  return undefined
-}
-
-function isDecoyOptions(value: unknown): value is DecoyOptions {
-  return typeof value === 'object' && value !== null
+  return config.projects.find((project) => project.use.decoyOptions)?.use.decoyOptions
 }
 
 async function waitForHealth(child: ChildProcess, options: ResolvedDecoyOptions): Promise<void> {

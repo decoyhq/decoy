@@ -4,7 +4,7 @@ Playwright fixtures and global setup for the native `decoy` runtime.
 
 ```ts
 // playwright.config.ts
-export default defineConfig({
+export default defineConfig<DecoyTestOptions>({
   globalSetup: './global-setup.ts', // export { setup as default } from '@decoy/playwright'
   use: {
     decoyOptions: { url: 'http://127.0.0.1:8080', command: 'decoy serve' },
