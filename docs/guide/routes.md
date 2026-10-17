@@ -36,8 +36,28 @@ files in folders. Duplicate Route ids fail startup.
 
 ## Case match
 
-A Case with no `match` matches every request to its Route. Today a Case can match on `pathParams`.
-Query, header, and body matching are on the roadmap.
+A Case with no `match` matches every request to its Route. Otherwise `match` is a mapping of
+fields, and **all** fields must match:
+
+```yaml
+cases:
+  vip:
+    match:
+      pathParams: { id: '*' } # '*' = present, any value
+      query: { priority: high } # ?priority=high (other params ignored)
+      headers: { X-Tier: '*' } # header names are case-insensitive
+      cookies: { sid: abc }
+      body: { items: [{ sku: gold }] } # deep partial match
+```
+
+| field                                       | how it matches                                                                                                                                                      |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pathParams`, `query`, `headers`, `cookies` | each listed key must be present; values compare as strings (`page: 5` matches `?page=5`); a repeated query key matches if any value does                            |
+| `body`                                      | objects: listed keys must match, others are ignored. Arrays: the request array must contain each listed element, in any order. Scalars: exactly equal (`1` ≠ `"1"`) |
+
+`body` is the parsed JSON when the request's `content-type` is JSON (`application/json`,
+`*+json`), otherwise the raw text. Repeated request headers are joined with `", "`. An unknown
+field, such as a misspelled `querry`, fails startup.
 
 ## Response Behavior
 

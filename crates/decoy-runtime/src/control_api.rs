@@ -249,6 +249,7 @@ cases:
             &HttpRequest {
                 method: HttpMethod::Get,
                 path: "/users/123".to_owned(),
+                ..Default::default()
             },
         ) else {
             panic!("expected match")
