@@ -48,6 +48,7 @@ API `send` (section 9), not from connect-time Cases.
 routes: routes
 collections: collections.yaml
 port: 8080 # HTTP/1.1, WebSocket, SSE, and gRPC (HTTP/2 cleartext) on the same port   (Q1)
+# ports: { grpc: 50051 }   # optional extra listeners; same Routes and Sessions
 
 protos:
   roots: [../proto] # import paths; every .proto under them is compiled at startup
@@ -62,8 +63,14 @@ pipelines: # named, reusable step lists (ADR 0002)
 ```
 
 Inbound data runs the steps top to bottom; outbound data runs them in reverse. A Route uses
-`pipeline: approvals-ws` or an inline list. gRPC Routes get `[grpc-frame, protobuf]` implicitly from
-`service`/`method` (**Q2**).
+`pipeline: approvals-ws` or an inline list. Defaults are per transport: gRPC Routes get
+`[grpc-frame, protobuf]` (message types from `service`/`method`), HTTP keeps the JSON-by-content-type
+body, WebSocket and SSE get none. A Route's explicit `pipeline` **replaces** the default entirely, in
+the order written, e.g. `[msgpack, grpc-frame, protobuf]` for gRPC-framed protobuf inside msgpack
+(**Q2**). Outside a gRPC Route, `protobuf` names its message type (`message:` or `typeFrom:`).
+
+On a single port, one entry handler dispatches per request: `/__decoy__/*` → Control API,
+`content-type: application/grpc*` → gRPC, everything else → HTTP (so REST over HTTP/2 works).
 
 ## 3. HTTP (today, for comparison)
 
@@ -329,8 +336,8 @@ test('shows the approval as soon as the server pushes it', async ({ page, decoy 
 - **Non-browser clients** (backend services, gRPC tests): send `x-mock-session` on the upgrade or
   call, as with HTTP.
 - **Browsers** can't set headers on `new WebSocket()` or `EventSource`. Under Playwright the fixture
-  bridge adds the header. Elsewhere, a `__decoy_session` query parameter on the URL is honoured as a
-  fallback (**Q8**).
+  bridge adds the header, exactly as `context.route` does for HTTP. Other runners (Cypress, Selenium)
+  are deferred; a `__decoy_session` query fallback is the candidate when they come (**Q8**).
 - A connection keeps the Session it opened with. Control calls (`useCollection`, `useRoute`) apply
   to its **next** inbound message or event, not retroactively.
 
@@ -338,12 +345,12 @@ test('shows the approval as soon as the server pushes it', async ({ page, decoy 
 
 | #   | question                                                          | recommendation                                                                                                                                                    |
 | --- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Q1  | One port for HTTP/WS/SSE/gRPC, or a separate `grpcPort`?          | One port (hyper serves HTTP/1.1 and h2c together), with an optional `grpcPort` if a client insists on a dedicated one.                                            |
-| Q2  | Implicit `[grpc-frame, protobuf]` pipeline for gRPC Routes?       | Yes: gRPC is always protobuf over gRPC framing, so the method's types make it implicit. An explicit `pipeline` adds steps after those (e.g. a decrypt plugin).    |
-| Q3  | Validate gRPC message literals against the proto at startup?      | Yes: typos in field or enum names are the most common mock bug, and the proto lets us catch them early.                                                           |
+| Q1  | One port for HTTP/WS/SSE/gRPC, or a separate `grpcPort`?          | **Decided:** one port by default (per-request dispatch on `content-type`); extra listeners via config, e.g. `ports: { grpc: 50051 }`.                             |
+| Q2  | Implicit `[grpc-frame, protobuf]` pipeline for gRPC Routes?       | **Decided:** per-transport defaults (gRPC → `[grpc-frame, protobuf]`); an explicit `pipeline` replaces the default entirely, in written order.                    |
+| Q3  | Validate gRPC message literals against the proto at startup?      | **Decided:** yes, wherever a `protobuf` step runs: response literals and literal `match` fields; `${ }` is checked at render time.                                |
 | Q4  | Unmatched WS message: silent + recorded, or close the socket?     | Silent + recorded. Closing would break UIs that send messages the mocks don't care about (heartbeats, analytics).                                                 |
 | Q5  | `send` with no live connection: wait or fail fast?                | `wait` opt-in; the Playwright helper always waits through `decoy.connection()` first, so tests don't race.                                                        |
-| Q6  | WebSocket routing in Playwright: bridge via `routeWebSocket`?     | Yes: it's the only way to add the Session header without changing app code.                                                                                       |
+| Q6  | WebSocket routing in Playwright: bridge via `routeWebSocket`?     | **Decided:** yes; the fixture adds the Session header, same as `context.route` for HTTP.                                                                          |
 | Q7  | SSE in Playwright needs app and Decoy on the same protocol. OK?   | OK for now (tests run on http locally); revisit if someone runs https apps under test.                                                                            |
-| Q8  | `__decoy_session` query fallback for browsers outside Playwright? | Yes, stripped before matching so it never shows up in `query`.                                                                                                    |
+| Q8  | `__decoy_session` query fallback for browsers outside Playwright? | **Deferred** until non-Playwright runners (Cypress, Selenium) are in scope.                                                                                       |
 | Q9  | Glossary: "Request envelope" / "Message envelope".                | Adopt them in `CONTEXT.md` when #217/#218 start. The HTTP code currently says `RequestContext`; rename it to `RequestEnvelope` for consistency (small follow-up). |
