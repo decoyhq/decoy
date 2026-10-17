@@ -15,7 +15,7 @@ use prost_reflect::{
 };
 use serde_json::Value;
 
-use crate::schema::{Behavior, ResponseBehavior, Route, RouteMatch};
+use crate::schema::{Behavior, PipelineStep, ResponseBehavior, Route, RouteMatch};
 use crate::template::{validate_string, validate_value};
 
 /// gRPC status codes by name, indexed by numeric code.
@@ -115,6 +115,15 @@ pub fn check_route(route: &Route, pool: &DescriptorPool) -> Result<(), String> {
             route.id,
             method.full_name()
         ));
+    }
+
+    // Literals are protobuf JSON only where a `protobuf` step runs (Q3).
+    if route
+        .pipeline
+        .as_ref()
+        .is_some_and(|steps| !steps.contains(&PipelineStep::Protobuf))
+    {
+        return Ok(());
     }
 
     for (case_id, case) in &route.cases {
@@ -571,6 +580,41 @@ cases:
         )
         .unwrap_err();
         assert!(error.contains("unknown field `message.nope`"), "{error}");
+    }
+
+    #[test]
+    fn pipelines_without_protobuf_skip_literal_checks() {
+        let route = Route::from_yaml(
+            r#"
+id: raw
+transport: grpc
+match: { service: approvals.v1.Approvals, method: GetApproval }
+pipeline: [grpc-frame]
+cases:
+  any:
+    behaviors:
+      ok: { message: { notAField: x } }
+"#,
+        )
+        .unwrap();
+        check_route(&route, &pool()).unwrap();
+
+        let unknown = Route::from_yaml(
+            "id: r\ntransport: grpc\nmatch: { service: s, method: m }\npipeline: [msgpack]\ncases: {}\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(unknown.contains("unknown variant `msgpack`"), "{unknown}");
+
+        let http = Route::from_yaml(
+            "id: r\ntransport: http\nmatch: { method: GET, path: /x }\npipeline: [protobuf]\ncases:\n  any:\n    behaviors:\n      ok: {}\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            http.contains("HTTP Routes do not take a `pipeline` yet"),
+            "{http}"
+        );
     }
 
     #[test]

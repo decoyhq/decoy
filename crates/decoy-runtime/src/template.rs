@@ -107,6 +107,30 @@ pub fn render_response(
     })
 }
 
+/// Render a gRPC response Behavior: `status`, `message`, and `metadata` values. Whether the result
+/// is a valid status or message is checked when it is encoded.
+pub fn render_grpc_response(
+    response: &ResponseBehavior,
+    request: &Value,
+) -> Result<ResponseBehavior, String> {
+    let render = |value: &Option<Value>| {
+        value
+            .as_ref()
+            .map(|value| render_value(value, request))
+            .transpose()
+    };
+    Ok(ResponseBehavior {
+        status: render(&response.status)?,
+        message: render(&response.message)?,
+        metadata: response
+            .metadata
+            .iter()
+            .map(|(name, value)| Ok((name.clone(), render_text(value, request)?)))
+            .collect::<Result<_, String>>()?,
+        ..response.clone()
+    })
+}
+
 fn status_code(code: Option<u64>) -> Option<u16> {
     code.filter(|code| (100..=599).contains(code))
         .and_then(|code| u16::try_from(code).ok())

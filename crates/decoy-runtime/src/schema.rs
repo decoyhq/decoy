@@ -23,6 +23,20 @@ pub struct Route {
     pub cases: BTreeMap<String, Case>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub passthrough: Option<PassthroughTarget>,
+    /// Steps that turn request bytes into the envelope's JSON and back (ADR 0002). `None` uses the
+    /// transport default: `[grpc-frame, protobuf]` for gRPC.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pipeline: Option<Vec<PipelineStep>>,
+}
+
+/// A built-in Pipeline step. Plugin steps come later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PipelineStep {
+    /// gRPC length-prefixed message framing.
+    GrpcFrame,
+    /// Protobuf bytes ⇄ protobuf JSON, typed by the gRPC method.
+    Protobuf,
 }
 
 /// A Route as written; `match` is decoded once `transport` says which shape it has.
@@ -36,6 +50,8 @@ struct RawRoute {
     cases: BTreeMap<String, Case>,
     #[serde(default)]
     passthrough: Option<PassthroughTarget>,
+    #[serde(default)]
+    pipeline: Option<Vec<PipelineStep>>,
 }
 
 impl TryFrom<RawRoute> for Route {
@@ -52,6 +68,7 @@ impl TryFrom<RawRoute> for Route {
             route_match,
             cases: raw.cases,
             passthrough: raw.passthrough,
+            pipeline: raw.pipeline,
         })
     }
 }
@@ -65,6 +82,13 @@ impl Route {
 
     pub fn validate(&self) -> Result<(), ValidationError> {
         validate_id("route", &self.id)?;
+
+        if self.transport == Transport::Http && self.pipeline.is_some() {
+            return Err(ValidationError::InvalidPipeline {
+                route: self.id.clone(),
+                reason: "HTTP Routes do not take a `pipeline` yet".to_owned(),
+            });
+        }
 
         if self.cases.is_empty() {
             return Err(ValidationError::EmptyCases {
@@ -322,6 +346,8 @@ pub enum ValidationError {
     EmptyBehaviors { route: String, case: String },
     #[error("delay {0} must be integer milliseconds or a duration such as `500ms` or `2s`")]
     InvalidDelay(String),
+    #[error("route `{route}` has an invalid pipeline: {reason}")]
+    InvalidPipeline { route: String, reason: String },
     #[error("behavior `{address}` is invalid: {reason}")]
     InvalidBehavior { address: String, reason: String },
     #[error("case `{route}:{case}` has an invalid match: {reason}")]

@@ -8,6 +8,7 @@ pub mod config;
 pub mod control_api;
 pub mod engine;
 pub mod expression;
+pub mod grpc;
 pub mod grpc_schema;
 pub mod http;
 pub mod http_forward;

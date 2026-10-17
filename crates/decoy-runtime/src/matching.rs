@@ -104,6 +104,31 @@ pub fn case_matches(case_match: &Value, input: &MatchInput) -> bool {
         })
 }
 
+/// gRPC Case matching over the message envelope `{ service, method, metadata, message }`:
+/// `message` is a deep partial match like HTTP `body`, `metadata` matches like `headers`.
+pub fn grpc_case_matches(case_match: &Value, envelope: &Value) -> bool {
+    let fields = match case_match {
+        Value::Null => return true,
+        Value::String(predicate) => return predicate_holds(predicate, envelope),
+        Value::Object(fields) => fields,
+        _ => return false,
+    };
+    fields
+        .iter()
+        .all(|(field, pattern)| match (field.as_str(), pattern) {
+            (_, Value::String(text)) if is_predicate(text) => predicate_holds(text, envelope),
+            ("message", _) => value_matches(pattern, &envelope["message"]),
+            ("metadata", _) => strings_match(pattern, |key| {
+                envelope["metadata"]
+                    .get(key.to_ascii_lowercase())
+                    .and_then(Value::as_str)
+                    .into_iter()
+                    .collect()
+            }),
+            _ => false,
+        })
+}
+
 /// A field string is a predicate when it is exactly one `${ … }`; any other `body` string is
 /// literal text to compare.
 fn is_predicate(text: &str) -> bool {
@@ -113,7 +138,10 @@ fn is_predicate(text: &str) -> bool {
 
 /// Every pattern key must be present, and one of its request values must equal the pattern value
 /// compared as a string (`'*'` accepts any value).
-fn strings_match<'a>(pattern: &Value, actual: impl Fn(&str) -> Vec<&'a String>) -> bool {
+fn strings_match<'a, S: AsRef<str> + ?Sized + 'a>(
+    pattern: &Value,
+    actual: impl Fn(&str) -> Vec<&'a S>,
+) -> bool {
     let Value::Object(pattern) = pattern else {
         return false;
     };
@@ -121,7 +149,7 @@ fn strings_match<'a>(pattern: &Value, actual: impl Fn(&str) -> Vec<&'a String>) 
         let values = actual(key);
         match as_string(expected) {
             Some(expected) if expected == ANY => !values.is_empty(),
-            Some(expected) => values.iter().any(|value| **value == expected),
+            Some(expected) => values.iter().any(|value| value.as_ref() == expected),
             None => false,
         }
     })
@@ -323,6 +351,28 @@ mod tests {
         assert!(!matches(
             json!({ "query": { "page": "1" }, "headers": { "x-role": "user" } }),
             &request
+        ));
+    }
+
+    #[test]
+    fn grpc_matches_message_metadata_and_predicates() {
+        let envelope = json!({
+            "service": "approvals.v1.Approvals",
+            "method": "GetApproval",
+            "metadata": { "x-tenant": "acme" },
+            "message": { "id": "a-1", "approvers": ["alice", "bob"] },
+        });
+        let matches = |case_match: Value| grpc_case_matches(&case_match, &envelope);
+        assert!(matches(Value::Null));
+        assert!(matches(json!({ "message": { "id": "a-1" } })));
+        assert!(matches(json!({ "message": { "approvers": ["bob"] } })));
+        assert!(!matches(json!({ "message": { "id": "a-2" } })));
+        assert!(matches(json!({ "metadata": { "X-Tenant": "acme" } })));
+        assert!(matches(json!({ "metadata": { "x-tenant": "*" } })));
+        assert!(!matches(json!({ "metadata": { "x-other": "*" } })));
+        assert!(matches(json!("${ message.id == 'a-1' }")));
+        assert!(matches(
+            json!({ "message": "${ length(message.approvers) == `2` }" })
         ));
     }
 
