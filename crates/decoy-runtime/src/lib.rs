@@ -11,6 +11,7 @@ pub mod expression;
 pub mod http;
 pub mod http_forward;
 pub mod matching;
+pub mod protos;
 pub mod request;
 pub mod schema;
 pub mod startup;

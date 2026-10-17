@@ -23,6 +23,17 @@ pub struct ServeConfig {
     pub port: u16,
     pub collection: Option<String>,
     pub passthrough_base_url: Option<String>,
+    pub protos: ProtoSources,
+}
+
+/// Where gRPC message types come from; paths are absolute after config resolution.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ProtoSources {
+    #[serde(default)]
+    pub roots: Vec<PathBuf>,
+    #[serde(default)]
+    pub descriptor_sets: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
@@ -37,6 +48,7 @@ struct NativeConfigFile {
     collection: Option<String>,
     #[serde(alias = "passthroughBaseUrl")]
     passthrough_base_url: Option<String>,
+    protos: Option<ProtoSources>,
 }
 
 impl ServeConfig {
@@ -84,6 +96,21 @@ impl ServeConfig {
                 .as_ref()
                 .and_then(|config| config.passthrough_base_url.clone())
         });
+        let protos = file_config
+            .and_then(|config| config.protos)
+            .map(|protos| ProtoSources {
+                roots: protos
+                    .roots
+                    .iter()
+                    .map(|path| absolutize(&config_base, path))
+                    .collect(),
+                descriptor_sets: protos
+                    .descriptor_sets
+                    .iter()
+                    .map(|path| absolutize(&config_base, path))
+                    .collect(),
+            })
+            .unwrap_or_default();
 
         Ok(Self {
             routes,
@@ -91,6 +118,7 @@ impl ServeConfig {
             port,
             collection,
             passthrough_base_url,
+            protos,
         })
     }
 }
@@ -187,6 +215,42 @@ startupCollection: local
         );
         assert_eq!(config.port, 4100);
         assert_eq!(config.collection.as_deref(), Some("local"));
+        assert_eq!(config.protos, ProtoSources::default());
+    }
+
+    #[test]
+    fn config_file_proto_paths_resolve_relative_to_config_file() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        fs::create_dir_all(base.join("nested")).unwrap();
+        fs::write(
+            base.join("nested/decoy.yaml"),
+            r#"
+routes: routes
+collections: collections.yaml
+protos:
+  roots: [../proto]
+  descriptorSets: [build/api.binpb]
+"#,
+        )
+        .unwrap();
+
+        let config = ServeConfig::from_options(
+            ServeCliOptions {
+                config_file: Some(base.join("nested/decoy.yaml")),
+                ..ServeCliOptions::default()
+            },
+            base,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.protos,
+            ProtoSources {
+                roots: vec![base.join("nested/../proto")],
+                descriptor_sets: vec![base.join("nested/build/api.binpb")],
+            }
+        );
     }
 
     #[test]
