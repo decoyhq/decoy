@@ -1,17 +1,19 @@
 use std::collections::BTreeMap;
 
-use serde_json::Value;
 use thiserror::Error;
 
 use crate::collections::{Activation, CollectionError, CollectionsFile};
 use crate::http::{BodyPlan, RequestMetadata, ResponsePlan, RuntimeConfig};
 use crate::http_forward::{ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough};
-use crate::schema::{Case, HttpMethod, Route};
+use crate::matching::case_matches;
+use crate::request::RequestContext;
+use crate::schema::{HttpMethod, Route};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct HttpRequest {
     pub method: HttpMethod,
     pub path: String,
+    pub context: RequestContext,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,6 +153,12 @@ impl Catalog {
         let resolve_request = HttpRequest {
             method: request.method.clone(),
             path: request.path.clone(),
+            context: RequestContext::from_parts(
+                request.metadata.original_base_url.as_deref(),
+                &request.path_and_query,
+                &request.headers,
+                &request.body,
+            ),
         };
 
         match self.resolve_http_with_overrides(
@@ -244,7 +252,7 @@ impl Catalog {
                 continue;
             };
 
-            if !case_matches(case, &path_params) {
+            if !case_matches(&case.case_match, &path_params, &request.context) {
                 continue;
             }
 
@@ -265,22 +273,6 @@ impl Catalog {
             checked,
         })
     }
-}
-
-fn case_matches(case: &Case, path_params: &BTreeMap<String, String>) -> bool {
-    let Some(expected_path_params) = case.case_match.get("pathParams") else {
-        return true;
-    };
-
-    let Value::Object(expected_path_params) = expected_path_params else {
-        return false;
-    };
-
-    expected_path_params.iter().all(|(key, expected)| {
-        path_params
-            .get(key)
-            .is_some_and(|actual| expected == actual || expected == "*")
-    })
 }
 
 fn match_path(pattern: &str, actual: &str) -> Option<BTreeMap<String, String>> {
@@ -673,6 +665,7 @@ cases:
             &HttpRequest {
                 method: HttpMethod::Get,
                 path: "/users/123".to_owned(),
+                ..Default::default()
             },
         );
 
@@ -720,6 +713,7 @@ cases:
             &HttpRequest {
                 method: HttpMethod::Get,
                 path: "/users/123".to_owned(),
+                ..Default::default()
             },
         );
 
@@ -751,6 +745,7 @@ cases:
         let request = HttpRequest {
             method: HttpMethod::Get,
             path: "/users/123".to_owned(),
+            ..Default::default()
         };
 
         let ResolveOutcome::Matched {
@@ -791,6 +786,7 @@ cases:
         let request = HttpRequest {
             method: HttpMethod::Get,
             path: "/users/123".to_owned(),
+            ..Default::default()
         };
 
         controller.use_collection("session", "not-found");
@@ -833,6 +829,7 @@ cases:
             &HttpRequest {
                 method: HttpMethod::Get,
                 path: "/users/123".to_owned(),
+                ..Default::default()
             },
         );
 
@@ -894,6 +891,7 @@ cases:
             &HttpRequest {
                 method: HttpMethod::Get,
                 path: "/users/123".to_owned(),
+                ..Default::default()
             },
         ) else {
             panic!("expected match")
@@ -950,6 +948,7 @@ cases:
             &HttpRequest {
                 method: HttpMethod::Get,
                 path: "/users/123".to_owned(),
+                ..Default::default()
             },
             &RequestMetadata {
                 original_base_url: Some("https://request.example.test".to_owned()),
@@ -1005,6 +1004,7 @@ cases:
             &HttpRequest {
                 method: HttpMethod::Get,
                 path: "/users/123".to_owned(),
+                ..Default::default()
             },
             &RequestMetadata {
                 original_base_url: Some("https://request.example.test".to_owned()),
@@ -1036,6 +1036,7 @@ cases:
             &HttpRequest {
                 method: HttpMethod::Get,
                 path: "/unknown".to_owned(),
+                ..Default::default()
             },
         );
 
@@ -1232,6 +1233,7 @@ cases:
             &HttpRequest {
                 method: HttpMethod::Get,
                 path: "/users/456".to_owned(),
+                ..Default::default()
             },
         );
 

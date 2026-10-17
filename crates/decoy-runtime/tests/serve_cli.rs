@@ -854,3 +854,112 @@ fn version_flag_prints_the_crate_version() {
         format!("decoy {}", env!("CARGO_PKG_VERSION"))
     );
 }
+
+#[tokio::test]
+async fn serve_matches_cases_on_query_headers_and_json_body() {
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "orders.yaml",
+        r#"
+id: orders
+transport: http
+match:
+  method: POST
+  path: /orders
+cases:
+  fallback:
+    behaviors:
+      ok:
+        body: fallback
+  vip:
+    match:
+      query: { priority: high }
+      headers: { X-Tier: '*' }
+      body: { items: [{ sku: gold }] }
+    behaviors:
+      ok:
+        body: vip
+  tagged:
+    match:
+      headers: { x-tag: 'a, b' }
+    behaviors:
+      ok:
+        body: tagged
+"#,
+    );
+    fixture.write_collections(
+        r#"
+- id: default
+  routes:
+    - orders:fallback:ok
+    - orders:tagged:ok
+    - orders:vip:ok
+"#,
+    );
+    let port = unused_port();
+    let _server = fixture.spawn(port, &[]);
+    wait_for_server(port).await;
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{port}/orders");
+
+    let vip = client
+        .post(format!("{url}?priority=high"))
+        .header("x-tier", "gold")
+        .header("content-type", "application/json")
+        .body(r#"{"items":[{"sku":"basic"},{"sku":"gold","qty":2}]}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(vip.text().await.unwrap(), "vip");
+
+    let wrong_body = client
+        .post(format!("{url}?priority=high"))
+        .header("x-tier", "gold")
+        .header("content-type", "application/json")
+        .body(r#"{"items":[{"sku":"basic"}]}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong_body.text().await.unwrap(), "fallback");
+
+    let repeated_header = client
+        .post(&url)
+        .header("x-tag", "a")
+        .header("x-tag", "b")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(repeated_header.text().await.unwrap(), "tagged");
+}
+
+#[test]
+fn unknown_match_field_fails_startup() {
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "users.yaml",
+        r#"
+id: users
+transport: http
+match:
+  method: GET
+  path: /users
+cases:
+  typo:
+    match:
+      querry: { page: 1 }
+    behaviors:
+      ok:
+        status: 200
+"#,
+    );
+    fixture.write_collections("- id: default\n  routes:\n    - users:typo:ok\n");
+
+    let output = fixture.output(&[]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("users:typo") && stderr.contains("unknown match field `querry`"),
+        "{stderr}"
+    );
+}

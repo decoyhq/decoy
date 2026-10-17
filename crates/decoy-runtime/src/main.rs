@@ -261,13 +261,22 @@ fn http_response(plan: HttpResponsePlan) -> Response<Body> {
     response
 }
 
+/// Lowercased names; a repeated header keeps every value, joined with `", "`.
 fn request_headers(headers: &axum::http::HeaderMap) -> BTreeMap<String, String> {
-    headers
-        .iter()
-        .filter_map(|(name, value)| {
-            Some((name.as_str().to_owned(), value.to_str().ok()?.to_owned()))
-        })
-        .collect()
+    let mut joined: BTreeMap<String, String> = BTreeMap::new();
+    for (name, value) in headers {
+        let Ok(value) = value.to_str() else {
+            continue;
+        };
+        joined
+            .entry(name.as_str().to_owned())
+            .and_modify(|existing| {
+                existing.push_str(", ");
+                existing.push_str(value);
+            })
+            .or_insert_with(|| value.to_owned());
+    }
+    joined
 }
 
 fn original_base_url(headers: &BTreeMap<String, String>) -> Option<String> {

@@ -51,6 +51,14 @@ impl Route {
             for behavior_id in case.behaviors.keys() {
                 validate_id("behavior", behavior_id)?;
             }
+
+            crate::matching::validate_case_match(&case.case_match).map_err(|reason| {
+                ValidationError::InvalidMatch {
+                    route: self.id.clone(),
+                    case: case_id.clone(),
+                    reason,
+                }
+            })?;
         }
 
         Ok(())
@@ -63,9 +71,10 @@ pub struct HttpRouteMatch {
     pub path: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum HttpMethod {
+    #[default]
     Get,
     Post,
     Put,
@@ -194,6 +203,12 @@ pub enum ValidationError {
     EmptyCases { route: String },
     #[error("case `{route}:{case}` must define at least one behavior")]
     EmptyBehaviors { route: String, case: String },
+    #[error("case `{route}:{case}` has an invalid match: {reason}")]
+    InvalidMatch {
+        route: String,
+        case: String,
+        reason: String,
+    },
 }
 
 pub(crate) fn validate_id(kind: &'static str, id: &str) -> Result<(), ValidationError> {
