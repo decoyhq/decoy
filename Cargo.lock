@@ -224,7 +224,7 @@ dependencies = [
 
 [[package]]
 name = "decoy-runtime"
-version = "0.1.0-alpha.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "axum",
  "clap",
