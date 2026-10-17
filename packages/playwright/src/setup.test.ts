@@ -50,7 +50,7 @@ async function runningDecoy(): Promise<{ url: string; server: Server }> {
   return { url: `http://127.0.0.1:${port}`, server }
 }
 
-const cleanups: (() => Promise<unknown>)[] = []
+const cleanups: Array<() => Promise<unknown>> = []
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) {
     await cleanup()

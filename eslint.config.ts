@@ -20,6 +20,8 @@ export default defineConfig(
       // Pairs with `verbatimModuleSyntax`: type-only imports must say so.
       '@typescript-eslint/consistent-type-imports': 'error',
       '@typescript-eslint/no-import-type-side-effects': 'error',
+      // `T[]` for simple element types, `Array<T>` / `ReadonlyArray<T>` for anything else.
+      '@typescript-eslint/array-type': ['error', { default: 'array-simple' }],
       // Numbers in templates (ports, statuses) are unambiguous; everything else stays strict.
       '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
     },

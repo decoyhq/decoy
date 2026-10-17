@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from '@rstest/core'
 import { startFakeDecoy } from '../fixtures/fake-decoy-server'
 import { createRouter } from './control'
 
-const closers: (() => Promise<void>)[] = []
+const closers: Array<() => Promise<void>> = []
 afterEach(async () => {
   for (const close of closers.splice(0)) {
     await close()

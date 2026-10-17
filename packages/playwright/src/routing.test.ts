@@ -57,7 +57,7 @@ describe('forwardToDecoy', () => {
       },
       body: '{"name":"Ada"}',
     })
-    const calls: { url: string; init: Parameters<DecoyFetch>[1] }[] = []
+    const calls: Array<{ url: string; init: Parameters<DecoyFetch>[1] }> = []
     const fetch: DecoyFetch = (url, init) => {
       calls.push({ url, init })
       return Promise.resolve(response(200, {}, ''))
@@ -109,7 +109,7 @@ describe('forwardToDecoy', () => {
 
 describe('routeToDecoy', () => {
   test('routes every configured pattern to Decoy', async () => {
-    const patterns: (string | RegExp)[] = []
+    const patterns: Array<string | RegExp> = []
     const context = {
       route: (url: string | RegExp) => {
         patterns.push(url)

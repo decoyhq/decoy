@@ -10,7 +10,7 @@ const keepRunning: Teardown = () => Promise.resolve()
 
 /** The part of Playwright's `FullConfig<DecoyTestOptions>` that `setup` reads. */
 export type SetupConfig = Pick<FullConfig<DecoyTestOptions>, 'configFile'> & {
-  projects: readonly Pick<FullProject<DecoyTestOptions>, 'use'>[]
+  projects: ReadonlyArray<Pick<FullProject<DecoyTestOptions>, 'use'>>
 }
 
 /**
