@@ -1,11 +1,23 @@
-//! Literal Case matching: `match` is an object whose fields (`pathParams`, `query`, `headers`,
-//! `cookies`, `body`) must all match the request. See the spec in issue #215.
+//! Case matching. `match` is either a `${ <jmespath> }` predicate string or an object whose fields
+//! (`pathParams`, `query`, `headers`, `cookies`, `body`) must all match: each field is a literal
+//! pattern or a predicate. Predicates always see the whole request. See the spec in issue #215.
 
+use std::cell::OnceCell;
 use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
 
+use crate::expression::{predicate_holds, validate_predicate};
 use crate::request::RequestContext;
+use crate::schema::HttpMethod;
+
+/// The request as Case matching sees it.
+pub struct MatchInput<'a> {
+    pub method: &'a HttpMethod,
+    pub path: &'a str,
+    pub path_params: &'a BTreeMap<String, String>,
+    pub context: &'a RequestContext,
+}
 
 const FIELDS: [&str; 5] = ["pathParams", "query", "headers", "cookies", "body"];
 
@@ -16,8 +28,14 @@ const ANY: &str = "*";
 pub fn validate_case_match(case_match: &Value) -> Result<(), String> {
     let fields = match case_match {
         Value::Null => return Ok(()),
+        Value::String(predicate) => return validate_predicate(predicate),
         Value::Object(fields) => fields,
-        other => return Err(format!("`match` must be a mapping, got {}", kind(other))),
+        other => {
+            return Err(format!(
+                "`match` must be a mapping or a `${{ }}` predicate, got {}",
+                kind(other)
+            ));
+        }
     };
     for (field, pattern) in fields {
         if !FIELDS.contains(&field.as_str()) {
@@ -26,42 +44,66 @@ pub fn validate_case_match(case_match: &Value) -> Result<(), String> {
                 FIELDS.join(", ")
             ));
         }
-        if field != "body" && !pattern.is_object() {
-            return Err(format!(
-                "match field `{field}` must be a mapping, got {}",
-                kind(pattern)
-            ));
+        match pattern {
+            Value::String(text) if is_predicate(text) => validate_predicate(text)?,
+            _ if field == "body" || pattern.is_object() => {}
+            _ => {
+                return Err(format!(
+                    "match field `{field}` must be a mapping or a `${{ }}` predicate, got {}",
+                    kind(pattern)
+                ));
+            }
         }
     }
     Ok(())
 }
 
-pub fn case_matches(
-    case_match: &Value,
-    path_params: &BTreeMap<String, String>,
-    context: &RequestContext,
-) -> bool {
-    let Value::Object(fields) = case_match else {
-        return case_match.is_null();
+pub fn case_matches(case_match: &Value, input: &MatchInput) -> bool {
+    let request = OnceCell::new();
+    let request = || {
+        request.get_or_init(|| {
+            input
+                .context
+                .to_json(input.method, input.path, input.path_params)
+        })
     };
-    fields.iter().all(|(field, pattern)| match field.as_str() {
-        "pathParams" => strings_match(pattern, |key| path_params.get(key).into_iter().collect()),
-        "query" => strings_match(pattern, |key| {
-            context.query.get(key).into_iter().flatten().collect()
-        }),
-        "headers" => strings_match(pattern, |key| {
-            context
-                .headers
-                .get(&key.to_ascii_lowercase())
-                .into_iter()
-                .collect()
-        }),
-        "cookies" => strings_match(pattern, |key| {
-            context.cookies.get(key).into_iter().collect()
-        }),
-        "body" => value_matches(pattern, &context.body),
-        _ => false,
-    })
+    let fields = match case_match {
+        Value::Null => return true,
+        Value::String(predicate) => return predicate_holds(predicate, request()),
+        Value::Object(fields) => fields,
+        _ => return false,
+    };
+    let context = input.context;
+    fields
+        .iter()
+        .all(|(field, pattern)| match (field.as_str(), pattern) {
+            (_, Value::String(text)) if is_predicate(text) => predicate_holds(text, request()),
+            ("pathParams", _) => strings_match(pattern, |key| {
+                input.path_params.get(key).into_iter().collect()
+            }),
+            ("query", _) => strings_match(pattern, |key| {
+                context.query.get(key).into_iter().flatten().collect()
+            }),
+            ("headers", _) => strings_match(pattern, |key| {
+                context
+                    .headers
+                    .get(&key.to_ascii_lowercase())
+                    .into_iter()
+                    .collect()
+            }),
+            ("cookies", _) => strings_match(pattern, |key| {
+                context.cookies.get(key).into_iter().collect()
+            }),
+            ("body", _) => value_matches(pattern, &context.body),
+            _ => false,
+        })
+}
+
+/// A field string is a predicate when it is exactly one `${ … }`; any other `body` string is
+/// literal text to compare.
+fn is_predicate(text: &str) -> bool {
+    let text = text.trim();
+    text.starts_with("${") && text.ends_with('}')
 }
 
 /// Every pattern key must be present, and one of its request values must equal the pattern value
@@ -148,7 +190,15 @@ mod tests {
     }
 
     fn matches(pattern: Value, request: &RequestContext) -> bool {
-        case_matches(&pattern, &params(&[("id", "7")]), request)
+        case_matches(
+            &pattern,
+            &MatchInput {
+                method: &HttpMethod::Post,
+                path: "/orders/7",
+                path_params: &params(&[("id", "7")]),
+                context: request,
+            },
+        )
     }
 
     #[test]
@@ -284,6 +334,58 @@ mod tests {
                 .unwrap_err()
                 .contains("must be a mapping")
         );
-        assert!(validate_case_match(&json!("${ true }")).is_err());
+        assert!(validate_case_match(&json!("${ `true` }")).is_ok());
+        assert!(validate_case_match(&json!("plain")).is_err());
+        assert!(validate_case_match(&json!({ "query": "${ query.x }" })).is_ok());
+        assert!(
+            validate_case_match(&json!({ "query": "${ query.[ }" }))
+                .unwrap_err()
+                .contains("invalid JMESPath")
+        );
+    }
+
+    #[test]
+    fn whole_case_predicates_see_the_full_request() {
+        let request = context(
+            "/?verbose=true",
+            &[("x-tier", "gold")],
+            json!({ "amount": 1500 }),
+        );
+        assert!(matches(
+            json!("${ method == 'POST' && path == '/orders/7' && pathParams.id == '7' }"),
+            &request
+        ));
+        assert!(matches(
+            json!(
+                "${ body.amount > `1000` && headers.\"x-tier\" == 'gold' && query.verbose == 'true' }"
+            ),
+            &request
+        ));
+        assert!(matches(json!("${ cookies.sid == 'abc' }"), &request));
+        assert!(!matches(json!("${ body.amount < `1000` }"), &request));
+    }
+
+    #[test]
+    fn field_predicates_are_anded_with_literal_fields() {
+        let request = context("/?page=1", &[], json!({ "operationName": "GetUser" }));
+        assert!(matches(
+            json!({ "query": { "page": "1" }, "body": "${ body.operationName == 'GetUser' }" }),
+            &request
+        ));
+        assert!(!matches(
+            json!({ "query": { "page": "2" }, "body": "${ body.operationName == 'GetUser' }" }),
+            &request
+        ));
+        // A field predicate still sees the whole request, not only its own field.
+        assert!(matches(
+            json!({ "headers": "${ query.page == '1' }" }),
+            &request
+        ));
+    }
+
+    #[test]
+    fn repeated_query_keys_are_arrays_for_predicates() {
+        let request = context("/?tag=a&tag=b", &[], Value::Null);
+        assert!(matches(json!("${ contains(query.tag, 'b') }"), &request));
     }
 }

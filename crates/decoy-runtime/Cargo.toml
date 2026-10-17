@@ -21,6 +21,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal"] }
 url = "2"
 walkdir = "2"
+jmespath = "0.5"
 
 [dev-dependencies]
 pretty_assertions = "1"

@@ -7,6 +7,7 @@ pub mod collections;
 pub mod config;
 pub mod control_api;
 pub mod engine;
+pub mod expression;
 pub mod http;
 pub mod http_forward;
 pub mod matching;

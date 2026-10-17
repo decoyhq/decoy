@@ -5,7 +5,7 @@ use thiserror::Error;
 use crate::collections::{Activation, CollectionError, CollectionsFile};
 use crate::http::{BodyPlan, RequestMetadata, ResponsePlan, RuntimeConfig};
 use crate::http_forward::{ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough};
-use crate::matching::case_matches;
+use crate::matching::{MatchInput, case_matches};
 use crate::request::RequestContext;
 use crate::schema::{HttpMethod, Route};
 
@@ -252,7 +252,13 @@ impl Catalog {
                 continue;
             };
 
-            if !case_matches(&case.case_match, &path_params, &request.context) {
+            let input = MatchInput {
+                method: &request.method,
+                path: &request.path,
+                path_params: &path_params,
+                context: &request.context,
+            };
+            if !case_matches(&case.case_match, &input) {
                 continue;
             }
 

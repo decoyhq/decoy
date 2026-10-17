@@ -59,6 +59,40 @@ cases:
 `*+json`), otherwise the raw text. Repeated request headers are joined with `", "`. An unknown
 field, such as a misspelled `querry`, fails startup.
 
+### Predicates
+
+When a literal pattern isn't enough, use a [JMESPath](https://jmespath.org) predicate: a string
+that is exactly `${ <expression> }`. It can replace the whole `match` or any single field, and it
+always sees the whole request:
+
+```yaml
+cases:
+  get-user: # GraphQL: same path, different operation
+    match:
+      headers: { x-client: web } # literal fields and predicates are ANDed
+      body: "${ body.operationName == 'GetUser' }"
+  big-order:
+    match: '${ body.variables.amount > `1000` }'
+```
+
+The request a predicate sees:
+
+```yaml
+method: POST
+url: http://127.0.0.1:8080/graphql?verbose=true
+path: /graphql
+pathParams: {}
+query: { verbose: 'true' } # a repeated key becomes a list: { tag: [a, b] }
+headers: { content-type: application/json, x-client: web } # names lowercased
+cookies: { sid: abc }
+body: { operationName: GetUser } # parsed JSON, or text, or null
+```
+
+Truthiness follows JMESPath: `null`, `false`, `""`, `[]`, and `{}` don't match, and anything else
+does. Literals inside expressions use backticks (`` `1000` ``) or quotes (`'GetUser'`). Header names
+with dashes need quotes: `headers."x-tier"`. Invalid expressions fail startup, naming the
+`route:case`.
+
 ## Response Behavior
 
 The default `kind`. All fields are optional:
