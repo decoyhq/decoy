@@ -149,7 +149,7 @@ jobs:
           mkdir "$RUNNER_TEMP/project" && cd "$RUNNER_TEMP/project"
           npm init -y > /dev/null
           npm install --no-audit --no-fund \
-            "$RUNNER_TEMP/decoy-cli-linux-x64-$VERSION.tgz" "$RUNNER_TEMP/decoy-cli-$VERSION.tgz"
+            "$RUNNER_TEMP/decoyhq-cli-linux-x64-$VERSION.tgz" "$RUNNER_TEMP/decoyhq-cli-$VERSION.tgz"
           out="$(npx decoy --version)"
           echo "$out"
           [ "$out" = "decoy $VERSION" ]
