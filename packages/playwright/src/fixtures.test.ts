@@ -1,41 +1,34 @@
 import { createServer } from 'node:http'
-import type { AddressInfo } from 'node:net'
-import type { TestInfo } from '@playwright/test'
 import { describe, expect, test } from '@rstest/core'
-import { createDecoyFixtures, type DecoyRouter, sessionIdFor } from './fixtures'
-import type { DecoyOptions } from './options'
+import { type DecoyRouter, provideDecoy, sessionIdFor } from './fixtures'
 
-type DecoyFixture = (
-  args: { decoyOptions: DecoyOptions | undefined },
-  use: (router: DecoyRouter) => Promise<void>,
-  testInfo: TestInfo,
-) => Promise<void>
-
-const decoyFixture = createDecoyFixtures().decoy as unknown as DecoyFixture
-const testInfo = { titlePath: ['users.spec.ts', 'Shows a User!'] } as TestInfo
+const testInfo = { titlePath: ['users.spec.ts', 'Shows a User!'] }
 
 describe('decoy fixture', () => {
   test('fails clearly when Decoy is not configured', async () => {
-    await expect(
-      decoyFixture({ decoyOptions: undefined }, async () => {}, testInfo),
-    ).rejects.toThrow(/use\.decoyOptions/)
+    await expect(provideDecoy(undefined, async () => {}, testInfo)).rejects.toThrow(
+      /use\.decoyOptions/,
+    )
   })
 
   test('fails clearly when Decoy is configured but not reachable', async () => {
     await expect(
-      decoyFixture({ decoyOptions: { url: 'http://127.0.0.1:1' } }, async () => {}, testInfo),
+      provideDecoy({ url: 'http://127.0.0.1:1' }, async () => {}, testInfo),
     ).rejects.toThrow(/not reachable at http:\/\/127\.0\.0\.1:1/)
   })
 
   test('provides a Session id when Decoy is healthy', async () => {
     const server = createServer((_req, res) => res.writeHead(200).end())
     await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
-    const { port } = server.address() as AddressInfo
+    const address = server.address()
+    if (address === null || typeof address === 'string') {
+      throw new Error('expected a TCP address')
+    }
 
     let router: DecoyRouter | undefined
     try {
-      await decoyFixture(
-        { decoyOptions: { url: `http://127.0.0.1:${port}` } },
+      await provideDecoy(
+        { url: `http://127.0.0.1:${address.port}` },
         async (value) => {
           router = value
         },

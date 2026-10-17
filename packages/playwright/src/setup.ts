@@ -1,9 +1,14 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import { dirname } from 'node:path'
-import type { FullConfig } from '@playwright/test'
 import { type DecoyOptions, isHealthy, type ResolvedDecoyOptions, resolveOptions } from './options'
 
 export type Teardown = () => Promise<void>
+
+/** The part of Playwright's `FullConfig` that `setup` reads. */
+export interface SetupConfig {
+  configFile?: string
+  projects: ReadonlyArray<{ use: object }>
+}
 
 /**
  * Playwright global setup: start or reuse native Decoy, following Playwright `webServer` reuse
@@ -14,7 +19,7 @@ export type Teardown = () => Promise<void>
  * export { setup as default } from '@decoy/playwright'
  * ```
  */
-export async function setup(config: FullConfig): Promise<Teardown> {
+export async function setup(config: SetupConfig): Promise<Teardown> {
   const decoyOptions = findDecoyOptions(config)
   if (!decoyOptions) {
     return async () => {}
@@ -46,14 +51,17 @@ export async function setup(config: FullConfig): Promise<Teardown> {
   return () => stop(child)
 }
 
-function findDecoyOptions(config: FullConfig): DecoyOptions | undefined {
-  for (const project of config.projects) {
-    const options = (project.use as { decoyOptions?: DecoyOptions }).decoyOptions
-    if (options) {
-      return options
+function findDecoyOptions(config: SetupConfig): DecoyOptions | undefined {
+  for (const { use } of config.projects) {
+    if ('decoyOptions' in use && isDecoyOptions(use.decoyOptions)) {
+      return use.decoyOptions
     }
   }
   return undefined
+}
+
+function isDecoyOptions(value: unknown): value is DecoyOptions {
+  return typeof value === 'object' && value !== null
 }
 
 async function waitForHealth(child: ChildProcess, options: ResolvedDecoyOptions): Promise<void> {

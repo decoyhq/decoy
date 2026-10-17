@@ -1,21 +1,32 @@
 import { createServer, type Server } from 'node:http'
-import type { AddressInfo } from 'node:net'
 import { resolve } from 'node:path'
 import type { FullConfig } from '@playwright/test'
 import { afterEach, describe, expect, test } from '@rstest/core'
 import { type DecoyOptions, isHealthy, resolveOptions } from './options'
-import { setup, type Teardown } from './setup'
+import { type SetupConfig, setup, type Teardown } from './setup'
 
 const FAKE_DECOY = resolve(process.cwd(), 'fixtures/fake-decoy.mjs')
 
-function config(decoyOptions: DecoyOptions | undefined): FullConfig {
-  return { projects: [{ use: { decoyOptions } }], configFile: undefined } as unknown as FullConfig
+// Compile-time guard: what Playwright passes to global setup must satisfy `SetupConfig`.
+const acceptsPlaywrightConfig: (config: FullConfig) => SetupConfig = (config) => config
+void acceptsPlaywrightConfig
+
+function config(decoyOptions: DecoyOptions | undefined): SetupConfig {
+  return { projects: [{ use: { decoyOptions } }] }
+}
+
+async function listen(server: Server): Promise<number> {
+  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  const address = server.address()
+  if (address === null || typeof address === 'string') {
+    throw new Error('expected a TCP address')
+  }
+  return address.port
 }
 
 async function freePort(): Promise<number> {
   const server = createServer()
-  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
-  const { port } = server.address() as AddressInfo
+  const port = await listen(server)
   await new Promise((done) => server.close(done))
   return port
 }
@@ -24,8 +35,7 @@ async function runningDecoy(): Promise<{ url: string; server: Server }> {
   const server = createServer((_req, res) => {
     res.writeHead(200).end('{"status":"ok"}')
   })
-  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
-  const { port } = server.address() as AddressInfo
+  const port = await listen(server)
   return { url: `http://127.0.0.1:${port}`, server }
 }
 

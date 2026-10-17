@@ -29,21 +29,28 @@ export interface DecoyFixtures {
 export function createDecoyFixtures(): Fixtures<DecoyFixtures> {
   return {
     decoyOptions: [undefined, { option: true }],
-    decoy: async ({ decoyOptions }, use, testInfo) => {
-      if (!decoyOptions) {
-        throw new Error(
-          'The `decoy` fixture needs Decoy to be configured: set `use.decoyOptions` in your Playwright config.',
-        )
-      }
-      const { url } = resolveOptions(decoyOptions)
-      if (!(await isHealthy(url))) {
-        throw new Error(
-          `Decoy is not reachable at ${url}. Start it with the \`setup\` global setup or run \`decoy serve\`.`,
-        )
-      }
-      await use({ sessionId: sessionIdFor(testInfo) })
-    },
+    decoy: ({ decoyOptions }, use, testInfo) => provideDecoy(decoyOptions, use, testInfo),
   }
+}
+
+/** The `decoy` fixture body: validate config and reachability, then hand the test its Router. */
+export async function provideDecoy(
+  decoyOptions: DecoyOptions | undefined,
+  use: (router: DecoyRouter) => Promise<void>,
+  testInfo: Pick<TestInfo, 'titlePath'>,
+): Promise<void> {
+  if (!decoyOptions) {
+    throw new Error(
+      'The `decoy` fixture needs Decoy to be configured: set `use.decoyOptions` in your Playwright config.',
+    )
+  }
+  const { url } = resolveOptions(decoyOptions)
+  if (!(await isHealthy(url))) {
+    throw new Error(
+      `Decoy is not reachable at ${url}. Start it with the \`setup\` global setup or run \`decoy serve\`.`,
+    )
+  }
+  await use({ sessionId: sessionIdFor(testInfo) })
 }
 
 /** A readable, practically unique Session id: `<file>-<title>-<uuid>`. */
