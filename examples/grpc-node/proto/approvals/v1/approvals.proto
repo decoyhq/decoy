@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package approvals.v1;
+
+service Approvals {
+  rpc GetApproval(GetApprovalRequest) returns (Approval);
+}
+
+message GetApprovalRequest { string id = 1; }
+
+message Approval {
+  string id = 1;
+  State state = 2;
+  repeated string approvers = 3;
+}
+
+enum State {
+  STATE_UNSPECIFIED = 0;
+  PENDING = 1;
+  APPROVED = 2;
+  REJECTED = 3;
+}

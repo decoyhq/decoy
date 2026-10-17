@@ -1,0 +1,22 @@
+id: approvals-get
+transport: grpc
+match:
+  service: approvals.v1.Approvals
+  method: GetApproval
+cases:
+  pending:
+    match:
+      message: { id: a-1 } # the decoded request, as protobuf JSON
+    behaviors:
+      ok:
+        message: { id: a-1, state: PENDING, approvers: [alice] }
+      approved:
+        message: { id: a-1, state: APPROVED, approvers: [alice, bob] }
+  any:
+    behaviors:
+      echo:
+        message: { id: '${ message.id }', state: PENDING, approvers: ['${ metadata."x-user" }'] }
+      not-found:
+        status: NOT_FOUND
+        message: 'approval ${ message.id } not found'
+        metadata: { x-reason: missing }

@@ -7,5 +7,6 @@
 5. [Sessions and the Control API](sessions-and-control.md)
 6. [Configuration](config.md)
 7. [Playwright](playwright.md)
+8. [gRPC](grpc.md)
 
 Terms follow the glossary in [`CONTEXT.md`](../../CONTEXT.md).

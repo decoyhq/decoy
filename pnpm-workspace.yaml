@@ -3,3 +3,5 @@ packages:
   - 'examples/*'
 allowBuilds:
   lefthook: true
+  # Only a postinstall version notice; the gRPC example does not need it.
+  protobufjs: false
