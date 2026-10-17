@@ -1,15 +1,15 @@
 # Playwright
 
-`@decoy/playwright` routes your browser's API calls to `decoy`, gives each test its own Session, and
+`@decoyhq/playwright` routes your browser's API calls to `decoy`, gives each test its own Session, and
 exposes the Control API as a fixture.
 
 ```sh
-npm i -D @decoy/cli @decoy/playwright
+npm i -D @decoyhq/cli @decoyhq/playwright
 ```
 
 ```ts
 // playwright.config.ts
-import type { DecoyTestOptions } from '@decoy/playwright'
+import type { DecoyTestOptions } from '@decoyhq/playwright'
 import { defineConfig } from '@playwright/test'
 
 export default defineConfig<DecoyTestOptions>({
@@ -27,12 +27,12 @@ export default defineConfig<DecoyTestOptions>({
 
 ```ts
 // global-setup.ts
-export { setup as default } from '@decoy/playwright'
+export { setup as default } from '@decoyhq/playwright'
 ```
 
 ```ts
 // tests/fixtures.ts
-import { createDecoyFixtures, type DecoyFixtures } from '@decoy/playwright'
+import { createDecoyFixtures, type DecoyFixtures } from '@decoyhq/playwright'
 import { test as base } from '@playwright/test'
 
 export const test = base.extend<DecoyFixtures>(createDecoyFixtures())

@@ -3,7 +3,7 @@
 The normative dictionary for Decoy. When a term below is used in code, docs, or discussion, it
 means _exactly_ this — one line per term, plus the synonyms to avoid. The prose explanation of how
 the terms fit together lives in the docs site. Name = `decoy`; packages publish scoped as
-`@decoy/*`, CLI bin `decoy`.
+`@decoyhq/*`, CLI bin `decoy`.
 
 ## Language
 

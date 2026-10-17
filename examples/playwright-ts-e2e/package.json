@@ -1,5 +1,5 @@
 {
-  "name": "@decoy-examples/playwright-ts-e2e",
+  "name": "@decoyhq-examples/playwright-ts-e2e",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,7 @@
     "typecheck": "tsc"
   },
   "devDependencies": {
-    "@decoy/playwright": "workspace:*",
+    "@decoyhq/playwright": "workspace:*",
     "@playwright/test": "^1.56.0",
     "@types/node": "^24.0.0"
   }

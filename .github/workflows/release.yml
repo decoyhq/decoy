@@ -137,7 +137,7 @@ jobs:
       - name: Build npm packages
         run: |
           pnpm install --frozen-lockfile
-          pnpm --filter @decoy/cli build
+          pnpm --filter @decoyhq/cli build
           node scripts/npm-platform-packages.mjs archives npm
 
       - name: Install the packed CLI into an empty project
@@ -183,7 +183,7 @@ jobs:
           pnpm build
           node scripts/npm-platform-packages.mjs archives npm
 
-      - name: Publish (platform packages first, then @decoy/cli and @decoy/playwright)
+      - name: Publish (platform packages first, then @decoyhq/cli and @decoyhq/playwright)
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
@@ -193,5 +193,5 @@ jobs:
           for dir in npm/*/; do
             (cd "$dir" && npm publish --access public --tag "$tag")
           done
-          pnpm --filter @decoy/cli --filter @decoy/playwright \
+          pnpm --filter @decoyhq/cli --filter @decoyhq/playwright \
             publish --access public --tag "$tag" --no-git-checks

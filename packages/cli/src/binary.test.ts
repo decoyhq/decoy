@@ -9,13 +9,13 @@ const missing = (id: string): string => {
 describe('findBinary', () => {
   test('uses the platform package binary', () => {
     expect(findBinary({ platform: 'linux', arch: 'arm64', env: {}, resolve: installed })).toBe(
-      '/node_modules/@decoy/cli-linux-arm64/bin/decoy',
+      '/node_modules/@decoyhq/cli-linux-arm64/bin/decoy',
     )
   })
 
   test('uses decoy.exe on Windows', () => {
     expect(findBinary({ platform: 'win32', arch: 'x64', env: {}, resolve: installed })).toBe(
-      '/node_modules/@decoy/cli-win32-x64/bin/decoy.exe',
+      '/node_modules/@decoyhq/cli-win32-x64/bin/decoy.exe',
     )
   })
 
@@ -41,6 +41,6 @@ describe('findBinary', () => {
   test('names the missing optional package', () => {
     expect(() =>
       findBinary({ platform: 'darwin', arch: 'arm64', env: {}, resolve: missing }),
-    ).toThrow(/could not find @decoy\/cli-darwin-arm64.*--omit=optional/)
+    ).toThrow(/could not find @decoyhq\/cli-darwin-arm64.*--omit=optional/)
   })
 })

@@ -26,7 +26,7 @@ export interface DecoyFixtures extends DecoyTestOptions {
  *
  * ```ts
  * import { test as base } from '@playwright/test'
- * import { createDecoyFixtures, type DecoyFixtures } from '@decoy/playwright'
+ * import { createDecoyFixtures, type DecoyFixtures } from '@decoyhq/playwright'
  *
  * export const test = base.extend<DecoyFixtures>(createDecoyFixtures())
  * ```

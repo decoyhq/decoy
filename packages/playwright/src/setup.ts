@@ -19,7 +19,7 @@ export type SetupConfig = Pick<FullConfig<DecoyTestOptions>, 'configFile'> & {
  *
  * ```ts
  * // global-setup.ts
- * export { setup as default } from '@decoy/playwright'
+ * export { setup as default } from '@decoyhq/playwright'
  * ```
  */
 export async function setup(config: SetupConfig): Promise<Teardown> {

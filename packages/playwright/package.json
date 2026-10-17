@@ -1,5 +1,5 @@
 {
-  "name": "@decoy/playwright",
+  "name": "@decoyhq/playwright",
   "version": "0.1.0-alpha.0",
   "description": "Playwright fixtures and global setup for the native Decoy runtime.",
   "type": "module",
