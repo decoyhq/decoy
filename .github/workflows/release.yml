@@ -1,12 +1,13 @@
 name: Release
 
-# A pushed `v*` tag builds every target and publishes a GitHub Release. Pull requests that touch
-# this workflow (and manual runs) build every target without publishing, as a dry run.
+# A pushed `v*` tag builds every target, publishes a GitHub Release, then the npm packages.
+# Pull requests that touch the release path (and manual runs) build and smoke-test everything
+# without publishing, as a dry run.
 on:
   push:
     tags: ['v*']
   pull_request:
-    paths: ['.github/workflows/release.yml']
+    paths: ['.github/workflows/release.yml', 'scripts/npm-platform-packages.mjs', 'packages/cli/**']
   workflow_dispatch:
 
 permissions:
@@ -116,3 +117,81 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
             "${prerelease[@]}"
+
+  npm-smoke:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup toolchain (proto reads .prototools)
+        uses: moonrepo/setup-toolchain@v0
+        with:
+          auto-install: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: archives
+          merge-multiple: true
+
+      - name: Build npm packages
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @decoy/cli build
+          node scripts/npm-platform-packages.mjs archives npm
+
+      - name: Install the packed CLI into an empty project
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          (cd packages/cli && npm pack --pack-destination "$RUNNER_TEMP")
+          (cd npm/cli-linux-x64 && npm pack --pack-destination "$RUNNER_TEMP")
+          mkdir "$RUNNER_TEMP/project" && cd "$RUNNER_TEMP/project"
+          npm init -y > /dev/null
+          npm install --no-audit --no-fund \
+            "$RUNNER_TEMP/decoy-cli-linux-x64-$VERSION.tgz" "$RUNNER_TEMP/decoy-cli-$VERSION.tgz"
+          out="$(npx decoy --version)"
+          echo "$out"
+          [ "$out" = "decoy $VERSION" ]
+
+  publish-npm:
+    needs: [version, release, npm-smoke]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    env:
+      NPM_CONFIG_PROVENANCE: 'true'
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup toolchain (proto reads .prototools)
+        uses: moonrepo/setup-toolchain@v0
+        with:
+          auto-install: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: archives
+          merge-multiple: true
+
+      - name: Build
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          node scripts/npm-platform-packages.mjs archives npm
+
+      - name: Publish (platform packages first, then @decoy/cli and @decoy/playwright)
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" > "$HOME/.npmrc"
+          tag=latest
+          case "$VERSION" in *-*) tag=next ;; esac
+          for dir in npm/*/; do
+            (cd "$dir" && npm publish --access public --tag "$tag")
+          done
+          pnpm --filter @decoy/cli --filter @decoy/playwright \
+            publish --access public --tag "$tag" --no-git-checks
