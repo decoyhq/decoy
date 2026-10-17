@@ -329,7 +329,7 @@ test('shows the approval as soon as the server pushes it', async ({ page, decoy 
   The page needs no changes. Config: `decoyOptions.webSocketUrls`, alongside `urls` (**Q6**).
 - **Routing SSE:** `route.fulfill` buffers whole bodies, so streams can't go through it. SSE
   requests use `route.continue({ url: <decoy url>, headers })` instead, which streams. That needs
-  the same protocol on both sides: http app → http Decoy (**Q7**).
+  the same protocol on both sides: http app → http Decoy, https app → https Decoy (TLS, #241) (**Q7**).
 
 ## 10. Sessions on long-lived connections
 
@@ -343,14 +343,14 @@ test('shows the approval as soon as the server pushes it', async ({ page, decoy 
 
 ## 11. Open questions
 
-| #   | question                                                          | recommendation                                                                                                                                                    |
-| --- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Q1  | One port for HTTP/WS/SSE/gRPC, or a separate `grpcPort`?          | **Decided:** one port by default (per-request dispatch on `content-type`); extra listeners via config, e.g. `ports: { grpc: 50051 }`.                             |
-| Q2  | Implicit `[grpc-frame, protobuf]` pipeline for gRPC Routes?       | **Decided:** per-transport defaults (gRPC → `[grpc-frame, protobuf]`); an explicit `pipeline` replaces the default entirely, in written order.                    |
-| Q3  | Validate gRPC message literals against the proto at startup?      | **Decided:** yes, wherever a `protobuf` step runs: response literals and literal `match` fields; `${ }` is checked at render time.                                |
-| Q4  | Unmatched WS message: silent + recorded, or close the socket?     | **Decided:** skip it: send nothing, log a miss, keep the connection open.                                                                                         |
-| Q5  | `send` with no live connection: wait or fail fast?                | **Decided:** wait for a connection up to `timeout` (default 5 s); fail with `408` on timeout.                                                                     |
-| Q6  | WebSocket routing in Playwright: bridge via `routeWebSocket`?     | **Decided:** yes; the fixture adds the Session header, same as `context.route` for HTTP.                                                                          |
-| Q7  | SSE in Playwright needs app and Decoy on the same protocol. OK?   | OK for now (tests run on http locally); revisit if someone runs https apps under test.                                                                            |
-| Q8  | `__decoy_session` query fallback for browsers outside Playwright? | **Deferred** until non-Playwright runners (Cypress, Selenium) are in scope.                                                                                       |
-| Q9  | Glossary: "Request envelope" / "Message envelope".                | Adopt them in `CONTEXT.md` when #217/#218 start. The HTTP code currently says `RequestContext`; rename it to `RequestEnvelope` for consistency (small follow-up). |
+| #   | question                                                          | recommendation                                                                                                                                 |
+| --- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Q1  | One port for HTTP/WS/SSE/gRPC, or a separate `grpcPort`?          | **Decided:** one port by default (per-request dispatch on `content-type`); extra listeners via config, e.g. `ports: { grpc: 50051 }`.          |
+| Q2  | Implicit `[grpc-frame, protobuf]` pipeline for gRPC Routes?       | **Decided:** per-transport defaults (gRPC → `[grpc-frame, protobuf]`); an explicit `pipeline` replaces the default entirely, in written order. |
+| Q3  | Validate gRPC message literals against the proto at startup?      | **Decided:** yes, wherever a `protobuf` step runs: response literals and literal `match` fields; `${ }` is checked at render time.             |
+| Q4  | Unmatched WS message: silent + recorded, or close the socket?     | **Decided:** skip it: send nothing, log a miss, keep the connection open.                                                                      |
+| Q5  | `send` with no live connection: wait or fail fast?                | **Decided:** wait for a connection up to `timeout` (default 5 s); fail with `408` on timeout.                                                  |
+| Q6  | WebSocket routing in Playwright: bridge via `routeWebSocket`?     | **Decided:** yes; the fixture adds the Session header, same as `context.route` for HTTP.                                                       |
+| Q7  | SSE in Playwright needs app and Decoy on the same protocol. OK?   | **Decided:** TLS listeners with a provided cert or a generated self-signed one (#241); also needed for gRPC over TLS.                          |
+| Q8  | `__decoy_session` query fallback for browsers outside Playwright? | **Deferred** until non-Playwright runners (Cypress, Selenium) are in scope.                                                                    |
+| Q9  | Glossary: "Request envelope" / "Message envelope".                | **Decided:** adopt both in `CONTEXT.md`; rename `RequestContext` → `RequestEnvelope` (#240).                                                   |
