@@ -812,3 +812,32 @@ async fn serve_reserves_decoy_namespace_but_not_lookalike_paths() {
     assert_eq!(lookalike.status(), 501);
     assert_eq!(lookalike.headers()["x-mock-miss"], "true");
 }
+
+#[tokio::test]
+async fn serve_health_reports_liveness_without_touching_selection() {
+    let server = ControlServer::start().await;
+    let (status, _) = server
+        .post(
+            "/__decoy__/control/useCollection",
+            None,
+            r#"{"collection":"not-found"}"#,
+        )
+        .await;
+    assert_eq!(status, 200);
+
+    let health = server
+        .client
+        .get(format!("http://127.0.0.1:{}/__decoy__/health", server.port))
+        .header("x-mock-session", "probe")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(health.status(), 200);
+    assert_eq!(
+        health.json::<serde_json::Value>().await.unwrap(),
+        serde_json::json!({ "status": "ok" })
+    );
+
+    assert_eq!(server.get_user(None).await, 404);
+    assert_eq!(server.get_user(Some("probe")).await, 200);
+}

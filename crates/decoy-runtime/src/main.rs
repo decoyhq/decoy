@@ -11,7 +11,8 @@ use axum::routing::any;
 use clap::{Parser, Subcommand};
 use decoy_runtime::config::{ServeCliOptions, ServeConfig};
 use decoy_runtime::control_api::{
-    ControlApiRequest, ControlApiResponse, handle_control_request, is_control_path, session_id,
+    ControlApiRequest, ControlApiResponse, HEALTH_PATH, handle_control_request, is_control_path,
+    session_id,
 };
 use decoy_runtime::engine::{Controller, HttpExecutionOutcome, HttpExecutionRequest};
 use decoy_runtime::http::{
@@ -117,6 +118,10 @@ async fn handle_request(
     OriginalUri(uri): OriginalUri,
     request: Request<Body>,
 ) -> Response<Body> {
+    if uri.path() == HEALTH_PATH && request.method() == axum::http::Method::GET {
+        return json_response(StatusCode::OK, serde_json::json!({ "status": "ok" }));
+    }
+
     let headers = request_headers(request.headers());
     let session = session_id(&headers);
     let request_method = request.method().clone();
