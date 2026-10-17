@@ -1,5 +1,6 @@
 import type { test as base } from '@playwright/test'
 import { describe, expect, test } from '@rstest/core'
+import { expectTypeOf } from 'expect-type'
 import { startFakeDecoy } from '../fixtures/fake-decoy-server'
 import type { DecoyRouter } from './control'
 import {
@@ -13,10 +14,8 @@ import {
 const testInfo = { titlePath: ['users.spec.ts', 'Shows a User!'] }
 const ignoreRouter = () => Promise.resolve()
 
-test('fixtures compose onto Playwright base test (checked by tsc)', () => {
-  const compose = (playwrightTest: typeof base) =>
-    playwrightTest.extend<DecoyFixtures>(createDecoyFixtures())
-  expect(compose).toBeTypeOf('function')
+test('fixtures compose onto Playwright base test', () => {
+  expectTypeOf(createDecoyFixtures()).toExtend<Parameters<typeof base.extend<DecoyFixtures>>[0]>()
 })
 
 describe('decoy fixture', () => {

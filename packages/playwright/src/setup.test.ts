@@ -2,6 +2,7 @@ import { createServer, type Server } from 'node:http'
 import { resolve } from 'node:path'
 import { defineConfig, type FullConfig } from '@playwright/test'
 import { afterEach, describe, expect, test } from '@rstest/core'
+import { expectTypeOf } from 'expect-type'
 import type { DecoyTestOptions } from './fixtures'
 import { type DecoyOptions, isHealthy, resolveOptions } from './options'
 import { type SetupConfig, setup, type Teardown } from './setup'
@@ -9,9 +10,8 @@ import { type SetupConfig, setup, type Teardown } from './setup'
 const FAKE_DECOY = resolve(process.cwd(), 'fixtures/fake-decoy.mjs')
 
 describe('config typing', () => {
-  test('a typed Playwright config fits setup (checked by tsc)', () => {
-    const fits = (config: FullConfig<DecoyTestOptions>): SetupConfig => config
-    expect(fits).toBeTypeOf('function')
+  test('a typed Playwright config fits setup', () => {
+    expectTypeOf<FullConfig<DecoyTestOptions>>().toExtend<SetupConfig>()
   })
 
   test('users type decoyOptions with defineConfig<DecoyTestOptions>', () => {
