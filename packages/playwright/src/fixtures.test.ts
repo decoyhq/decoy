@@ -1,6 +1,18 @@
 import { createServer } from 'node:http'
+import type { test as base } from '@playwright/test'
 import { describe, expect, test } from '@rstest/core'
-import { type DecoyRouter, provideDecoy, sessionIdFor } from './fixtures'
+import {
+  createDecoyFixtures,
+  type DecoyFixtures,
+  type DecoyRouter,
+  provideDecoy,
+  sessionIdFor,
+} from './fixtures'
+
+// Compile-time guard: users compose the fixtures onto Playwright's base test.
+const compose = (playwrightTest: typeof base) =>
+  playwrightTest.extend<DecoyFixtures>(createDecoyFixtures())
+void compose
 
 const testInfo = { titlePath: ['users.spec.ts', 'Shows a User!'] }
 
@@ -43,7 +55,9 @@ describe('decoy fixture', () => {
 })
 
 describe('sessionIdFor', () => {
-  test('is unique per call', () => {
-    expect(sessionIdFor(testInfo)).not.toBe(sessionIdFor(testInfo))
+  test('is stable within a test and unique across tests', () => {
+    const other = { titlePath: ['users.spec.ts', 'Shows a User!'] }
+    expect(sessionIdFor(testInfo)).toBe(sessionIdFor(testInfo))
+    expect(sessionIdFor(other)).not.toBe(sessionIdFor(testInfo))
   })
 })
