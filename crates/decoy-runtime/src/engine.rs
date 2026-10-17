@@ -7,7 +7,8 @@ use crate::http::{BodyPlan, RequestMetadata, ResponsePlan, RuntimeConfig};
 use crate::http_forward::{ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough};
 use crate::matching::{MatchInput, case_matches};
 use crate::request::RequestContext;
-use crate::schema::{HttpMethod, Route};
+use crate::schema::{Behavior, HttpMethod, Route};
+use crate::template::{has_templates, render_response};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct HttpRequest {
@@ -266,10 +267,29 @@ impl Catalog {
                 continue;
             };
 
+            let plan = match behavior {
+                Behavior::Response(response) if has_templates(response) => {
+                    let context =
+                        request
+                            .context
+                            .to_json(&request.method, &request.path, &path_params);
+                    match render_response(response, &context) {
+                        Ok(rendered) => ResponsePlan::from_behavior(
+                            route,
+                            &Behavior::Response(rendered),
+                            &self.runtime,
+                            metadata,
+                        ),
+                        Err(reason) => ResponsePlan::template_error(&activation.address(), &reason),
+                    }
+                }
+                behavior => ResponsePlan::from_behavior(route, behavior, &self.runtime, metadata),
+            };
+
             return ResolveOutcome::Matched {
                 activation: activation.clone(),
                 path_params,
-                plan: ResponsePlan::from_behavior(route, behavior, &self.runtime, metadata),
+                plan,
             };
         }
 

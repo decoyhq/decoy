@@ -41,6 +41,19 @@ pub struct PassthroughPlan {
 pub const DEFAULT_MISS_STATUS: u16 = 501;
 
 impl ResponsePlan {
+    /// A templated Behavior that failed to render at request time.
+    pub fn template_error(address: &str, reason: &str) -> Self {
+        Self::Response(HttpResponsePlan {
+            status: 500,
+            headers: BTreeMap::from([("content-type".to_owned(), "application/json".to_owned())]),
+            body: Some(BodyPlan::Json(serde_json::json!({
+                "error": format!("behavior `{address}` template failed: {reason}")
+            }))),
+        })
+    }
+}
+
+impl ResponsePlan {
     pub fn fail_closed_miss(message: impl Into<String>) -> Self {
         Self::fail_closed_miss_with_status(message, DEFAULT_MISS_STATUS)
     }
@@ -66,7 +79,12 @@ impl ResponsePlan {
     ) -> Self {
         match behavior {
             Behavior::Response(response) => Self::Response(HttpResponsePlan {
-                status: response.status.unwrap_or(200),
+                status: response
+                    .status
+                    .as_ref()
+                    .and_then(Value::as_u64)
+                    .and_then(|status| u16::try_from(status).ok())
+                    .unwrap_or(200),
                 headers: response_headers(&response.headers, response.body.as_ref()),
                 body: response.body.clone().map(body_plan),
             }),

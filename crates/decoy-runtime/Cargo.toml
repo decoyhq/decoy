@@ -22,6 +22,8 @@ tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal
 url = "2"
 walkdir = "2"
 jmespath = "0.5"
+fastrand = "2"
+humantime = "2"
 
 [dev-dependencies]
 pretty_assertions = "1"

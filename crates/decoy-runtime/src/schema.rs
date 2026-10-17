@@ -48,8 +48,16 @@ impl Route {
                 });
             }
 
-            for behavior_id in case.behaviors.keys() {
+            for (behavior_id, behavior) in &case.behaviors {
                 validate_id("behavior", behavior_id)?;
+                if let Behavior::Response(response) = behavior {
+                    crate::template::validate_response(response).map_err(|reason| {
+                        ValidationError::InvalidBehavior {
+                            address: format!("{}:{case_id}:{behavior_id}", self.id),
+                            reason,
+                        }
+                    })?;
+                }
             }
 
             crate::matching::validate_case_match(&case.case_match).map_err(|reason| {
@@ -117,8 +125,9 @@ pub enum BehaviorKind {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResponseBehavior {
+    /// An integer, or a `${ }` template that renders to one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<u16>,
+    pub status: Option<Value>,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -142,7 +151,7 @@ struct RawBehavior {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     kind: Option<BehaviorKind>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    status: Option<u16>,
+    status: Option<Value>,
     #[serde(default)]
     headers: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -203,6 +212,8 @@ pub enum ValidationError {
     EmptyCases { route: String },
     #[error("case `{route}:{case}` must define at least one behavior")]
     EmptyBehaviors { route: String, case: String },
+    #[error("behavior `{address}` is invalid: {reason}")]
+    InvalidBehavior { address: String, reason: String },
     #[error("case `{route}:{case}` has an invalid match: {reason}")]
     InvalidMatch {
         route: String,

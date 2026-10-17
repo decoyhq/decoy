@@ -1054,3 +1054,89 @@ cases:
         "{stderr}"
     );
 }
+
+#[tokio::test]
+async fn serve_renders_templated_responses() {
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "users.yaml",
+        r#"
+id: users
+transport: http
+match:
+  method: POST
+  path: /users/{id}
+cases:
+  any:
+    behaviors:
+      echo:
+        status: "${ query.status || `201` }"
+        headers:
+          x-user: "user-${ pathParams.id }"
+        body:
+          id: "${ pathParams.id }"
+          greeting: "Hello, ${ body.name }!"
+          age: "${ body.age }"
+          requestId: "${ uuid() }"
+          literal: '\${ not a template }'
+"#,
+    );
+    fixture.write_collections("- id: default\n  routes:\n    - users:any:echo\n");
+    let port = unused_port();
+    let _server = fixture.spawn(port, &[]);
+    wait_for_server(port).await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .post(format!("http://127.0.0.1:{port}/users/42"))
+        .header("content-type", "application/json")
+        .body(r#"{"name":"Ada","age":36}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 201);
+    assert_eq!(response.headers()["x-user"], "user-42");
+    let body = response.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(body["id"], "42");
+    assert_eq!(body["greeting"], "Hello, Ada!");
+    assert_eq!(body["age"], 36);
+    assert_eq!(body["requestId"].as_str().unwrap().len(), 36);
+    assert_eq!(body["literal"], "${ not a template }");
+
+    let teapot = client
+        .post(format!("http://127.0.0.1:{port}/users/1?status=418"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(teapot.status(), 418);
+}
+
+#[test]
+fn invalid_response_template_fails_startup() {
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "users.yaml",
+        r#"
+id: users
+transport: http
+match:
+  method: GET
+  path: /users
+cases:
+  any:
+    behaviors:
+      broken:
+        body: { name: "${ body.[ }" }
+"#,
+    );
+    fixture.write_collections("- id: default\n  routes:\n    - users:any:broken\n");
+
+    let output = fixture.output(&[]);
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("users:any:broken") && stderr.contains("invalid JMESPath"),
+        "{stderr}"
+    );
+}
