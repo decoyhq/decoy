@@ -163,10 +163,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # npm provenance
-    env:
-      NPM_CONFIG_PROVENANCE: 'true'
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      id-token: write # npm trusted publishing (OIDC); provenance is attached automatically
     steps:
       - uses: actions/checkout@v7
 
@@ -189,12 +186,10 @@ jobs:
       - name: Publish (platform packages first, then @decoyhq/cli and @decoyhq/playwright)
         env:
           VERSION: ${{ needs.version.outputs.version }}
+        # No token: each package trusts this repo's release.yml on npmjs.com (Trusted Publisher).
         run: |
-          echo "//registry.npmjs.org/:_authToken=$NPM_TOKEN" > "$HOME/.npmrc"
           tag=latest
           case "$VERSION" in *-*) tag=next ;; esac
-          for dir in npm/*/; do
+          for dir in npm/*/ packages/cli/ packages/playwright/; do
             (cd "$dir" && npm publish --access public --tag "$tag")
           done
-          pnpm --filter @decoyhq/cli --filter @decoyhq/playwright \
-            publish --access public --tag "$tag" --no-git-checks
