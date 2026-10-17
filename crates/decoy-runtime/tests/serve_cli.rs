@@ -841,3 +841,16 @@ async fn serve_health_reports_liveness_without_touching_selection() {
     assert_eq!(server.get_user(None).await, 404);
     assert_eq!(server.get_user(Some("probe")).await, 200);
 }
+
+#[test]
+fn version_flag_prints_the_crate_version() {
+    let output = Command::new(env!("CARGO_BIN_EXE_decoy"))
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        format!("decoy {}", env!("CARGO_PKG_VERSION"))
+    );
+}

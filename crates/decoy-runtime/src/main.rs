@@ -25,7 +25,7 @@ use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
 #[derive(Debug, Parser)]
-#[command(name = "decoy")]
+#[command(name = "decoy", version)]
 #[command(about = "Decoy native runtime")]
 struct Cli {
     #[command(subcommand)]

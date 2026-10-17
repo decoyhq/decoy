@@ -79,3 +79,13 @@ tasks:
     desc: 'Run decoy serve from source, e.g. task serve -- --config examples/playwright-ts-e2e/mocks/decoy.yaml'
     cmds:
       - cargo run --quiet -p decoy-runtime -- serve {{.CLI_ARGS}}
+
+  release:
+    desc: 'Set one version everywhere, commit, and tag it (does not push): task release -- 0.1.0'
+    preconditions:
+      - sh: test -z "$(git status --porcelain)"
+        msg: Working tree must be clean before a release.
+    cmds:
+      - node scripts/versions.mjs set {{.CLI_ARGS}}
+      - 'git commit --all --message "chore(release): v{{.CLI_ARGS}}"'
+      - git tag v{{.CLI_ARGS}}
