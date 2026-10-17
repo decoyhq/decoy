@@ -16,14 +16,10 @@
     "test:e2e": "pnpm -r --if-present run test:e2e",
     "typecheck": "pnpm -r run typecheck",
     "check": "biome check .",
-    "fix": "biome check --write .",
-    "changeset": "changeset",
-    "version-packages": "changeset version",
-    "release": "pnpm build && changeset publish"
+    "fix": "biome check --write ."
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.0",
-    "@changesets/cli": "^2.31.0",
     "@commitlint/cli": "^21.0.2",
     "@commitlint/config-conventional": "^21.0.2",
     "@rslib/core": "^0.22.1",

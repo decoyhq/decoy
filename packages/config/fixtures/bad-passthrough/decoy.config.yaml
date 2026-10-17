@@ -1,4 +1,0 @@
-name: users
-port: 4103
-passthrough:
-  url: not a url

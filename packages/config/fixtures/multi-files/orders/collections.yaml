@@ -1,3 +1,0 @@
-- id: happy
-  routes:
-    - orders-route:default:success

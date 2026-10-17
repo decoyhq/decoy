@@ -1,4 +1,0 @@
-- id: happy-path
-  routes:
-    - users-me-api:default:success
-    - users-by-id-api:default:success
