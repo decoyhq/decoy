@@ -1,6 +1,6 @@
 import { once } from 'node:events'
 import { createServer } from 'node:http'
-import { type SetupConfig, setup } from '@decoy/playwright'
+import { type SetupConfig, setup } from '@decoyhq/playwright'
 
 /** Fixed port of the example's own upstream, targeted by the Passthrough Behavior in mocks/. */
 export const UPSTREAM_PORT = 4174

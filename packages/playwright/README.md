@@ -1,18 +1,18 @@
-# @decoy/playwright
+# @decoyhq/playwright
 
 Playwright fixtures and global setup for the native `decoy` runtime.
 
 ```sh
-npm i -D @decoy/cli @decoy/playwright
+npm i -D @decoyhq/cli @decoyhq/playwright
 ```
 
-`@decoy/cli` puts the `decoy` binary on the project's PATH, so the default `command: 'decoy serve'`
+`@decoyhq/cli` puts the `decoy` binary on the project's PATH, so the default `command: 'decoy serve'`
 works as is.
 
 ```ts
 // playwright.config.ts
 export default defineConfig<DecoyTestOptions>({
-  globalSetup: './global-setup.ts', // export { setup as default } from '@decoy/playwright'
+  globalSetup: './global-setup.ts', // export { setup as default } from '@decoyhq/playwright'
   use: {
     decoyOptions: {
       url: 'http://127.0.0.1:8080',

@@ -1,5 +1,5 @@
 {
-  "name": "@decoy/cli",
+  "name": "@decoyhq/cli",
   "version": "0.1.0-alpha.0",
   "description": "The decoy command: a portable local mock tool. Installs the native binary for your platform.",
   "type": "module",

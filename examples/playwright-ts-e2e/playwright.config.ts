@@ -1,4 +1,4 @@
-import type { DecoyTestOptions } from '@decoy/playwright'
+import type { DecoyTestOptions } from '@decoyhq/playwright'
 import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig<DecoyTestOptions>({
