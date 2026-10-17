@@ -75,7 +75,7 @@ cases:
     match: '${ body.variables.amount > `1000` }'
 ```
 
-The request a predicate sees:
+The **request envelope**, what predicates and templates see:
 
 ```yaml
 method: POST

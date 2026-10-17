@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value};
 
 use crate::expression::{predicate_holds, validate_predicate};
-use crate::request::RequestContext;
+use crate::request::RequestEnvelope;
 use crate::schema::HttpMethod;
 
 /// The request as Case matching sees it.
@@ -16,7 +16,7 @@ pub struct MatchInput<'a> {
     pub method: &'a HttpMethod,
     pub path: &'a str,
     pub path_params: &'a BTreeMap<String, String>,
-    pub context: &'a RequestContext,
+    pub envelope: &'a RequestEnvelope,
 }
 
 const FIELDS: [&str; 5] = ["pathParams", "query", "headers", "cookies", "body"];
@@ -63,7 +63,7 @@ pub fn case_matches(case_match: &Value, input: &MatchInput) -> bool {
     let request = || {
         request.get_or_init(|| {
             input
-                .context
+                .envelope
                 .to_json(input.method, input.path, input.path_params)
         })
     };
@@ -73,7 +73,7 @@ pub fn case_matches(case_match: &Value, input: &MatchInput) -> bool {
         Value::Object(fields) => fields,
         _ => return false,
     };
-    let context = input.context;
+    let envelope = input.envelope;
     fields
         .iter()
         .all(|(field, pattern)| match (field.as_str(), pattern) {
@@ -82,19 +82,19 @@ pub fn case_matches(case_match: &Value, input: &MatchInput) -> bool {
                 input.path_params.get(key).into_iter().collect()
             }),
             ("query", _) => strings_match(pattern, |key| {
-                context.query.get(key).into_iter().flatten().collect()
+                envelope.query.get(key).into_iter().flatten().collect()
             }),
             ("headers", _) => strings_match(pattern, |key| {
-                context
+                envelope
                     .headers
                     .get(&key.to_ascii_lowercase())
                     .into_iter()
                     .collect()
             }),
             ("cookies", _) => strings_match(pattern, |key| {
-                context.cookies.get(key).into_iter().collect()
+                envelope.cookies.get(key).into_iter().collect()
             }),
-            ("body", _) => value_matches(pattern, &context.body),
+            ("body", _) => value_matches(pattern, &envelope.body),
             _ => false,
         })
 }
@@ -169,16 +169,16 @@ mod tests {
 
     use super::*;
 
-    fn context(path_and_query: &str, headers: &[(&str, &str)], body: Value) -> RequestContext {
-        RequestContext {
-            query: RequestContext::from_parts(None, path_and_query, &BTreeMap::new(), b"").query,
+    fn envelope(path_and_query: &str, headers: &[(&str, &str)], body: Value) -> RequestEnvelope {
+        RequestEnvelope {
+            query: RequestEnvelope::from_parts(None, path_and_query, &BTreeMap::new(), b"").query,
             headers: headers
                 .iter()
                 .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
                 .collect(),
             cookies: BTreeMap::from([("sid".to_owned(), "abc".to_owned())]),
             body,
-            ..RequestContext::default()
+            ..RequestEnvelope::default()
         }
     }
 
@@ -189,28 +189,28 @@ mod tests {
             .collect()
     }
 
-    fn matches(pattern: Value, request: &RequestContext) -> bool {
+    fn matches(pattern: Value, request: &RequestEnvelope) -> bool {
         case_matches(
             &pattern,
             &MatchInput {
                 method: &HttpMethod::Post,
                 path: "/orders/7",
                 path_params: &params(&[("id", "7")]),
-                context: request,
+                envelope: request,
             },
         )
     }
 
     #[test]
     fn no_match_or_empty_match_accepts_everything() {
-        let request = context("/", &[], Value::Null);
+        let request = envelope("/", &[], Value::Null);
         assert!(matches(Value::Null, &request));
         assert!(matches(json!({}), &request));
     }
 
     #[test]
     fn path_params_compare_as_strings_with_wildcard() {
-        let request = context("/", &[], Value::Null);
+        let request = envelope("/", &[], Value::Null);
         assert!(matches(json!({ "pathParams": { "id": 7 } }), &request));
         assert!(matches(json!({ "pathParams": { "id": "*" } }), &request));
         assert!(!matches(json!({ "pathParams": { "id": "8" } }), &request));
@@ -222,7 +222,7 @@ mod tests {
 
     #[test]
     fn query_is_a_subset_match_and_repeated_keys_match_any_value() {
-        let request = context("/?page=5&tag=a&tag=b&extra=1", &[], Value::Null);
+        let request = envelope("/?page=5&tag=a&tag=b&extra=1", &[], Value::Null);
         assert!(matches(json!({ "query": { "page": 5 } }), &request));
         assert!(matches(json!({ "query": { "tag": "b" } }), &request));
         assert!(matches(
@@ -235,7 +235,7 @@ mod tests {
 
     #[test]
     fn header_names_are_case_insensitive_and_values_exact() {
-        let request = context("/", &[("x-role", "admin")], Value::Null);
+        let request = envelope("/", &[("x-role", "admin")], Value::Null);
         assert!(matches(
             json!({ "headers": { "X-Role": "admin" } }),
             &request
@@ -249,14 +249,14 @@ mod tests {
 
     #[test]
     fn cookies_match_by_name() {
-        let request = context("/", &[], Value::Null);
+        let request = envelope("/", &[], Value::Null);
         assert!(matches(json!({ "cookies": { "sid": "abc" } }), &request));
         assert!(!matches(json!({ "cookies": { "sid": "xyz" } }), &request));
     }
 
     #[test]
     fn body_is_a_deep_partial_match() {
-        let request = context(
+        let request = envelope(
             "/",
             &[],
             json!({ "user": { "name": "Ada", "age": 36 }, "active": true }),
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn body_arrays_contain_each_pattern_element_in_any_order() {
-        let request = context(
+        let request = envelope(
             "/",
             &[],
             json!({ "tags": ["beta", "x", "admin"], "items": [{ "id": 1 }, { "id": 2, "qty": 3 }] }),
@@ -303,14 +303,14 @@ mod tests {
 
     #[test]
     fn text_bodies_match_exact_strings() {
-        let request = context("/", &[], json!("ping"));
+        let request = envelope("/", &[], json!("ping"));
         assert!(matches(json!({ "body": "ping" }), &request));
         assert!(!matches(json!({ "body": { "a": 1 } }), &request));
     }
 
     #[test]
     fn fields_are_anded() {
-        let request = context("/?page=1", &[("x-role", "admin")], Value::Null);
+        let request = envelope("/?page=1", &[("x-role", "admin")], Value::Null);
         assert!(matches(
             json!({ "query": { "page": "1" }, "headers": { "x-role": "admin" } }),
             &request
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn whole_case_predicates_see_the_full_request() {
-        let request = context(
+        let request = envelope(
             "/?verbose=true",
             &[("x-tier", "gold")],
             json!({ "amount": 1500 }),
@@ -367,7 +367,7 @@ mod tests {
 
     #[test]
     fn field_predicates_are_anded_with_literal_fields() {
-        let request = context("/?page=1", &[], json!({ "operationName": "GetUser" }));
+        let request = envelope("/?page=1", &[], json!({ "operationName": "GetUser" }));
         assert!(matches(
             json!({ "query": { "page": "1" }, "body": "${ body.operationName == 'GetUser' }" }),
             &request
@@ -385,7 +385,7 @@ mod tests {
 
     #[test]
     fn repeated_query_keys_are_arrays_for_predicates() {
-        let request = context("/?tag=a&tag=b", &[], Value::Null);
+        let request = envelope("/?tag=a&tag=b", &[], Value::Null);
         assert!(matches(json!("${ contains(query.tag, 'b') }"), &request));
     }
 }

@@ -4,10 +4,10 @@ use serde_json::{Value, json};
 
 use crate::schema::HttpMethod;
 
-/// What Case matching (and later predicates and templates) can see about an HTTP request, besides
-/// method, path, and path params.
+/// The request envelope: what Case matching, predicates, and templates see about an HTTP request,
+/// besides method, path, and path params.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct RequestContext {
+pub struct RequestEnvelope {
     /// Full URL as Decoy received it, e.g. `http://127.0.0.1:8080/api/users?verbose=true`.
     pub url: String,
     /// Decoded query parameters; a repeated key keeps every value in order.
@@ -20,7 +20,7 @@ pub struct RequestContext {
     pub body: Value,
 }
 
-impl RequestContext {
+impl RequestEnvelope {
     /// What predicates and templates see: `{ method, url, path, pathParams, query, headers,
     /// cookies, body }`. A query key is a string, or an array when it repeats.
     pub fn to_json(
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn parses_url_query_headers_and_cookies() {
-        let context = RequestContext::from_parts(
+        let envelope = RequestEnvelope::from_parts(
             Some("http://127.0.0.1:8080"),
             "/api/users?tag=a&tag=b&name=Ada%20L&flag",
             &headers(&[
@@ -145,27 +145,27 @@ mod tests {
         );
 
         assert_eq!(
-            context.url,
+            envelope.url,
             "http://127.0.0.1:8080/api/users?tag=a&tag=b&name=Ada%20L&flag"
         );
         assert_eq!(
-            context.query,
+            envelope.query,
             BTreeMap::from([
                 ("flag".to_owned(), vec![String::new()]),
                 ("name".to_owned(), vec!["Ada L".to_owned()]),
                 ("tag".to_owned(), vec!["a".to_owned(), "b".to_owned()]),
             ])
         );
-        assert_eq!(context.headers["content-type"], "text/plain");
-        assert_eq!(context.cookies["sid"], "abc");
-        assert_eq!(context.cookies["theme"], "dark");
-        assert_eq!(context.body, Value::Null);
+        assert_eq!(envelope.headers["content-type"], "text/plain");
+        assert_eq!(envelope.cookies["sid"], "abc");
+        assert_eq!(envelope.cookies["theme"], "dark");
+        assert_eq!(envelope.body, Value::Null);
     }
 
     #[test]
     fn parses_json_bodies_by_content_type_and_falls_back_to_text() {
         let json_body = |content_type: &str, body: &str| {
-            RequestContext::from_parts(
+            RequestEnvelope::from_parts(
                 None,
                 "/",
                 &headers(&[("content-type", content_type)]),

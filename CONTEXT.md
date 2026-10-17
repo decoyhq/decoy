@@ -76,6 +76,12 @@ path, `pathParams`, query, headers, cookies, and body. Future transports provide
 message/connection data through the same semantic contract.
 _Avoid_: "context", "request object".
 
+**Message envelope**:
+The request envelope's counterpart for one inbound message on a long-lived connection (WebSocket,
+SSE subscription, streaming gRPC): the decoded message plus the connection's path, query, headers,
+and cookies. See `docs/design/transports.md`.
+_Avoid_: "context", "frame" (a frame is the wire unit before the pipeline decodes it).
+
 **Template context**:
 The stable data available to response/message templates: request or message data, Session/Selection
 identity, and bindings captured while matching the Route and Case.

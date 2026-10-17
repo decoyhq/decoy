@@ -1,5 +1,5 @@
 //! `${ <jmespath> }` expressions inside YAML strings: scanning, compiling, and evaluating against a
-//! request context. Standard JMESPath via the `jmespath` crate.
+//! request envelope. Standard JMESPath via the `jmespath` crate.
 
 use std::sync::LazyLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -110,10 +110,10 @@ pub fn validate_expression(source: &str) -> Result<(), String> {
     compile(source).map(|_| ())
 }
 
-/// Evaluate one expression source against `context`.
-pub fn evaluate(source: &str, context: &Value) -> Result<Value, String> {
+/// Evaluate one expression source against `envelope`.
+pub fn evaluate(source: &str, envelope: &Value) -> Result<Value, String> {
     let result = compile(source)?
-        .search(context)
+        .search(envelope)
         .map_err(|error| format!("`{source}` failed: {error}"))?;
     serde_json::to_value(&*result).map_err(|error| format!("`{source}` result: {error}"))
 }
@@ -195,14 +195,14 @@ pub fn validate_predicate(predicate: &str) -> Result<(), String> {
     compile(&predicate_source(predicate)?).map(|_| ())
 }
 
-/// Evaluate a validated predicate against `context`. JMESPath truthiness: `null`, `false`, `""`,
+/// Evaluate a validated predicate against `envelope`. JMESPath truthiness: `null`, `false`, `""`,
 /// `[]`, and `{}` are false. An evaluation error (e.g. a function given the wrong type) is false.
-pub fn predicate_holds(predicate: &str, context: &Value) -> bool {
+pub fn predicate_holds(predicate: &str, envelope: &Value) -> bool {
     let Ok(expression) = predicate_source(predicate).and_then(|source| compile(&source)) else {
         return false;
     };
     expression
-        .search(context)
+        .search(envelope)
         .is_ok_and(|result| result.is_truthy())
 }
 
@@ -267,55 +267,58 @@ mod tests {
 
     #[test]
     fn built_in_functions() {
-        let context = json!({ "pick": ["a", "b"] });
-        let uuid = evaluate("uuid()", &context).unwrap();
+        let envelope = json!({ "pick": ["a", "b"] });
+        let uuid = evaluate("uuid()", &envelope).unwrap();
         let uuid = uuid.as_str().unwrap();
         assert_eq!(uuid.len(), 36);
         assert_eq!(&uuid[14..15], "4");
         assert!(matches!(&uuid[19..20], "8" | "9" | "a" | "b"));
-        assert_ne!(evaluate("uuid()", &context), evaluate("uuid()", &context));
+        assert_ne!(evaluate("uuid()", &envelope), evaluate("uuid()", &envelope));
 
-        let now = evaluate("now()", &context).unwrap();
+        let now = evaluate("now()", &envelope).unwrap();
         assert!(
             humantime::parse_rfc3339(now.as_str().unwrap()).is_ok(),
             "{now}"
         );
-        let unix = evaluate("now('unix')", &context).unwrap().as_u64().unwrap();
+        let unix = evaluate("now('unix')", &envelope)
+            .unwrap()
+            .as_u64()
+            .unwrap();
         assert!(unix > 1_700_000_000);
-        assert!(evaluate("now('iso')", &context).is_err());
+        assert!(evaluate("now('iso')", &envelope).is_err());
 
         for _ in 0..50 {
-            let value = evaluate("random_int(`1`, `3`)", &context)
+            let value = evaluate("random_int(`1`, `3`)", &envelope)
                 .unwrap()
                 .as_i64()
                 .unwrap();
             assert!((1..=3).contains(&value));
-            let item = evaluate("random_item(pick)", &context).unwrap();
+            let item = evaluate("random_item(pick)", &envelope).unwrap();
             assert!(item == json!("a") || item == json!("b"));
         }
-        assert!(evaluate("random_int(`3`, `1`)", &context).is_err());
+        assert!(evaluate("random_int(`3`, `1`)", &envelope).is_err());
         assert_eq!(
-            evaluate("random_item(`[]`)", &context).unwrap(),
+            evaluate("random_item(`[]`)", &envelope).unwrap(),
             Value::Null
         );
         // Standard functions still work next to Decoy's.
-        assert_eq!(evaluate("length(pick)", &context).unwrap(), json!(2));
+        assert_eq!(evaluate("length(pick)", &envelope).unwrap(), json!(2));
     }
 
     #[test]
     fn predicates_follow_jmespath_truthiness() {
-        let context = json!({
+        let envelope = json!({
             "body": { "amount": 1500, "operationName": "GetUser", "empty": "", "items": [] },
             "headers": { "x-tier": "gold" }
         });
-        assert!(predicate_holds("${ body.amount > `1000` }", &context));
+        assert!(predicate_holds("${ body.amount > `1000` }", &envelope));
         assert!(predicate_holds(
             "${ body.operationName == 'GetUser' && headers.\"x-tier\" == 'gold' }",
-            &context
+            &envelope
         ));
-        assert!(!predicate_holds("${ body.missing }", &context));
-        assert!(!predicate_holds("${ body.empty }", &context));
-        assert!(!predicate_holds("${ body.items }", &context));
-        assert!(predicate_holds("${ body.amount }", &context));
+        assert!(!predicate_holds("${ body.missing }", &envelope));
+        assert!(!predicate_holds("${ body.empty }", &envelope));
+        assert!(!predicate_holds("${ body.items }", &envelope));
+        assert!(predicate_holds("${ body.amount }", &envelope));
     }
 }

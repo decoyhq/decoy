@@ -64,7 +64,7 @@ fn validate_string(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Render a templated response against the request context. A templated `status` must come out
+/// Render a templated response against the request envelope. A templated `status` must come out
 /// as an integer 100–599.
 pub fn render_response(
     response: &ResponseBehavior,

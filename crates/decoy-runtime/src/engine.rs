@@ -6,7 +6,7 @@ use crate::collections::{Activation, CollectionError, CollectionsFile};
 use crate::http::{BodyPlan, RequestMetadata, ResponsePlan, RuntimeConfig};
 use crate::http_forward::{ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough};
 use crate::matching::{MatchInput, case_matches};
-use crate::request::RequestContext;
+use crate::request::RequestEnvelope;
 use crate::schema::{Behavior, HttpMethod, Route};
 use crate::template::{has_templates, render_response};
 
@@ -14,7 +14,7 @@ use crate::template::{has_templates, render_response};
 pub struct HttpRequest {
     pub method: HttpMethod,
     pub path: String,
-    pub context: RequestContext,
+    pub envelope: RequestEnvelope,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,7 +156,7 @@ impl Catalog {
         let resolve_request = HttpRequest {
             method: request.method.clone(),
             path: request.path.clone(),
-            context: RequestContext::from_parts(
+            envelope: RequestEnvelope::from_parts(
                 request.metadata.original_base_url.as_deref(),
                 &request.path_and_query,
                 &request.headers,
@@ -269,7 +269,7 @@ impl Catalog {
                 method: &request.method,
                 path: &request.path,
                 path_params: &path_params,
-                context: &request.context,
+                envelope: &request.envelope,
             };
             if !case_matches(&case.case_match, &input) {
                 continue;
@@ -281,11 +281,11 @@ impl Catalog {
 
             let plan = match behavior {
                 Behavior::Response(response) if has_templates(response) => {
-                    let context =
+                    let envelope =
                         request
-                            .context
+                            .envelope
                             .to_json(&request.method, &request.path, &path_params);
-                    match render_response(response, &context) {
+                    match render_response(response, &envelope) {
                         Ok(rendered) => ResponsePlan::from_behavior(
                             route,
                             &Behavior::Response(rendered),
