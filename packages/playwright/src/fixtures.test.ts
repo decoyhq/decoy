@@ -1,10 +1,11 @@
-import { createServer } from 'node:http'
 import type { test as base } from '@playwright/test'
 import { describe, expect, test } from '@rstest/core'
+import { startFakeDecoy } from '../fixtures/fake-decoy-server'
+import type { DecoyRouter } from './control'
 import {
   createDecoyFixtures,
   type DecoyFixtures,
-  type DecoyRouter,
+  decoySession,
   provideDecoy,
   sessionIdFor,
 } from './fixtures'
@@ -25,32 +26,61 @@ describe('decoy fixture', () => {
 
   test('fails clearly when Decoy is configured but not reachable', async () => {
     await expect(
-      provideDecoy({ url: 'http://127.0.0.1:1' }, async () => {}, testInfo),
+      provideDecoy({ url: 'http://127.0.0.1:1' }, async () => {}, { titlePath: ['down'] }),
     ).rejects.toThrow(/not reachable at http:\/\/127\.0\.0\.1:1/)
   })
 
-  test('provides a Session id when Decoy is healthy', async () => {
-    const server = createServer((_req, res) => res.writeHead(200).end())
-    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
-    const address = server.address()
-    if (address === null || typeof address === 'string') {
-      throw new Error('expected a TCP address')
-    }
-
+  test('hands the test a Router for its Session', async () => {
+    const decoy = await startFakeDecoy()
     let router: DecoyRouter | undefined
     try {
       await provideDecoy(
-        { url: `http://127.0.0.1:${address.port}` },
+        { url: decoy.url },
         async (value) => {
           router = value
         },
         testInfo,
       )
     } finally {
-      await new Promise((done) => server.close(done))
+      await decoy.close()
     }
-
     expect(router?.sessionId).toMatch(/^users-spec-ts-shows-a-user-[0-9a-f-]{36}$/)
+    expect(decoy.calls).toEqual([])
+  })
+})
+
+describe('decoySession', () => {
+  test('applies the configured Collection once, before the Router is handed out', async () => {
+    const decoy = await startFakeDecoy()
+    const info = { titlePath: ['checkout'] }
+    try {
+      const first = await decoySession({ url: decoy.url, collection: 'happy-path' }, info)
+      const second = await decoySession({ url: decoy.url, collection: 'happy-path' }, info)
+      expect(second).toBe(first)
+      expect(decoy.calls).toEqual([
+        {
+          path: '/__decoy__/control/useCollection',
+          session: first.sessionId,
+          body: '{"collection":"happy-path"}',
+        },
+      ])
+    } finally {
+      await decoy.close()
+    }
+  })
+
+  test('fails test setup when the configured Collection is unknown', async () => {
+    const decoy = await startFakeDecoy(() => ({
+      status: 400,
+      body: '{"error":"unknown collection `ghost`"}',
+    }))
+    try {
+      await expect(
+        decoySession({ url: decoy.url, collection: 'ghost' }, { titlePath: ['ghost'] }),
+      ).rejects.toThrow('unknown collection `ghost`')
+    } finally {
+      await decoy.close()
+    }
   })
 })
 

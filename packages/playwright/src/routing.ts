@@ -1,5 +1,5 @@
 import type { Request, Route } from '@playwright/test'
-import { type DecoyOptions, isHealthy, resolveOptions } from './options'
+import type { DecoyOptions } from './options'
 
 export const SESSION_HEADER = 'x-mock-session'
 
@@ -27,28 +27,17 @@ export interface RoutableContext {
 /** Headers the fetch to Decoy must compute itself rather than copy from the browser request. */
 const HOP_HEADERS = new Set(['host', 'content-length', 'connection'])
 
-/**
- * Install browser-context routing for the configured URL patterns. Does nothing when Decoy is not
- * configured or has no `urls`; fails clearly when Decoy is configured but unreachable.
- */
+/** Install browser-context routing that sends every `urls` pattern to Decoy at `decoyUrl`. */
 export async function routeToDecoy(
   context: RoutableContext,
   fetch: DecoyFetch,
-  decoyOptions: DecoyOptions | undefined,
+  decoyUrl: string,
+  urls: NonNullable<DecoyOptions['urls']>,
   sessionId: string,
 ): Promise<void> {
-  const patterns = toPatterns(decoyOptions?.urls)
-  if (!decoyOptions || patterns.length === 0) {
-    return
-  }
-  const { url } = resolveOptions(decoyOptions)
-  if (!(await isHealthy(url))) {
-    throw new Error(
-      `Decoy is not reachable at ${url}. Start it with the \`setup\` global setup or run \`decoy serve\`.`,
-    )
-  }
+  const patterns = typeof urls === 'string' || urls instanceof RegExp ? [urls] : urls
   for (const pattern of patterns) {
-    await context.route(pattern, (route) => forwardToDecoy(route, url, sessionId, fetch))
+    await context.route(pattern, (route) => forwardToDecoy(route, decoyUrl, sessionId, fetch))
   }
 }
 
@@ -90,11 +79,4 @@ export async function forwardToDecoy(
     headers: response.headers(),
     body: await response.body(),
   })
-}
-
-function toPatterns(urls: DecoyOptions['urls']): ReadonlyArray<string | RegExp> {
-  if (urls === undefined) {
-    return []
-  }
-  return typeof urls === 'string' || urls instanceof RegExp ? [urls] : urls
 }

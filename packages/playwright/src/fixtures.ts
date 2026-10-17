@@ -7,14 +7,9 @@ import type {
   PlaywrightWorkerOptions,
   TestInfo,
 } from '@playwright/test'
+import { createRouter, type DecoyRouter } from './control'
 import { type DecoyOptions, isHealthy, resolveOptions } from './options'
 import { routeToDecoy } from './routing'
-
-/** The per-test handle to one Decoy Session. */
-export interface DecoyRouter {
-  /** Session id stamped on this test's routed requests as `x-mock-session`. */
-  readonly sessionId: string
-}
 
 /** Option fixtures, for typing config: `defineConfig<DecoyTestOptions>({ use: { decoyOptions } })`. */
 export interface DecoyTestOptions {
@@ -49,19 +44,24 @@ export function createDecoyFixtures(): Fixtures<
   return {
     decoyOptions: [undefined, { option: true }],
     context: async ({ context, decoyOptions }, use, testInfo) => {
-      await routeToDecoy(
-        context,
-        (url, init) => context.request.fetch(url, init),
-        decoyOptions,
-        sessionIdFor(testInfo),
-      )
+      if (decoyOptions?.urls !== undefined) {
+        const { url } = resolveOptions(decoyOptions)
+        const router = await decoySession(decoyOptions, testInfo)
+        await routeToDecoy(
+          context,
+          (target, init) => context.request.fetch(target, init),
+          url,
+          decoyOptions.urls,
+          router.sessionId,
+        )
+      }
       await use(context)
     },
     decoy: ({ decoyOptions }, use, testInfo) => provideDecoy(decoyOptions, use, testInfo),
   }
 }
 
-/** The `decoy` fixture body: validate config and reachability, then hand the test its Router. */
+/** The `decoy` fixture body: fail clearly when Decoy is disabled, else hand over the Router. */
 export async function provideDecoy(
   decoyOptions: DecoyOptions | undefined,
   use: (router: DecoyRouter) => Promise<void>,
@@ -72,13 +72,39 @@ export async function provideDecoy(
       'The `decoy` fixture needs Decoy to be configured: set `use.decoyOptions` in your Playwright config.',
     )
   }
+  await use(await decoySession(decoyOptions, testInfo))
+}
+
+const sessions = new WeakMap<object, Promise<DecoyRouter>>()
+
+/**
+ * The test's Session, set up once: check Decoy is reachable, then apply the configured default
+ * Collection, before any routed browser request or test code runs.
+ */
+export function decoySession(
+  decoyOptions: DecoyOptions,
+  testInfo: Pick<TestInfo, 'titlePath'>,
+): Promise<DecoyRouter> {
+  let session = sessions.get(testInfo)
+  if (session === undefined) {
+    session = startSession(decoyOptions, sessionIdFor(testInfo))
+    sessions.set(testInfo, session)
+  }
+  return session
+}
+
+async function startSession(decoyOptions: DecoyOptions, sessionId: string): Promise<DecoyRouter> {
   const { url } = resolveOptions(decoyOptions)
   if (!(await isHealthy(url))) {
     throw new Error(
       `Decoy is not reachable at ${url}. Start it with the \`setup\` global setup or run \`decoy serve\`.`,
     )
   }
-  await use({ sessionId: sessionIdFor(testInfo) })
+  const router = createRouter(url, sessionId)
+  if (decoyOptions.collection !== undefined) {
+    await router.useCollection(decoyOptions.collection)
+  }
+  return router
 }
 
 const sessionIds = new WeakMap<object, string>()

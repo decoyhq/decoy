@@ -15,6 +15,8 @@ export interface DecoyOptions {
    * Matching requests always go to Decoy; everything else continues normally.
    */
   urls?: string | RegExp | ReadonlyArray<string | RegExp>
+  /** Collection each test's Session starts on, applied before any routed request. */
+  collection?: string
 }
 
 export interface ResolvedDecoyOptions {
