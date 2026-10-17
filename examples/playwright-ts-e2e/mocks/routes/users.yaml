@@ -14,3 +14,7 @@ cases:
         body:
           id: "1"
           name: Ada Lovelace
+      missing:
+        status: 404
+        body:
+          error: user not found

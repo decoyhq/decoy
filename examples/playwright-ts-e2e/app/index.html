@@ -7,15 +7,23 @@
   <body>
     <h1>Users</h1>
     <button id="load-user" type="button">Load user</button>
-    <p id="user" role="status"></p>
+    <p id="result" role="status"></p>
     <script type="module">
-      const output = document.querySelector('#user')
-      document.querySelector('#load-user').addEventListener('click', async () => {
-        const response = await fetch('/api/users/1')
-        output.textContent = response.ok
-          ? (await response.json()).name
-          : `Error ${response.status}`
-      })
+      const result = document.querySelector('#result')
+
+      // Success shows the payload's name; failures show status, Decoy's miss marker, and error.
+      async function show(path) {
+        const response = await fetch(path)
+        const body = await response.json().catch(() => ({}))
+        if (response.ok) {
+          result.textContent = body.name
+          return
+        }
+        const miss = response.headers.get('x-mock-miss') === 'true' ? ' (Decoy miss)' : ''
+        result.textContent = `Error ${response.status}${miss}: ${body.error ?? ''}`
+      }
+
+      document.querySelector('#load-user').addEventListener('click', () => show('/api/users/1'))
     </script>
   </body>
 </html>
