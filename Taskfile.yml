@@ -88,4 +88,4 @@ tasks:
     cmds:
       - node scripts/versions.mjs set {{.CLI_ARGS}}
       - 'git commit --all --message "chore(release): v{{.CLI_ARGS}}"'
-      - git tag v{{.CLI_ARGS}}
+      - git tag --annotate v{{.CLI_ARGS}} --message v{{.CLI_ARGS}}
