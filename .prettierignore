@@ -1,0 +1,5 @@
+pnpm-lock.yaml
+target/
+**/dist/
+**/test-results/
+**/playwright-report/

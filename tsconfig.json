@@ -1,8 +1,9 @@
 {
+  // Root-level TypeScript files (tool configs); packages and examples have their own tsconfig.
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    "types": ["node"]
   },
-  "include": [],
-  "references": []
+  "include": ["eslint.config.ts"]
 }

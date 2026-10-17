@@ -46,6 +46,11 @@ export async function startFakeDecoy(
   return {
     url: `http://127.0.0.1:${address.port}`,
     calls,
-    close: () => new Promise<void>((done) => server.close(() => done())),
+    close: () =>
+      new Promise<void>((done) =>
+        server.close(() => {
+          done()
+        }),
+      ),
   }
 }

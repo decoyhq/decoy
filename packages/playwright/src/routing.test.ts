@@ -20,14 +20,16 @@ function fakeRoute(request: {
     request: () => ({
       url: () => request.url,
       method: () => request.method ?? 'GET',
-      allHeaders: async () => request.headers ?? {},
+      allHeaders: () => Promise.resolve(request.headers ?? {}),
       postDataBuffer: () => (request.body === undefined ? null : Buffer.from(request.body)),
     }),
-    fulfill: async (options) => {
+    fulfill: (options) => {
       result.fulfilled = options
+      return Promise.resolve()
     },
-    abort: async (errorCode) => {
+    abort: (errorCode) => {
       result.aborted = errorCode
+      return Promise.resolve()
     },
   }
   return { route, result }
@@ -37,7 +39,7 @@ function response(status: number, headers: Record<string, string>, body: string)
   return {
     status: () => status,
     headers: () => headers,
-    body: async () => Buffer.from(body),
+    body: () => Promise.resolve(Buffer.from(body)),
   }
 }
 
@@ -55,10 +57,10 @@ describe('forwardToDecoy', () => {
       },
       body: '{"name":"Ada"}',
     })
-    const calls: Array<{ url: string; init: Parameters<DecoyFetch>[1] }> = []
-    const fetch: DecoyFetch = async (url, init) => {
+    const calls: { url: string; init: Parameters<DecoyFetch>[1] }[] = []
+    const fetch: DecoyFetch = (url, init) => {
       calls.push({ url, init })
-      return response(200, {}, '')
+      return Promise.resolve(response(200, {}, ''))
     }
 
     await forwardToDecoy(route, 'http://127.0.0.1:8080', 'session-1', fetch)
@@ -76,8 +78,14 @@ describe('forwardToDecoy', () => {
 
   test('fulfills the browser with Decoy status, headers, and body, misses included', async () => {
     const { route, result } = fakeRoute({ url: 'http://localhost:3000/api/missing' })
-    const fetch: DecoyFetch = async () =>
-      response(501, { 'x-mock-miss': 'true' }, '{"error":"no active route case matched request"}')
+    const fetch: DecoyFetch = () =>
+      Promise.resolve(
+        response(
+          501,
+          { 'x-mock-miss': 'true' },
+          '{"error":"no active route case matched request"}',
+        ),
+      )
 
     await forwardToDecoy(route, 'http://127.0.0.1:8080', 's', fetch)
 
@@ -90,9 +98,7 @@ describe('forwardToDecoy', () => {
 
   test('aborts instead of reaching the network when Decoy cannot be reached', async () => {
     const { route, result } = fakeRoute({ url: 'http://localhost:3000/api/users' })
-    const fetch: DecoyFetch = async () => {
-      throw new Error('ECONNREFUSED')
-    }
+    const fetch: DecoyFetch = () => Promise.reject(new Error('ECONNREFUSED'))
 
     await forwardToDecoy(route, 'http://127.0.0.1:1', 's', fetch)
 
@@ -103,13 +109,14 @@ describe('forwardToDecoy', () => {
 
 describe('routeToDecoy', () => {
   test('routes every configured pattern to Decoy', async () => {
-    const patterns: Array<string | RegExp> = []
+    const patterns: (string | RegExp)[] = []
     const context = {
-      route: async (url: string | RegExp) => {
+      route: (url: string | RegExp) => {
         patterns.push(url)
+        return Promise.resolve()
       },
     }
-    const fetch: DecoyFetch = async () => response(200, {}, '')
+    const fetch: DecoyFetch = () => Promise.resolve(response(200, {}, ''))
 
     await routeToDecoy(context, fetch, 'http://127.0.0.1:8080', '**/api/**', 's')
     await routeToDecoy(context, fetch, 'http://127.0.0.1:8080', ['/a/', /\/graphql$/], 's')

@@ -10,23 +10,25 @@ import {
   sessionIdFor,
 } from './fixtures'
 
-// Compile-time guard: users compose the fixtures onto Playwright's base test.
-const compose = (playwrightTest: typeof base) =>
-  playwrightTest.extend<DecoyFixtures>(createDecoyFixtures())
-void compose
-
 const testInfo = { titlePath: ['users.spec.ts', 'Shows a User!'] }
+const ignoreRouter = () => Promise.resolve()
+
+test('fixtures compose onto Playwright base test (checked by tsc)', () => {
+  const compose = (playwrightTest: typeof base) =>
+    playwrightTest.extend<DecoyFixtures>(createDecoyFixtures())
+  expect(compose).toBeTypeOf('function')
+})
 
 describe('decoy fixture', () => {
   test('fails clearly when Decoy is not configured', async () => {
-    await expect(provideDecoy(undefined, async () => {}, testInfo)).rejects.toThrow(
+    await expect(provideDecoy(undefined, ignoreRouter, testInfo)).rejects.toThrow(
       /use\.decoyOptions/,
     )
   })
 
   test('fails clearly when Decoy is configured but not reachable', async () => {
     await expect(
-      provideDecoy({ url: 'http://127.0.0.1:1' }, async () => {}, { titlePath: ['down'] }),
+      provideDecoy({ url: 'http://127.0.0.1:1' }, ignoreRouter, { titlePath: ['down'] }),
     ).rejects.toThrow(/not reachable at http:\/\/127\.0\.0\.1:1/)
   })
 
@@ -36,8 +38,9 @@ describe('decoy fixture', () => {
     try {
       await provideDecoy(
         { url: decoy.url },
-        async (value) => {
+        (value) => {
           router = value
+          return Promise.resolve()
         },
         testInfo,
       )

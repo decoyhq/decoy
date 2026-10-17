@@ -14,13 +14,13 @@ pnpm install            # use --frozen-lockfile in CI
 
 ## Commands
 
-| Command | What it does |
-| --- | --- |
-| `cargo test --workspace` | Rust unit/integration tests |
-| `cargo clippy --workspace --all-targets -- -D warnings` | Rust lint |
-| `cargo fmt --check` | Rust format check |
-| `pnpm build` / `pnpm typecheck` / `pnpm test` | JS workspace packages |
-| `pnpm check` / `pnpm fix` | Biome lint/format |
+| Command                                                 | What it does                |
+| ------------------------------------------------------- | --------------------------- |
+| `cargo test --workspace`                                | Rust unit/integration tests |
+| `cargo clippy --workspace --all-targets -- -D warnings` | Rust lint                   |
+| `cargo fmt --check`                                     | Rust format check           |
+| `pnpm build` / `pnpm typecheck` / `pnpm test`           | JS workspace packages       |
+| `pnpm check` / `pnpm fix`                               | ESLint + Prettier           |
 
 Examples (`examples/*`) are the e2e tier and run their own `test:e2e` per workspace.
 
@@ -30,3 +30,9 @@ Examples (`examples/*`) are the e2e tier and run their own `test:e2e` per worksp
 - `@decoy/*` is the package scope; the CLI bin is `decoy`.
 - **Don't reach for the real network in tests** — Decoy is fail-closed by default; a test that
   leaks to a live upstream is a bug.
+
+## TypeScript
+
+`tsc` is TypeScript 7 (`@typescript/native` → `typescript@7`). The `typescript` package itself is
+the 6.0 API (`@typescript/typescript6`) because typescript-eslint cannot use TypeScript 7 until 7.1
+restores the programmatic API. Shortcut: drop the 6.0 alias once typescript-eslint supports 7.1.

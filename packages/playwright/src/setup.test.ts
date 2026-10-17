@@ -8,12 +8,19 @@ import { type SetupConfig, setup, type Teardown } from './setup'
 
 const FAKE_DECOY = resolve(process.cwd(), 'fixtures/fake-decoy.mjs')
 
-// Compile-time guard: a typed Playwright config must satisfy `SetupConfig`.
-const acceptsPlaywrightConfig: (config: FullConfig<DecoyTestOptions>) => SetupConfig = (config) =>
-  config
-void acceptsPlaywrightConfig
-// Compile-time guard: users type their config with the same generic.
-void defineConfig<DecoyTestOptions>({ use: { decoyOptions: { url: 'http://127.0.0.1:8080' } } })
+describe('config typing', () => {
+  test('a typed Playwright config fits setup (checked by tsc)', () => {
+    const fits = (config: FullConfig<DecoyTestOptions>): SetupConfig => config
+    expect(fits).toBeTypeOf('function')
+  })
+
+  test('users type decoyOptions with defineConfig<DecoyTestOptions>', () => {
+    const config = defineConfig<DecoyTestOptions>({
+      use: { decoyOptions: { url: 'http://127.0.0.1:8080' } },
+    })
+    expect(config.use?.decoyOptions?.url).toBe('http://127.0.0.1:8080')
+  })
+})
 
 function config(decoyOptions: DecoyOptions | undefined): SetupConfig {
   return { projects: [{ use: { decoyOptions } }] }
@@ -43,7 +50,7 @@ async function runningDecoy(): Promise<{ url: string; server: Server }> {
   return { url: `http://127.0.0.1:${port}`, server }
 }
 
-const cleanups: Array<() => Promise<unknown>> = []
+const cleanups: (() => Promise<unknown>)[] = []
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0)) {
     await cleanup()
