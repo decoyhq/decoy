@@ -20,3 +20,5 @@ What happens:
 | --- | --- |
 | `users.spec.ts` › loading a user | Clicking **Load user** fetches `/api/users/1`, Decoy answers from `mocks/routes/users.yaml`, and the page shows `Ada Lovelace`. |
 | `collections.spec.ts` › switching the Collection | `decoy.useCollection('no-users')` before the click makes the same action show `Error 404: user not found` (`mocks/collections.yaml`). |
+| `overrides.spec.ts` › overriding one route | `decoy.useRoute('users-by-id', 'user-1', 'grace')` swaps one Behavior (`Grace Hopper`); `decoy.reset()` drops the override (`Ada Lovelace` again). |
+| `overrides.spec.ts` › unmapped API call | **Load orders** hits `/api/orders`, which no Route serves. Decoy answers `501` with `x-mock-miss: true`, shown as `Error 501 (Decoy miss): …`; the request never reaches a real backend. |
