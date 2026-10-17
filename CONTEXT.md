@@ -1,7 +1,7 @@
 # Decoy
 
 The normative dictionary for Decoy. When a term below is used in code, docs, or discussion, it
-means *exactly* this — one line per term, plus the synonyms to avoid. The prose explanation of how
+means _exactly_ this — one line per term, plus the synonyms to avoid. The prose explanation of how
 the terms fit together lives in the docs site. Name = `decoy`; packages publish scoped as
 `@decoy/*`, CLI bin `decoy`.
 
@@ -19,11 +19,11 @@ _Avoid_: "preset" for this concept unless the product vocabulary is intentionall
 **Route**:
 A coarse interaction matcher and namespace with a stable `id` and exactly one `transport`. For HTTP,
 the Route match is the method + OpenAPI-style path such as `GET /users/{id}`. Route match answers
-*where* the interaction happens.
+_where_ the interaction happens.
 _Avoid_: "handler" (a Route serves no code), "endpoint" when it hides transport/case/behavior.
 
 **Case**:
-A named input-shape matcher inside a **Route**. Case match answers *which request/message shape* is
+A named input-shape matcher inside a **Route**. Case match answers _which request/message shape_ is
 active for that Route, such as HTTP `pathParams`, `query`, `headers`, or `body` constraints. Cases
 own their Behaviors.
 _Avoid_: "preset" (retired/provisional for this layer), "matcher" as the user-facing noun unless
@@ -49,11 +49,11 @@ _Avoid_: "path" (collides with a Route's HTTP path), "key", "variant address".
 ### Axes
 
 **Service axis**:
-*Which upstream or transport address?* Encoded by **Route** identity and route-level match.
+_Which upstream or transport address?_ Encoded by **Route** identity and route-level match.
 _Avoid_: conflating with the **Scenario axis**.
 
 **Scenario axis**:
-*Which behavior now?* Encoded in the active **Collection** plus per-route overrides.
+_Which behavior now?_ Encoded in the active **Collection** plus per-route overrides.
 _Avoid_: encoding scenario behavior in **Route** ids.
 
 ### Selection & sessions

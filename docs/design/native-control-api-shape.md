@@ -6,11 +6,11 @@ Status: implementation decision for the Rust HTTP runtime prototype.
 
 The native prototype exposes command-shaped Controller verbs below the reserved `/__decoy__` path namespace:
 
-| Verb | Request | Body |
-| --- | --- | --- |
-| `useCollection` | `POST /__decoy__/control/useCollection` | `{ "collection": "<collection-id>" }` |
-| `useRoute` | `POST /__decoy__/control/useRoute` | `{ "route": "<route-id>", "case": "<case-id>", "behavior": "<behavior-id>" }` |
-| `reset` | `POST /__decoy__/control/reset` | empty or omitted JSON body |
+| Verb            | Request                                 | Body                                                                          |
+| --------------- | --------------------------------------- | ----------------------------------------------------------------------------- |
+| `useCollection` | `POST /__decoy__/control/useCollection` | `{ "collection": "<collection-id>" }`                                         |
+| `useRoute`      | `POST /__decoy__/control/useRoute`      | `{ "route": "<route-id>", "case": "<case-id>", "behavior": "<behavior-id>" }` |
+| `reset`         | `POST /__decoy__/control/reset`         | empty or omitted JSON body                                                    |
 
 Liveness: `GET /__decoy__/health` returns `200 {"status":"ok"}` while the runtime serves. It is not Session-scoped and does not touch Selection.
 

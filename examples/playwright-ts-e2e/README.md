@@ -13,15 +13,15 @@ What happens:
 1. Playwright starts the static app (`app/serve.mjs`, port 4173) as its `webServer`.
 2. Global setup (`global-setup.ts`) starts a local Passthrough upstream on `127.0.0.1:4174`
    (failing if the port is taken), then Decoy with `cargo run -p decoy-runtime -- serve --config
-   mocks/decoy.yaml` (port 8080), or reuses one already running locally.
+mocks/decoy.yaml` (port 8080), or reuses one already running locally.
 3. Each test gets its own Decoy Session on the `happy-path` Collection. Browser requests matching
    `**/api/**` go to Decoy; nothing reaches a real backend.
 
-| Test | Proves |
-| --- | --- |
-| `users.spec.ts` › loading a user | Clicking **Load user** fetches `/api/users/1`, Decoy answers from `mocks/routes/users.yaml`, and the page shows `Ada Lovelace`. |
-| `collections.spec.ts` › switching the Collection | `decoy.useCollection('no-users')` before the click makes the same action show `Error 404: user not found` (`mocks/collections.yaml`). |
-| `overrides.spec.ts` › overriding one route | `decoy.useRoute('users-by-id', 'user-1', 'grace')` swaps one Behavior (`Grace Hopper`); `decoy.reset()` drops the override (`Ada Lovelace` again). |
-| `overrides.spec.ts` › unmapped API call | **Load orders** hits `/api/orders`, which no Route serves. Decoy answers `501` with `x-mock-miss: true`, shown as `Error 501 (Decoy miss): …`; the request never reaches a real backend. |
-| `passthrough.spec.ts` › Passthrough | **Load profile** hits `/api/profile`; its Behavior is `kind: passthrough` (`mocks/routes/profile.yaml`), so Decoy forwards it to the local upstream and the page shows the upstream's answer. |
-| `isolation.spec.ts` › Sessions | One test switches its Session to `no-users`; the next test, in a fresh context with a different Session id, still sees `Ada Lovelace`. All spec files also run in parallel (`fullyParallel`) against the same Decoy. |
+| Test                                             | Proves                                                                                                                                                                                                               |
+| ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `users.spec.ts` › loading a user                 | Clicking **Load user** fetches `/api/users/1`, Decoy answers from `mocks/routes/users.yaml`, and the page shows `Ada Lovelace`.                                                                                      |
+| `collections.spec.ts` › switching the Collection | `decoy.useCollection('no-users')` before the click makes the same action show `Error 404: user not found` (`mocks/collections.yaml`).                                                                                |
+| `overrides.spec.ts` › overriding one route       | `decoy.useRoute('users-by-id', 'user-1', 'grace')` swaps one Behavior (`Grace Hopper`); `decoy.reset()` drops the override (`Ada Lovelace` again).                                                                   |
+| `overrides.spec.ts` › unmapped API call          | **Load orders** hits `/api/orders`, which no Route serves. Decoy answers `501` with `x-mock-miss: true`, shown as `Error 501 (Decoy miss): …`; the request never reaches a real backend.                             |
+| `passthrough.spec.ts` › Passthrough              | **Load profile** hits `/api/profile`; its Behavior is `kind: passthrough` (`mocks/routes/profile.yaml`), so Decoy forwards it to the local upstream and the page shows the upstream's answer.                        |
+| `isolation.spec.ts` › Sessions                   | One test switches its Session to `no-users`; the next test, in a fresh context with a different Session id, still sees `Ada Lovelace`. All spec files also run in parallel (`fullyParallel`) against the same Decoy. |

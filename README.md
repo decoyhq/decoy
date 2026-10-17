@@ -30,11 +30,11 @@ cases:
   user-123:
     match:
       pathParams:
-        id: "123"
+        id: '123'
     behaviors:
       success:
         status: 200
-        body: { id: "123", name: Ada }
+        body: { id: '123', name: Ada }
       missing:
         status: 404
         body: not found

@@ -6,6 +6,8 @@ import { type DecoyOptions, isHealthy, type ResolvedDecoyOptions, resolveOptions
 
 export type Teardown = () => Promise<void>
 
+const keepRunning: Teardown = () => Promise.resolve()
+
 /** The part of Playwright's `FullConfig<DecoyTestOptions>` that `setup` reads. */
 export type SetupConfig = Pick<FullConfig<DecoyTestOptions>, 'configFile'> & {
   projects: ReadonlyArray<Pick<FullProject<DecoyTestOptions>, 'use'>>
@@ -23,14 +25,14 @@ export type SetupConfig = Pick<FullConfig<DecoyTestOptions>, 'configFile'> & {
 export async function setup(config: SetupConfig): Promise<Teardown> {
   const decoyOptions = findDecoyOptions(config)
   if (!decoyOptions) {
-    return async () => {}
+    return keepRunning
   }
   const options = resolveOptions(decoyOptions)
   const cwd = options.cwd ?? (config.configFile ? dirname(config.configFile) : undefined)
 
   if (await isHealthy(options.url)) {
     if (options.reuseExistingServer) {
-      return async () => {}
+      return keepRunning
     }
     throw new Error(
       `Decoy is already serving at ${options.url}. Stop it, or set decoyOptions.reuseExistingServer to true.`,
@@ -84,7 +86,11 @@ async function stop(child: ChildProcess): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
     return
   }
-  const exited = new Promise<void>((resolve) => child.once('exit', () => resolve()))
+  const exited = new Promise<void>((resolve) =>
+    child.once('exit', () => {
+      resolve()
+    }),
+  )
   if (process.platform === 'win32') {
     spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'])
   } else {

@@ -2,11 +2,15 @@
 # Hooks are installed on `pnpm install` (lefthook's postinstall runs `lefthook install`).
 
 pre-commit:
-  parallel: true
+  piped: true
   commands:
-    biome:
-      glob: "*.{js,jsx,ts,tsx,json,jsonc,css}"
-      run: pnpm exec biome check --write --no-errors-on-unmatched --files-ignore-unknown=true {staged_files}
+    1_eslint:
+      glob: '*.{js,mjs,ts,tsx}'
+      run: pnpm exec eslint --fix {staged_files}
+      stage_fixed: true
+    2_prettier:
+      glob: '*.{js,mjs,ts,tsx,json,md,yml,yaml,html,css}'
+      run: pnpm exec prettier --write --ignore-unknown {staged_files}
       stage_fixed: true
 
 commit-msg:

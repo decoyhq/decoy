@@ -31,7 +31,7 @@ Shape: each stdin/stdout record is exactly one compact JSON object followed by `
 Example:
 
 ```json
-{"id":"1","op":"decode","payload":{"encoding":"base64","bytes":"kgKi..."}}
+{ "id": "1", "op": "decode", "payload": { "encoding": "base64", "bytes": "kgKi..." } }
 ```
 
 This is the simplest fit when every protocol message is a single JSON object and all binary payloads

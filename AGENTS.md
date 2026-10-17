@@ -31,13 +31,13 @@ pnpm@11 · Node ≥24. Install with `pnpm install` (use `--frozen-lockfile` in C
 
 ## Commands
 
-| command | what it does |
-| --- | --- |
-| `pnpm build` | build every workspace package |
-| `pnpm check` | Biome lint/format |
-| `pnpm typecheck` | type-check every package |
-| `pnpm test` | unit/integration tests across packages |
-| `pnpm fix` | apply Biome autofixes |
+| command          | what it does                           |
+| ---------------- | -------------------------------------- |
+| `pnpm build`     | build every workspace package          |
+| `pnpm check`     | ESLint + Prettier check                |
+| `pnpm typecheck` | type-check every package (TS 7 `tsc`)  |
+| `pnpm test`      | unit/integration tests across packages |
+| `pnpm fix`       | ESLint autofix + Prettier write        |
 
 Examples (`examples/*`) are the e2e tier and run their own `test:e2e` per workspace.
 
