@@ -147,13 +147,14 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
+          which -a npm && npm --version # publish-npm relies on proto's npm (trusted publishing)
           (cd packages/cli && npm pack --pack-destination "$RUNNER_TEMP")
           (cd npm/cli-linux-x64 && npm pack --pack-destination "$RUNNER_TEMP")
           mkdir "$RUNNER_TEMP/project" && cd "$RUNNER_TEMP/project"
           npm init -y > /dev/null
           npm install --no-audit --no-fund \
             "$RUNNER_TEMP/decoyhq-cli-linux-x64-$VERSION.tgz" "$RUNNER_TEMP/decoyhq-cli-$VERSION.tgz"
-          out="$(npx decoy --version)"
+          out="$(node_modules/.bin/decoy --version)"
           echo "$out"
           [ "$out" = "decoy $VERSION" ]
 
