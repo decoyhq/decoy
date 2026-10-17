@@ -187,9 +187,8 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.version }}
         # No token: each package trusts this repo's release.yml on npmjs.com (Trusted Publisher).
-        # Trusted publishing needs npm >= 11.5.1; a bare `npm` may be the runner's older one.
+        # Trusted publishing needs npm >= 11.5.1, pinned in .prototools.
         run: |
-          npm() { command npx --yes npm@11.6.2 "$@"; }
           npm --version
           tag=latest
           case "$VERSION" in *-*) tag=next ;; esac
