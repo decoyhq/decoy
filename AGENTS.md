@@ -27,7 +27,8 @@ This repo uses a single-context domain model: root `CONTEXT.md` plus root `docs/
 
 ## Toolchain
 
-pnpm@11 · Node ≥24. Install with `pnpm install` (use `--frozen-lockfile` in CI).
+pnpm 11 · Node 24 · Rust 1.98, pinned in `.prototools` (proto) and `rust-toolchain.toml`. Install with
+`pnpm install` (use `--frozen-lockfile` in CI). pnpm settings live in `pnpm-workspace.yaml`, not `.npmrc`.
 Dev dependencies used by several workspaces take their version from the `catalog:` in
 `pnpm-workspace.yaml`; reference them as `"catalog:"` and bump them there.
 
