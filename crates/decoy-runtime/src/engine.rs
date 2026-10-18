@@ -610,7 +610,6 @@ impl Controller {
         }
     }
 
-
     fn selection(&self, session: &str) -> Selection {
         self.sessions
             .get(session)
