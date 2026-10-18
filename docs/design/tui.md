@@ -128,9 +128,9 @@ with stable labels and no box-drawing, readable by a human or by an agent in a n
   passes its own quit signal too.
 - The TUI talks to the in-process `Controller` and subscribes to an in-process event broadcast
   (`RequestEvent`, `SessionEvent`, `LogEvent`). The Control API does not change.
-- Runtime warnings and errors are `Event::Log` on the broadcast of the last started server, and go
-  to stderr only while nobody subscribes, so headless output is unchanged and nothing draws over
-  the TUI. No fd redirection, so it works on Windows.
+- Runtime warnings and errors are `Event::Log` on the server's broadcast (a task-local set around
+  each request and accept loop), and go to stderr only while nobody subscribes, so headless output
+  is unchanged and nothing draws over the TUI. No fd redirection, so it works on Windows.
 - `Server::subscribe()` (or `Controller::subscribe()`) returns a `tokio::sync::broadcast` receiver
   of `decoy_runtime::events::Event`. With no receiver nothing is captured; a receiver more than
   `events::CAPACITY` events behind gets `Lagged` and loses the oldest. WS/SSE connection events
