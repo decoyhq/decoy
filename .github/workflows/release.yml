@@ -24,6 +24,8 @@ jobs:
       version: ${{ steps.read.outputs.version }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - id: read
         name: Read the workspace version
         run: |
@@ -49,6 +51,8 @@ jobs:
           - { target: x86_64-pc-windows-msvc, runner: windows-latest }
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Setup toolchain (proto reads .prototools)
         uses: moonrepo/setup-toolchain@v0
@@ -56,36 +60,48 @@ jobs:
           auto-install: true
 
       - name: Add target
-        run: rustup target add ${{ matrix.target }}
+        shell: bash # so "$TARGET" is the env var on Windows too (PowerShell reads it as $env:TARGET)
+        env:
+          TARGET: ${{ matrix.target }}
+        run: rustup target add "$TARGET"
 
       - name: Install musl tools
         if: matrix.musl
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Build
-        run: cargo build --release --locked -p decoy-runtime --target ${{ matrix.target }}
+        shell: bash # so "$TARGET" is the env var on Windows too (PowerShell reads it as $env:TARGET)
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --locked -p decoy-runtime --target "$TARGET"
 
       - name: Package
         shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          name="decoy-${{ needs.version.outputs.version }}-${{ matrix.target }}"
+          name="decoy-$VERSION-$TARGET"
           mkdir -p "dist/$name"
           cp LICENSE README.md "dist/$name/"
-          if [ "${{ runner.os }}" = Windows ]; then
-            cp "target/${{ matrix.target }}/release/decoy.exe" "dist/$name/"
+          if [ "$RUNNER_OS" = Windows ]; then
+            cp "target/$TARGET/release/decoy.exe" "dist/$name/"
             (cd dist && 7z a -bd "$name.zip" "$name" > /dev/null)
           else
-            cp "target/${{ matrix.target }}/release/decoy" "dist/$name/"
+            cp "target/$TARGET/release/decoy" "dist/$name/"
             tar -C dist -czf "dist/$name.tar.gz" "$name"
           fi
 
       - name: Smoke test
         if: ${{ !startsWith(matrix.target, 'x86_64-apple') }}
         shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
-          out="$(./target/${{ matrix.target }}/release/decoy --version)"
+          out="$(./target/$TARGET/release/decoy --version)"
           echo "$out"
-          [ "$out" = "decoy ${{ needs.version.outputs.version }}" ]
+          [ "$out" = "decoy $VERSION" ]
 
       - uses: actions/upload-artifact@v7
         with:
@@ -104,6 +120,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - uses: actions/download-artifact@v8
         with:
@@ -141,6 +159,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Setup toolchain (proto reads .prototools)
         uses: moonrepo/setup-toolchain@v0
@@ -187,6 +207,8 @@ jobs:
       id-token: write # npm trusted publishing (OIDC); provenance is attached automatically
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Setup toolchain (proto reads .prototools)
         uses: moonrepo/setup-toolchain@v0
