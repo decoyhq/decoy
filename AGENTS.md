@@ -28,6 +28,8 @@ This repo uses a single-context domain model: root `CONTEXT.md` plus root `docs/
 ## Toolchain
 
 pnpm@11 · Node ≥24. Install with `pnpm install` (use `--frozen-lockfile` in CI).
+Dev dependencies used by several workspaces take their version from the `catalog:` in
+`pnpm-workspace.yaml`; reference them as `"catalog:"` and bump them there.
 
 ## Commands
 

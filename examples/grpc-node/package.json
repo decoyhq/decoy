@@ -9,8 +9,8 @@
     "typecheck": "tsc"
   },
   "devDependencies": {
-    "@grpc/grpc-js": "^1.14.0",
-    "@grpc/proto-loader": "^0.8.0",
-    "@types/node": "^24.0.0"
+    "@grpc/grpc-js": "catalog:",
+    "@grpc/proto-loader": "catalog:",
+    "@types/node": "catalog:"
   }
 }

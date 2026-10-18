@@ -29,8 +29,8 @@
     "@playwright/test": ">=1.40"
   },
   "devDependencies": {
-    "@playwright/test": "^1.56.0",
-    "@types/node": "^24.0.0",
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:",
     "expect-type": "^1.4.0"
   }
 }
