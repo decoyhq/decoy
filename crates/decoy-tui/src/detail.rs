@@ -300,6 +300,8 @@ mod tests {
     #[test]
     fn text_with_nul_bytes_is_binary() {
         assert_eq!(body_lines(&body(b"a\x00b")), ["<binary, 3 bytes>"]);
+        // Also when the capture cut a multi-byte character at the end.
+        assert_eq!(body_lines(&body(b"a\x00b\xe2\x82")), ["<binary, 5 bytes>"]);
     }
 
     #[test]
