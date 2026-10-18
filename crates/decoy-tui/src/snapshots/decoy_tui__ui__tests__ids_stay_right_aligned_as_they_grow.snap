@@ -6,6 +6,6 @@ expression: "plain(&render(&mut app, 100, 7))"
   #10 12:01:03 GET     /users/123                  → users-by-id:user-123:success 200 4ms
 #1000 12:01:03 GET     /users/123                  → users-by-id:user-123:success 200 4ms
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
-│› type / for commands                                                                             │
+│› type / for commands · Ctrl+O recent requests                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  http://127.0.0.1:4010 · session default · collection happy-path · 0 overrides

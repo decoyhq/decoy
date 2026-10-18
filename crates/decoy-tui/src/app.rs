@@ -1,6 +1,6 @@
 //! The TUI's state, driven by [`App::handle_event`] so it can be tested without a terminal.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -9,7 +9,8 @@ use crossterm::event::{
     MouseEventKind,
 };
 use decoy_runtime::events::{
-    Event as RuntimeEvent, Level, LogEvent, SessionChange, SessionEvent, SessionSource,
+    Event as RuntimeEvent, Level, LogEvent, RequestEvent, SessionChange, SessionEvent,
+    SessionSource,
 };
 use decoy_runtime::{Activation, Catalog, RouteOverrideSnapshot, SelectionSnapshot};
 use ratatui::layout::{Position, Rect};
@@ -18,8 +19,12 @@ use crate::command::{COMMANDS, Command};
 use crate::complete::{Completion, Sources, complete};
 use crate::log::{Entry, Log, RequestLine, Theme};
 
+/// Full request records kept for the detail panel; older ids print `#N expired`.
+pub const RETAIN: usize = 500;
+
 const KEYS: &[&str] = &[
     "keys: ↑↓ pick · Tab/→ complete · Enter run · Esc close · ↑↓ history (no popup)",
+    "      Ctrl+O recent requests · click a request: details (Esc closes, PgUp/PgDn scroll it)",
     "      PgUp/PgDn/Home/End or wheel scroll · drag select + copy · Shift+drag terminal selection",
     "      Ctrl+U clear line · Ctrl+C clear, twice quits · Ctrl+D quit on empty input",
 ];
@@ -105,9 +110,19 @@ pub struct App {
     /// `Some(moved)` while the left button is down over the log.
     drag: Option<bool>,
 
+    /// The last [`RETAIN`] requests, oldest first.
+    pub(crate) records: VecDeque<Arc<RequestEvent>>,
+    /// The request the detail panel shows.
+    pub(crate) detail: Option<u64>,
+    /// Detail rows scrolled off the top.
+    pub(crate) detail_scroll: u16,
+    /// The open request picker's highlighted row, 0 being the newest request.
+    pub(crate) picker: Option<usize>,
+
     /// Where the last frame drew each visible entry, for mouse hit-testing.
     pub(crate) rows: Vec<(Rect, usize)>,
     pub(crate) log_area: Rect,
+    pub(crate) detail_area: Option<Rect>,
 }
 
 impl App {
@@ -133,8 +148,13 @@ impl App {
             unseen: 0,
             selected: None,
             drag: None,
+            records: VecDeque::new(),
+            detail: None,
+            detail_scroll: 0,
+            picker: None,
             rows: Vec::new(),
             log_area: Rect::default(),
+            detail_area: None,
         }
     }
 
@@ -184,8 +204,12 @@ impl App {
     }
 
     /// What the popup offers for the current input; empty when it is closed.
+    pub(crate) fn record(&self, id: u64) -> Option<&Arc<RequestEvent>> {
+        self.records.iter().find(|record| record.id == id)
+    }
+
     pub(crate) fn completions(&self) -> Vec<Completion> {
-        if self.popup_closed {
+        if self.popup_closed || self.picker.is_some() {
             return Vec::new();
         }
         let sources = Sources {
@@ -215,6 +239,14 @@ impl App {
             RuntimeEvent::Request(request) => {
                 self.seen.insert(request.session.clone());
                 self.push(Entry::Request(RequestLine::from(&*request)));
+                if self.records.len() == RETAIN {
+                    self.records.pop_front();
+                }
+                self.records.push_back(request);
+                if let Some(row) = self.picker.as_mut() {
+                    // Keep the same request highlighted as newer ones arrive on top.
+                    *row = (*row + 1).min(self.records.len() - 1);
+                }
             }
             RuntimeEvent::Session(event) => self.on_session(event),
             RuntimeEvent::Log(LogEvent { level, message }) => self.push(match level {
@@ -291,8 +323,32 @@ impl App {
             }
         }
 
+        if let Some(row) = self.picker {
+            match key.code {
+                KeyCode::Esc => self.picker = None,
+                KeyCode::Char('c') if ctrl => self.picker = None,
+                KeyCode::Up => self.picker = Some((row + 1).min(self.records.len() - 1)),
+                KeyCode::Down => self.picker = Some(row.saturating_sub(1)),
+                KeyCode::Enter => {
+                    self.picker = None;
+                    if let Some(id) = self.records.iter().rev().nth(row).map(|record| record.id) {
+                        self.open(id);
+                    }
+                }
+                _ => {}
+            }
+            return vec![];
+        }
+
         let items = self.completions();
         match key.code {
+            KeyCode::Char('o') if ctrl => {
+                if self.records.is_empty() {
+                    self.hint = Some("no requests yet".to_owned());
+                } else {
+                    self.picker = Some(0);
+                }
+            }
             KeyCode::Char('c') if ctrl => {
                 if !self.input.is_empty() {
                     self.edit(String::clear);
@@ -311,6 +367,7 @@ impl App {
                 input.pop();
             }),
             KeyCode::Esc if !items.is_empty() => self.popup_closed = true,
+            KeyCode::Esc if self.detail.is_some() => self.detail = None,
             KeyCode::Esc => self.follow(),
             KeyCode::Down if !items.is_empty() => self.popup = (self.popup + 1) % items.len(),
             KeyCode::Up | KeyCode::BackTab if !items.is_empty() => {
@@ -333,6 +390,15 @@ impl App {
             KeyCode::Down if self.history_at.is_some() => {
                 let next = self.history_at.map(|at| at + 1);
                 self.recall(next.filter(|&at| at < self.history.len()));
+            }
+            // With the detail open, PgUp/PgDn scroll it; Shift+PgUp/PgDn still scroll the log.
+            KeyCode::PageUp | KeyCode::PageDown
+                if self.detail.is_some() && !key.modifiers.contains(KeyModifiers::SHIFT) =>
+            {
+                let page = self
+                    .detail_area
+                    .map_or(10, |area| area.height.saturating_sub(3).max(1));
+                self.scroll_detail(key.code == KeyCode::PageUp, page);
             }
             KeyCode::PageUp => self.scroll_log(true, self.page()),
             KeyCode::PageDown => self.scroll_log(false, self.page()),
@@ -416,6 +482,7 @@ impl App {
                 }
                 self.session = id;
             }
+            Command::Show(id) => self.open(id),
             Command::Sessions => self.sessions(),
             Command::Status => self.status(),
             Command::Help => {
@@ -508,10 +575,35 @@ impl App {
             .map(|&(_, index)| index)
     }
 
+    /// Opens request `id` in the detail panel, or says it is gone.
+    fn open(&mut self, id: u64) {
+        if self.record(id).is_some() {
+            self.detail = Some(id);
+            self.detail_scroll = 0;
+        } else {
+            self.info(format!("#{id} expired"));
+        }
+    }
+
+    fn scroll_detail(&mut self, up: bool, by: u16) {
+        self.detail_scroll = if up {
+            self.detail_scroll.saturating_sub(by)
+        } else {
+            // The next frame clamps it to the panel's last page.
+            self.detail_scroll.saturating_add(by)
+        };
+    }
+
     fn on_mouse(&mut self, mouse: MouseEvent) -> Vec<Effect> {
+        let over_detail = self
+            .detail_area
+            .is_some_and(|area| area.contains(Position::new(mouse.column, mouse.row)));
         match mouse.kind {
+            MouseEventKind::ScrollUp if over_detail => self.scroll_detail(true, 3),
+            MouseEventKind::ScrollDown if over_detail => self.scroll_detail(false, 3),
             MouseEventKind::ScrollUp => self.scroll_log(true, 3),
             MouseEventKind::ScrollDown => self.scroll_log(false, 3),
+            MouseEventKind::Down(MouseButton::Left) if over_detail => {}
             MouseEventKind::Down(MouseButton::Left) => {
                 self.selected = self
                     .entry_at(mouse.column, mouse.row)
@@ -543,7 +635,17 @@ impl App {
                     self.selected = selected;
                     return effects;
                 }
-                Some(false) => self.selected = None,
+                // A click: open the request, if the line is one.
+                Some(false) => {
+                    let clicked = self
+                        .selected
+                        .take()
+                        .and_then(|(index, _)| self.log.get(index));
+                    if let Some(Entry::Request(request)) = clicked {
+                        let id = request.id;
+                        self.open(id);
+                    }
+                }
                 None => {}
             },
             _ => {}
@@ -624,7 +726,7 @@ pub(crate) mod tests {
         }))
     }
 
-    fn base(id: u64, outcome: Outcome) -> RequestEvent {
+    pub fn base(id: u64, outcome: Outcome) -> RequestEvent {
         RequestEvent {
             id,
             at: UNIX_EPOCH + Duration::from_secs(12 * 3600 + 63),
@@ -644,7 +746,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn matched(address: &str) -> Match {
+    pub fn matched(address: &str) -> Match {
         Match {
             activation: Activation::parse(address).unwrap(),
             skipped: vec![],

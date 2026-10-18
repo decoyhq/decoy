@@ -15,6 +15,6 @@ expression: "styled(&render(&mut app, 120, 16))"
 
 
 [Cyan]╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮[/]
-[Cyan]│[/][Cyan BOLD]› [/][DIM]type / for commands[/]                                                                                                 [Cyan]│[/]
+[Cyan]│[/][Cyan BOLD]› [/][DIM]type / for commands · Ctrl+O recent requests[/]                                                                        [Cyan]│[/]
 [Cyan]╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯[/]
 [DIM] http://127.0.0.1:4010 · session default · collection happy-path · 0 overrides                                          [/]

@@ -19,6 +19,6 @@ commands start with /; free text is reserved (try /help)
 
 
 ╭──────────────────────────────────────────────────────────╮
-│› type / for commands                                     │
+│› type / for commands · Ctrl+O recent requests            │
 ╰──────────────────────────────────────────────────────────╯
  http://127.0.0.1:4010 · session default · collection happy-

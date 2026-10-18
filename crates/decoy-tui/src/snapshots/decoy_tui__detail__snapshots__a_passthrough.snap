@@ -1,0 +1,30 @@
+---
+source: crates/decoy-tui/src/detail.rs
+expression: text(&record)
+---
+Request
+  method      GET
+  url         /avatars/ada.png
+  session     default
+  headers
+    (none)
+  body
+    (empty)
+
+Match
+  passthrough avatars:any:real
+  candidates (evaluation order)
+    ✓ avatars:any:real
+  passed      (none)
+
+Response
+  status      200
+  upstream    http://cdn.local/avatars/ada.png → 200
+  headers
+    (none)
+  body
+    <binary, 16 bytes>
+
+Timing
+  at          12:01:03
+  duration    4ms

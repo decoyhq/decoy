@@ -4,6 +4,7 @@
 mod app;
 mod command;
 mod complete;
+mod detail;
 mod log;
 mod ui;
 

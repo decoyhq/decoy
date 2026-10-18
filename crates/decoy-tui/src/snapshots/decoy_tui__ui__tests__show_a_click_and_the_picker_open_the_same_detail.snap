@@ -1,0 +1,34 @@
+---
+source: crates/decoy-tui/src/ui.rs
+expression: shown
+---
+╭ #2 POST /orders?page=2&limit=50&sort=created_at&filter=open ─────────────────────────────────────╮
+│Request                                                                                           │
+│  method      POST                                                                                │
+│  url         /orders?page=2&limit=50&sort=created_at&filter=open                                 │
+│  session     default                                                                             │
+│  headers                                                                                         │
+│    (none)                                                                                        │
+│  body                                                                                            │
+│    (empty)                                                                                       │
+│                                                                                                  │
+│Match                                                                                             │
+│  MISS        no active route matched                                                             │
+│  collection  happy-path                                                                          │
+│  candidates (evaluation order)                                                                   │
+│    (none active)                                                                                 │
+│                                                                                                  │
+│Response                                                                                          │
+│  status      404                                                                                 │
+│  headers                                                                                         │
+│    (none)                                                                                        │
+│  body                                                                                            │
+│    (empty)                                                                                       │
+│                                                                                                  │
+│Timing                                                                                            │
+│  at          12:01:03                                                                            │
+╰ Esc close · PgUp/PgDn or wheel scroll ───────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│› type / for commands · Ctrl+O recent requests                                                    │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ http://127.0.0.1:4010 · session default · collection happy-path · 0 overrides

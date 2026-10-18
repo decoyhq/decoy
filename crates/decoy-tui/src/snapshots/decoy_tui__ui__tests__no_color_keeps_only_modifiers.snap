@@ -15,6 +15,6 @@ warning: predicate `${ abs(path) }` failed, treated as false (logged once)
 
 
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│[BOLD]› [/][DIM]type / for commands[/]                                                                                                 │
+│[BOLD]› [/][DIM]type / for commands · Ctrl+O recent requests[/]                                                                        │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
 [DIM] http://127.0.0.1:4010 · session default · collection happy-path · 0 overrides                                          [/]

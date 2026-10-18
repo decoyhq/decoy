@@ -1,0 +1,34 @@
+---
+source: crates/decoy-tui/src/detail.rs
+expression: text(&record)
+---
+Request
+  method      POST
+  call        /approvals.v1.Approvals/Get
+  session     default
+  metadata
+    content-type: application/grpc
+  body (protobuf as JSON)
+    {
+      "id": "a-1"
+    }
+
+Match
+  hit         approvals-get:any:ok
+  candidates (evaluation order)
+    ✓ approvals-get:any:ok
+  passed      (none)
+
+Response
+  grpc-status 0
+  trailers
+    (none)
+  body (protobuf as JSON)
+    {
+      "id": "a-1",
+      "state": "APPROVED"
+    }
+
+Timing
+  at          12:01:03
+  duration    4ms

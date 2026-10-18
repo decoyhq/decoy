@@ -19,6 +19,6 @@ new session fresh active (defaults until its first change)
 
 
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
-│› type / for commands                                                                             │
+│› type / for commands · Ctrl+O recent requests                                                    │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
  http://127.0.0.1:4010 · session fresh · collection happy-path · 0 overrides

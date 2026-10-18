@@ -171,7 +171,7 @@ pub(crate) mod tests {
 
     #[test]
     fn command_names_complete_with_a_space_when_they_take_an_argument() {
-        assert_eq!(texts("/s"), ["/session ", "/sessions", "/status"]);
+        assert_eq!(texts("/s"), ["/session ", "/sessions", "/status", "/show "]);
         assert!(labels("/re")[0].2);
         assert_eq!(texts("/r"), ["/route ", "/reset"]);
         assert!(texts("hello").is_empty());
