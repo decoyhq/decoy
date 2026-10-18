@@ -60,12 +60,14 @@ pub async fn run(server: Server, quit: tokio::sync::oneshot::Sender<()>) -> Resu
     // Keyboard enhancement reports Ctrl+Shift+C and Cmd+C, where the terminal supports it.
     let enhanced = supports_keyboard_enhancement().unwrap_or(false);
     if enhanced {
-        execute!(
+        let _ = execute!(
             std::io::stdout(),
             PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-        )?;
+        );
     }
-    execute!(std::io::stdout(), EnableMouseCapture)?;
+    // Without these the TUI still works (no wheel, no Cmd+C), and an early return here would
+    // leave the terminal in raw mode on the alternate screen.
+    let _ = execute!(std::io::stdout(), EnableMouseCapture);
     // ratatui's hook leaves the alternate screen and raw mode; release the rest before it.
     let restore = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
