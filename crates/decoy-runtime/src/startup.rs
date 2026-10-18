@@ -161,7 +161,7 @@ pub fn load_catalog_from_files(
     };
 
     validate_collection_references(&routes, &collections, collections_file)?;
-    let catalog = Catalog::new(routes, collections, runtime).map_err(|error| {
+    let catalog = Catalog::from_checked(routes, collections, runtime).map_err(|error| {
         StartupError::new(
             StartupDiagnosticKind::Schema,
             collections_file,

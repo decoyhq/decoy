@@ -1,6 +1,9 @@
 //! `${ <jmespath> }` expressions inside YAML strings: scanning, compiling, and evaluating against a
 //! request envelope. Standard JMESPath via the `jmespath` crate.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::LazyLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -105,6 +108,27 @@ fn compile(source: &str) -> Result<jmespath::Expression<'static>, String> {
         .map_err(|error| format!("invalid JMESPath `{source}`: {error}"))
 }
 
+thread_local! {
+    /// Compiled expressions by source. Sources come from config files, so the set stays small;
+    /// per thread because a compiled expression isn't `Send`.
+    static COMPILED: RefCell<HashMap<String, Rc<jmespath::Expression<'static>>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// `compile`, once per source and thread: requests reuse the parsed expression.
+fn compiled(source: &str) -> Result<Rc<jmespath::Expression<'static>>, String> {
+    if let Some(expression) = COMPILED.with(|cache| cache.borrow().get(source).cloned()) {
+        return Ok(expression);
+    }
+    let expression = Rc::new(compile(source)?);
+    COMPILED.with(|cache| {
+        cache
+            .borrow_mut()
+            .insert(source.to_owned(), Rc::clone(&expression))
+    });
+    Ok(expression)
+}
+
 /// Check one expression source (without `${ }`) at startup.
 pub fn validate_expression(source: &str) -> Result<(), String> {
     compile(source).map(|_| ())
@@ -112,7 +136,7 @@ pub fn validate_expression(source: &str) -> Result<(), String> {
 
 /// Evaluate one expression source against `envelope`.
 pub fn evaluate(source: &str, envelope: &Value) -> Result<Value, String> {
-    let result = compile(source)?
+    let result = compiled(source)?
         .search(envelope)
         .map_err(|error| format!("`{source}` failed: {error}"))?;
     serde_json::to_value(&*result).map_err(|error| format!("`{source}` result: {error}"))
@@ -200,7 +224,7 @@ pub fn validate_predicate(predicate: &str) -> Result<(), String> {
 /// and logged so the miss it causes isn't silent.
 pub fn predicate_holds(predicate: &str, envelope: &Value) -> bool {
     let result = predicate_source(predicate)
-        .and_then(|source| compile(&source))
+        .and_then(|source| compiled(&source))
         .and_then(|expression| {
             expression
                 .search(envelope)

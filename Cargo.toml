@@ -12,3 +12,6 @@ repository = "https://github.com/what3verCODE/decoy"
 
 [profile.release]
 strip = true
+# Smaller, faster release binaries for a modest build-time cost (#267).
+lto = "thin"
+codegen-units = 1
