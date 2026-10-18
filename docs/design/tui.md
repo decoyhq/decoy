@@ -12,8 +12,8 @@ or missed without replaying the matcher by hand.
 ## Shape
 
 Bare `decoy` starts the runtime **plus** an interactive terminal UI in the same process. It looks
-and feels like an agent CLI (Claude Code / Codex): a live log of requests in the terminal's normal
-scrollback, an input line with slash commands and autocomplete, and a status bar. `decoy serve`
+and feels like an agent CLI (Claude Code / Codex): a fullscreen app with a live log of requests,
+an input box with slash commands and autocomplete, a request detail panel, and a status bar. `decoy serve`
 does not change and stays headless.
 
 ## Entry
@@ -24,14 +24,19 @@ does not change and stays headless.
 
 ## Rendering
 
-Inline, not fullscreen.
+Fullscreen. Inline (`Viewport::Inline` + `insert_before`) was the first choice; the #289
+prototype showed it reads like `tail -f` with an input line, so it was dropped.
 
-- Log lines get printed into the terminal's normal scrollback, and only the bottom region is live
-  (status bar, input, autocomplete popup, picker). ratatui `Viewport::Inline` + `insert_before`.
-- The terminal owns scroll, selection, copy and search. No mouse capture, no alternate screen.
-- A printed line is final. A request is printed once its response finishes. Long-lived connections
-  (WS/SSE) print separate `open` / `close` lines.
-- Reference implementation: Codex CLI (`codex-rs/tui`), which uses the same stack.
+- Alternate screen, ratatui + crossterm. Top to bottom: log pane, input box (the completion popup
+  and the request picker open as overlays above it), status bar.
+- The app owns the log. It follows new lines. Wheel, PgUp/PgDn and Home scroll back, with a
+  `↓ N new · End to follow` badge; End/Esc follow again. The last 10k lines are kept.
+- Mouse capture is on: a click on a request line opens its detail, a drag selects lines and copies
+  them through OSC 52. Shift+drag still gives the terminal's own selection.
+- A request gets its line once its response finishes. Long-lived connections (WS/SSE) get
+  separate `open` / `close` lines.
+- Reference implementation: Codex CLI (`codex-rs/tui`), which defaults to the alternate screen
+  with an owned transcript (`--no-alt-screen` for inline).
 
 ## Status bar
 
@@ -89,8 +94,9 @@ Sessions are implicit (`Controller` creates a Selection on its first mutation).
 
 ## Request detail
 
-`/show <id>` (or Ctrl+O picker → Enter) prints the record into scrollback as plain indented text
-with stable labels and no box-drawing, readable by a human or by an agent in a neighbouring pane.
+`/show <id>`, Ctrl+O picker → Enter, or a click on a request line opens the record in a scrollable
+panel: beside the log at ≥120 columns, over it when narrower; Esc closes it. The content is plain
+indented text with stable labels, so a copied detail reads well as text.
 
 - Request: method, URL, headers, body, Session.
 - Match explanation: a reason for each candidate, for hits _and_ misses. Candidates are listed in
@@ -144,7 +150,7 @@ with stable labels and no box-drawing, readable by a human or by an agent in a n
 
 - Attaching a TUI to an already running runtime (`decoy tui --url`) and any event-stream Control
   API endpoint.
-- Fullscreen mode, mouse support, in-app search/filter.
+- Inline mode, in-app search/filter, a keyboard select mode.
 - Editing routes/collections YAML from the TUI.
 - A dedicated Sessions panel or e2e debugging workflow (the Playwright network tab covers it).
 - Free-text (non-`/`) input.
