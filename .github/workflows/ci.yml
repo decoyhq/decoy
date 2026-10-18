@@ -13,8 +13,93 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  ci:
+  # What changed, and which examples exist. Jobs below skip what a change can't affect (a skipped
+  # job still satisfies `required`); pushes to main run everything.
+  changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      js: ${{ github.event_name == 'push' || steps.filter.outputs.js == 'true' }}
+      rust: ${{ github.event_name == 'push' || steps.filter.outputs.rust == 'true' }}
+      e2e: ${{ github.event_name == 'push' || steps.filter.outputs.e2e == 'true' }}
+      examples: ${{ steps.find.outputs.examples }}
+      has-examples: ${{ steps.find.outputs.has-examples }}
+      browser-examples: ${{ steps.find.outputs.browser-examples }}
+      has-browser-examples: ${{ steps.find.outputs.has-browser-examples }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@v4.0.3
+        with:
+          filters: |
+            shared: &shared
+              - .github/workflows/ci.yml
+              - .prototools
+            rust:
+              - *shared
+              - 'crates/**'
+              - 'Cargo.*'
+              - rust-toolchain.toml
+              - deny.toml
+            js:
+              - *shared
+              - 'packages/**'
+              - 'examples/**'
+              - 'scripts/**'
+              - 'package.json'
+              - 'pnpm-*.yaml'
+              - 'tsconfig*.json'
+              - 'eslint.config.*'
+              - '**/*.md'
+            e2e:
+              - *shared
+              - 'crates/**'
+              - 'Cargo.*'
+              - 'packages/**'
+              - 'examples/**'
+              - 'pnpm-*.yaml'
+      # Example workspaces (the e2e tier, `test:e2e`); ones depending on @playwright/test get the
+      # browser job, which installs Chromium. An empty list skips that job.
+      - id: find
+        run: |
+          shopt -s nullglob
+          plain=()
+          browser=()
+          for dir in examples/*/; do
+            pkg="${dir}package.json"
+            [ -f "$pkg" ] || continue
+            name="$(basename "$dir")"
+            # @playwright/test ⇒ real Chromium ⇒ the dedicated browser job.
+            if jq -e '(.devDependencies["@playwright/test"] // .dependencies["@playwright/test"]) != null' "$pkg" >/dev/null; then
+              browser+=("$name")
+            else
+              plain+=("$name")
+            fi
+          done
+          emit() {
+            local key="$1"; shift
+            if [ "$#" -eq 0 ]; then
+              echo "has-$key=false" >> "$GITHUB_OUTPUT"
+              echo "$key=[]" >> "$GITHUB_OUTPUT"
+            else
+              echo "has-$key=true" >> "$GITHUB_OUTPUT"
+              echo "$key=$(printf '%s\n' "$@" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
+            fi
+          }
+          emit examples "${plain[@]}"
+          emit browser-examples "${browser[@]}"
+
+  ci:
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -46,19 +131,15 @@ jobs:
       - name: Test
         run: pnpm test
 
-  # Known vulnerabilities, unexpected licenses and crate sources (deny.toml).
-  cargo-deny:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check advisories licenses bans sources
-
+  # fmt, clippy, cargo-deny and the tests (run once, with coverage for Codecov).
   rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write # Codecov upload via OIDC
     steps:
       - uses: actions/checkout@v7
         with:
@@ -68,6 +149,11 @@ jobs:
         uses: moonrepo/setup-toolchain@v0
         with:
           auto-install: true
+
+      # Restores main's build cache; only main saves, so PRs don't evict each other.
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Format check
         run: cargo fmt --check
@@ -75,67 +161,37 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Build
-        run: cargo build --workspace
-
-      - name: Test
-        run: cargo test --workspace
-
-  # Discover example workspaces so each gets its own e2e job (the e2e tier lives in
-  # examples/*, exposed as `test:e2e`). Browser examples (those depending on
-  # @playwright/test) are split out so they can install Chromium in a dedicated job;
-  # the rest run a plain job. Each list is empty when no such example exists, so the
-  # corresponding job simply skips rather than failing.
-  discover-examples:
-    runs-on: ubuntu-latest
-    outputs:
-      examples: ${{ steps.find.outputs.examples }}
-      has-examples: ${{ steps.find.outputs.has-examples }}
-      browser-examples: ${{ steps.find.outputs.browser-examples }}
-      has-browser-examples: ${{ steps.find.outputs.has-browser-examples }}
-    steps:
-      - uses: actions/checkout@v7
+      # Known vulnerabilities, unexpected licenses and crate sources (deny.toml).
+      - uses: EmbarkStudios/cargo-deny-action@v2
         with:
-          persist-credentials: false
-      - id: find
+          command: check advisories licenses bans sources
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Test (with coverage)
         run: |
-          shopt -s nullglob
-          plain=()
-          browser=()
-          for dir in examples/*/; do
-            pkg="${dir}package.json"
-            [ -f "$pkg" ] || continue
-            name="$(basename "$dir")"
-            # @playwright/test ⇒ real Chromium ⇒ the dedicated browser job.
-            if jq -e '(.devDependencies["@playwright/test"] // .dependencies["@playwright/test"]) != null' "$pkg" >/dev/null; then
-              browser+=("$name")
-            else
-              plain+=("$name")
-            fi
-          done
-          emit() {
-            local key="$1"; shift
-            if [ "$#" -eq 0 ]; then
-              echo "has-$key=false" >> "$GITHUB_OUTPUT"
-              echo "$key=[]" >> "$GITHUB_OUTPUT"
-            else
-              echo "has-$key=true" >> "$GITHUB_OUTPUT"
-              echo "$key=$(printf '%s\n' "$@" | jq -R . | jq -cs .)" >> "$GITHUB_OUTPUT"
-            fi
-          }
-          emit examples "${plain[@]}"
-          emit browser-examples "${browser[@]}"
+          rustup component add llvm-tools-preview
+          cargo llvm-cov --workspace --lcov --output-path rust.lcov
+
+      - uses: codecov/codecov-action@v7.1.1
+        with:
+          use_oidc: true
+          files: rust.lcov
+          flags: rust
 
   # One job per non-browser example, running just that example's `test:e2e`.
   example-e2e:
-    needs: discover-examples
-    if: needs.discover-examples.outputs.has-examples == 'true'
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true' && needs.changes.outputs.has-examples == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     name: e2e (${{ matrix.example }})
     strategy:
       fail-fast: false
       matrix:
-        example: ${{ fromJSON(needs.discover-examples.outputs.examples) }}
+        example: ${{ fromJSON(needs.changes.outputs.examples) }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -145,6 +201,12 @@ jobs:
         uses: moonrepo/setup-toolchain@v0
         with:
           auto-install: true
+
+      # Examples start Decoy with `cargo run`; one cache shared by every e2e job, saved on main.
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          shared-key: e2e
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -165,14 +227,15 @@ jobs:
   # download (pnpm-workspace.yaml), so we install Chromium + its system deps here —
   # never in the default `pnpm test`.
   example-e2e-browser:
-    needs: discover-examples
-    if: needs.discover-examples.outputs.has-browser-examples == 'true'
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true' && needs.changes.outputs.has-browser-examples == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     name: e2e-browser (${{ matrix.example }})
     strategy:
       fail-fast: false
       matrix:
-        example: ${{ fromJSON(needs.discover-examples.outputs.browser-examples) }}
+        example: ${{ fromJSON(needs.changes.outputs.browser-examples) }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -182,6 +245,11 @@ jobs:
         uses: moonrepo/setup-toolchain@v0
         with:
           auto-install: true
+
+      - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          shared-key: e2e
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -208,7 +276,7 @@ jobs:
   # The one check the `main` ruleset requires, so jobs and example matrices can change freely.
   required:
     if: always()
-    needs: [ci, cargo-deny, rust, discover-examples, example-e2e, example-e2e-browser]
+    needs: [changes, ci, rust, example-e2e, example-e2e-browser]
     permissions: {}
     runs-on: ubuntu-latest
     timeout-minutes: 5
