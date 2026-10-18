@@ -11,11 +11,12 @@ use hyper_util::server::graceful::GracefulShutdown;
 use hyper_util::service::TowerToHyperService;
 use rcgen::{
     BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair,
-    KeyUsagePurpose,
+    KeyUsagePurpose, PublicKeyData,
 };
 use rustls::ServerConfig;
 use rustls::pki_types::pem::PemObject;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use time::{Duration as TimeDuration, OffsetDateTime};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tokio_rustls::TlsAcceptor;
@@ -57,35 +58,48 @@ pub fn server_config(files: &TlsFiles) -> Result<Arc<ServerConfig>, StartupError
     })
 }
 
-/// `tls: auto`: signs a fresh localhost cert with the CA in `dir`, creating the CA on first use so
-/// a client that trusts `ca.pem` keeps trusting it across runs. Returns the config and the CA path.
+/// `tls: auto`: signs a fresh localhost cert with the CA in `dir`, creating the CA key on first use
+/// so a client that trusts `ca.pem` keeps trusting it across runs. Returns the config and CA path.
 pub fn auto_server_config(dir: &Path) -> Result<(Arc<ServerConfig>, PathBuf), StartupError> {
     let ca_cert = dir.join("ca.pem");
     let ca_key = dir.join("ca-key.pem");
     let io_error = |path: &Path, error: std::io::Error| {
-        StartupError::new(StartupDiagnosticKind::Io, path, error.to_string())
+        StartupError::new(
+            StartupDiagnosticKind::Io,
+            path,
+            format!("cannot set up the `tls: auto` CA: {error}"),
+        )
     };
-    let key = if ca_key.exists() {
-        let pem = fs::read_to_string(&ca_key).map_err(|error| io_error(&ca_key, error))?;
-        KeyPair::from_pem(&pem).map_err(|error| {
-            StartupError::new(
-                StartupDiagnosticKind::Parse,
-                &ca_key,
-                format!("cannot read generated CA key: {error}; delete it to start over"),
-            )
-        })?
-    } else {
-        let key = KeyPair::generate().expect("ring generates keys");
-        fs::create_dir_all(dir).map_err(|error| io_error(dir, error))?;
-        write_private(&ca_key, &key.serialize_pem()).map_err(|error| io_error(&ca_key, error))?;
-        key
-    };
-    if !ca_cert.exists() {
+    fs::create_dir_all(dir).map_err(|error| io_error(dir, error))?;
+    let ignore = dir.join(".gitignore");
+    if !ignore.exists() {
+        // The CA key can sign any host; keep it out of the user's repo.
+        fs::write(&ignore, "*\n").map_err(|error| io_error(&ignore, error))?;
+    }
+    let key = load_or_create_key(&ca_key).map_err(|error| io_error(&ca_key, error))?;
+    let key = KeyPair::from_pem(&key).map_err(|error| {
+        StartupError::new(
+            StartupDiagnosticKind::Parse,
+            &ca_key,
+            format!("cannot read the `tls: auto` CA key: {error}; delete `.decoy/` to start over"),
+        )
+    })?;
+    // ca.pem must match the key; rebuild it when it's missing or from another key. Same key and
+    // subject, so clients that trusted an earlier copy still trust the certs it signs.
+    let spki = key.subject_public_key_info();
+    let current = fs::read(&ca_cert).ok().and_then(|pem| {
+        CertificateDer::from_pem_slice(&pem)
+            .ok()
+            .filter(|der| contains(der, &spki))
+    });
+    if current.is_none() {
         let cert = ca_params()
             .self_signed(&key)
             .expect("the CA params are valid");
-        fs::write(&ca_cert, cert.pem()).map_err(|error| io_error(&ca_cert, error))?;
+        publish(&ca_cert, cert.pem().as_bytes(), false)
+            .map_err(|error| io_error(&ca_cert, error))?;
     }
+
     // An issuer rebuilt from the same params and key signs certs that chain to the stored CA.
     let issuer = Issuer::new(ca_params(), key);
     let mut params = CertificateParams::new(vec![
@@ -98,6 +112,11 @@ pub fn auto_server_config(dir: &Path) -> Result<(Arc<ServerConfig>, PathBuf), St
         .distinguished_name
         .push(DnType::CommonName, "localhost");
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    params.use_authority_key_identifier_extension = true;
+    // Re-signed every start, so keep it short: Apple clients reject leaves valid over 825 days.
+    let now = OffsetDateTime::now_utc();
+    params.not_before = now - TimeDuration::days(1);
+    params.not_after = now + TimeDuration::days(30);
     let leaf_key = KeyPair::generate().expect("ring generates keys");
     let leaf = params
         .signed_by(&leaf_key, &issuer)
@@ -120,12 +139,50 @@ fn ca_params() -> CertificateParams {
     params
 }
 
-fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
+/// Reads the CA key, or creates it. Two Decoys starting at once agree on one key: it's published
+/// whole with a hard link that fails if another process won.
+fn load_or_create_key(path: &Path) -> std::io::Result<String> {
+    if let Ok(pem) = fs::read_to_string(path) {
+        return Ok(pem);
+    }
+    let pem = KeyPair::generate()
+        .expect("ring generates keys")
+        .serialize_pem();
+    match publish(path, pem.as_bytes(), true) {
+        Ok(()) => Ok(pem),
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => fs::read_to_string(path),
+        Err(error) => Err(error),
+    }
+}
+
+/// Writes `contents` to a temp file next to `path`, then moves it into place, so readers never see
+/// a partial file. `exclusive` keeps an existing file (and makes the temp file private).
+fn publish(path: &Path, contents: &[u8], exclusive: bool) -> std::io::Result<()> {
+    let temp = path.with_extension(format!("tmp{}", std::process::id()));
     let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true);
+    options.write(true).create(true).truncate(true);
     #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    std::io::Write::write_all(&mut options.open(path)?, contents.as_bytes())
+    if exclusive {
+        std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    }
+    let written = options
+        .open(&temp)
+        .and_then(|mut file| std::io::Write::write_all(&mut file, contents));
+    let moved = written.and_then(|()| {
+        if exclusive {
+            fs::hard_link(&temp, path)
+        } else {
+            fs::rename(&temp, path)
+        }
+    });
+    let _ = fs::remove_file(&temp);
+    moved
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 fn build(

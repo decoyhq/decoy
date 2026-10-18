@@ -51,10 +51,11 @@ ports:
 `port` takes the same object form. `--port` changes only the port number. Clients must trust the
 cert, e.g. `NODE_EXTRA_CA_CERTS=certs/dev.pem` for Node.
 
-`tls: auto` skips the cert files: Decoy signs a localhost cert at startup with a local CA it creates
-once in `.decoy/` next to the config (`ca.pem`, `ca-key.pem`) and reuses on later runs. Trust that
-CA once (`NODE_EXTRA_CA_CERTS=mocks/.decoy/ca.pem`, grpc-js `credentials.createSsl(ca)`) and keep
-`.decoy/` out of git.
+`tls: auto` skips the cert files: Decoy signs a short-lived localhost cert at every start with a
+local CA kept in `.decoy/` next to the config (`ca.pem`, `ca-key.pem`). The CA is created once and
+reused, so trust it once (`NODE_EXTRA_CA_CERTS=mocks/.decoy/ca.pem`, grpc-js
+`credentials.createSsl(ca)`). `ca.pem` is rebuilt from the key if it goes missing. Decoy writes a
+`.gitignore` into `.decoy/` so the CA key stays out of git.
 
 ```yaml
 tls: auto
