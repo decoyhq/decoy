@@ -20,7 +20,7 @@ use decoy_runtime::grpc::{GrpcRequest, GrpcResponse, UNIMPLEMENTED};
 use decoy_runtime::http::{
     BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig,
 };
-use decoy_runtime::http_forward::ForwardResponse;
+use decoy_runtime::http_forward::{ForwardResponse, ForwardingError};
 use decoy_runtime::protos::load_descriptor_pool;
 use decoy_runtime::schema::{HttpMethod, PassthroughTarget};
 use decoy_runtime::startup::load_catalog_from_files;
@@ -375,7 +375,11 @@ fn response_from_execution_outcome(outcome: HttpExecutionOutcome) -> Response<Bo
     match outcome {
         HttpExecutionOutcome::Response { response, .. } => response_from_forward_response(response),
         HttpExecutionOutcome::ForwardingError { source, .. } => json_response(
-            StatusCode::BAD_GATEWAY,
+            match source {
+                ForwardingError::Loop => StatusCode::LOOP_DETECTED,
+                ForwardingError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
+                _ => StatusCode::BAD_GATEWAY,
+            },
             serde_json::json!({
                 "error": "passthrough forwarding failed",
                 "detail": source.to_string(),
@@ -417,7 +421,7 @@ fn response_from_forward_response(plan: ForwardResponse) -> Response<Body> {
             HeaderName::from_bytes(name.as_bytes()),
             HeaderValue::from_str(&value),
         ) {
-            response.headers_mut().insert(name, value);
+            response.headers_mut().append(name, value);
         }
     }
 
@@ -464,10 +468,16 @@ fn request_headers(headers: &axum::http::HeaderMap) -> BTreeMap<String, String> 
         let Ok(value) = value.to_str() else {
             continue;
         };
+        // HTTP/2 splits `cookie` into one field per pair; they rejoin with `; ` (RFC 9113 §8.2.3).
+        let separator = if name == axum::http::header::COOKIE {
+            "; "
+        } else {
+            ", "
+        };
         joined
             .entry(name.as_str().to_owned())
             .and_modify(|existing| {
-                existing.push_str(", ");
+                existing.push_str(separator);
                 existing.push_str(value);
             })
             .or_insert_with(|| value.to_owned());
@@ -499,6 +509,19 @@ fn http_method(method: &axum::http::Method) -> Option<HttpMethod> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_http2_cookies_rejoin_with_semicolons() {
+        let mut headers = axum::http::HeaderMap::new();
+        headers.append("cookie", HeaderValue::from_static("a=1"));
+        headers.append("cookie", HeaderValue::from_static("b=2"));
+        headers.append("accept", HeaderValue::from_static("text/html"));
+        headers.append("accept", HeaderValue::from_static("*/*"));
+
+        let joined = request_headers(&headers);
+        assert_eq!(joined["cookie"], "a=1; b=2");
+        assert_eq!(joined["accept"], "text/html, */*");
+    }
 
     #[tokio::test]
     async fn port_zero_picks_one_port_for_every_address_of_a_host() {

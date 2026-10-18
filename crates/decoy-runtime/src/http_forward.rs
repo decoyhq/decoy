@@ -1,8 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::OnceLock;
+use std::time::Duration;
 
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use thiserror::Error;
 
+use crate::control_api::SESSION_HEADER;
 use crate::http::PassthroughPlan;
 use crate::schema::HttpMethod;
 
@@ -17,8 +20,19 @@ pub struct ForwardRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ForwardResponse {
     pub status: u16,
-    pub headers: BTreeMap<String, String>,
+    /// In order, repeats kept (e.g. several `set-cookie`).
+    pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+}
+
+impl ForwardResponse {
+    /// The first value of a header, by case-insensitive name.
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    }
 }
 
 #[derive(Debug, Error)]
@@ -43,8 +57,48 @@ pub enum ForwardingError {
         #[source]
         source: reqwest::header::InvalidHeaderValue,
     },
+    #[error("passthrough loop: this Decoy already forwarded the request (`{VIA_HEADER}`)")]
+    Loop,
+    #[error("passthrough upstream timed out: {0}")]
+    Timeout(#[source] reqwest::Error),
     #[error("passthrough request failed: {0}")]
-    Request(#[from] reqwest::Error),
+    Request(#[source] reqwest::Error),
+}
+
+impl From<reqwest::Error> for ForwardingError {
+    fn from(error: reqwest::Error) -> Self {
+        if error.is_timeout() {
+            Self::Timeout(error)
+        } else {
+            Self::Request(error)
+        }
+    }
+}
+
+/// Lists the Decoy processes a request passed through, so one that comes back is refused instead
+/// of forwarded forever (a target that points at Decoy itself). Chains of distinct Decoys still
+/// forward, but `x-mock-session` isn't passed on, so a downstream Decoy uses its default Session.
+pub const VIA_HEADER: &str = "x-decoy-via";
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
+fn instance_id() -> &'static str {
+    static ID: OnceLock<String> = OnceLock::new();
+    ID.get_or_init(|| format!("{:016x}", fastrand::u64(..)))
+}
+
+/// One pooled client for every passthrough, with timeouts so a hung upstream can't hang Decoy.
+fn client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(CONNECT_TIMEOUT)
+            .timeout(REQUEST_TIMEOUT)
+            .build()
+            .expect("the passthrough client config is valid")
+    })
 }
 
 const ALWAYS_STRIPPED_REQUEST_HEADERS: &[&str] = &[
@@ -80,13 +134,33 @@ pub async fn forward_passthrough(
         return Err(ForwardingError::MissingTarget);
     };
 
+    let via = request
+        .headers
+        .iter()
+        .find(|(name, _)| name.eq_ignore_ascii_case(VIA_HEADER))
+        .map(|(_, value)| value.as_str());
+    if via.is_some_and(|via| via.split(',').any(|id| id.trim() == instance_id())) {
+        return Err(ForwardingError::Loop);
+    }
+    let via = match via {
+        Some(via) => format!("{via}, {}", instance_id()),
+        None => instance_id().to_owned(),
+    };
+
     let url = target_url(base_url, &request.path_and_query)?;
-    let client = reqwest::Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()?;
-    let response = client
+    let mut headers = forwardable_request_headers(&request.headers)?;
+    headers.insert(
+        HeaderName::from_static(VIA_HEADER),
+        HeaderValue::from_str(&via).map_err(|source| {
+            ForwardingError::InvalidRequestHeaderValue {
+                name: VIA_HEADER.to_owned(),
+                source,
+            }
+        })?,
+    );
+    let response = client()
         .request(reqwest_method(&request.method), url)
-        .headers(forwardable_request_headers(&request.headers)?)
+        .headers(headers)
         .body(request.body)
         .send()
         .await?;
@@ -134,7 +208,9 @@ fn forwardable_request_headers(
     let mut out = HeaderMap::new();
 
     for (name, value) in headers {
-        if stripped.contains(&name.to_ascii_lowercase()) {
+        let lower = name.to_ascii_lowercase();
+        // The Session header is Decoy's own; the via list is rebuilt by the caller.
+        if stripped.contains(&lower) || lower == SESSION_HEADER || lower == VIA_HEADER {
             continue;
         }
         let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|source| {
@@ -175,8 +251,8 @@ fn stripped_request_headers(headers: &BTreeMap<String, String>) -> BTreeSet<Stri
     stripped
 }
 
-fn forwardable_response_headers(headers: &HeaderMap) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
+fn forwardable_response_headers(headers: &HeaderMap) -> Vec<(String, String)> {
+    let mut out = Vec::new();
     for (name, value) in headers {
         if STRIPPED_RESPONSE_HEADERS
             .iter()
@@ -185,7 +261,7 @@ fn forwardable_response_headers(headers: &HeaderMap) -> BTreeMap<String, String>
             continue;
         }
         if let Ok(value) = value.to_str() {
-            out.insert(name.as_str().to_owned(), value.to_owned());
+            out.push((name.as_str().to_owned(), value.to_owned()));
         }
     }
     out
@@ -269,7 +345,7 @@ mod tests {
 
             stream
                 .write_all(
-                    b"HTTP/1.1 207 Multi-Status\r\ncontent-type: application/json\r\nx-from-upstream: yes\r\nconnection: close\r\ncontent-length: 11\r\n\r\n{\"ok\":true}",
+                    b"HTTP/1.1 207 Multi-Status\r\ncontent-type: application/json\r\nx-from-upstream: yes\r\nset-cookie: a=1\r\nset-cookie: b=2\r\nconnection: close\r\ncontent-length: 11\r\n\r\n{\"ok\":true}",
                 )
                 .unwrap();
         });
@@ -294,6 +370,8 @@ mod tests {
                     ("connection".to_owned(), "x-remove, keep-alive".to_owned()),
                     ("x-remove".to_owned(), "no".to_owned()),
                     ("content-length".to_owned(), "999".to_owned()),
+                    ("x-mock-session".to_owned(), "s1".to_owned()),
+                    (VIA_HEADER.to_owned(), "other-decoy".to_owned()),
                 ]),
                 body: br#"{"item":"x"}"#.to_vec(),
             },
@@ -302,11 +380,15 @@ mod tests {
         .unwrap();
 
         assert_eq!(response.status, 207);
-        assert_eq!(
-            response.headers.get("x-from-upstream"),
-            Some(&"yes".to_owned())
-        );
-        assert_eq!(response.headers.get("content-length"), None);
+        assert_eq!(response.header("x-from-upstream"), Some("yes"));
+        assert_eq!(response.header("content-length"), None);
+        let cookies: Vec<&str> = response
+            .headers
+            .iter()
+            .filter(|(name, _)| name == "set-cookie")
+            .map(|(_, value)| value.as_str())
+            .collect();
+        assert_eq!(cookies, ["a=1", "b=2"]);
         assert_eq!(response.body, br#"{"ok":true}"#);
 
         let request = received.recv().unwrap();
@@ -314,12 +396,59 @@ mod tests {
         assert_eq!(request.request_line, "POST /orders?page=2 HTTP/1.1");
         assert_eq!(request.headers.get("x-keep"), Some(&"yes".to_owned()));
         assert_eq!(request.headers.get("x-remove"), None);
+        assert_eq!(request.headers.get("x-mock-session"), None);
+        assert_eq!(
+            request.headers.get(VIA_HEADER),
+            Some(&format!("other-decoy, {}", instance_id()))
+        );
         assert_ne!(request.headers.get("host"), Some(&"decoy.local".to_owned()));
         assert_ne!(
             request.headers.get("content-length"),
             Some(&"999".to_owned())
         );
         assert_eq!(request.body, r#"{"item":"x"}"#);
+    }
+
+    #[tokio::test]
+    async fn a_request_this_decoy_already_forwarded_is_a_loop() {
+        let error = forward_passthrough(
+            &PassthroughPlan {
+                base_url: Some("http://127.0.0.1:1".to_owned()),
+            },
+            ForwardRequest {
+                method: HttpMethod::Get,
+                path_and_query: "/".to_owned(),
+                headers: BTreeMap::from([(
+                    VIA_HEADER.to_owned(),
+                    format!("other-decoy, {}", instance_id()),
+                )]),
+                body: Vec::new(),
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, ForwardingError::Loop), "{error}");
+    }
+
+    #[tokio::test]
+    async fn an_upstream_that_never_answers_is_a_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _hold = thread::spawn(move || listener.accept().map(|(stream, _)| stream));
+        let error = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(100))
+            .build()
+            .unwrap()
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            ForwardingError::from(error),
+            ForwardingError::Timeout(_)
+        ));
     }
 
     #[tokio::test]
@@ -394,8 +523,8 @@ mod tests {
         handle.join().unwrap();
         assert_eq!(response.status, 302);
         assert_eq!(
-            response.headers.get("location"),
-            Some(&"http://127.0.0.1:9/elsewhere".to_owned())
+            response.header("location"),
+            Some("http://127.0.0.1:9/elsewhere")
         );
     }
 }
