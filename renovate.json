@@ -3,6 +3,8 @@
   "extends": ["config:recommended", ":semanticCommits", "helpers:pinGitHubActionDigestsToSemver"],
   "schedule": ["before 6am on monday"],
   "minimumReleaseAge": "1 day",
+  "rebaseWhen": "conflicted",
+  "prConcurrentLimit": 3,
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": ["before 6am on the first day of the month"]

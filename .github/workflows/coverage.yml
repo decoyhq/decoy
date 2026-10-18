@@ -1,4 +1,5 @@
-# Rust and JS coverage, uploaded to Codecov with OIDC (no token secret).
+# JS coverage, uploaded to Codecov with OIDC (no token secret). Rust coverage comes from the
+# `rust` job in ci.yml, which runs the tests once.
 name: Coverage
 
 on:
@@ -8,6 +9,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   coverage:
@@ -26,25 +31,10 @@ jobs:
         with:
           auto-install: true
 
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-llvm-cov
-
-      - name: Rust coverage
-        run: |
-          rustup component add llvm-tools-preview
-          cargo llvm-cov --workspace --lcov --output-path rust.lcov
-
       - name: JS coverage
         run: |
           pnpm install --frozen-lockfile
           pnpm -r --filter './packages/*' exec rstest run --coverage
-
-      - uses: codecov/codecov-action@v7.1.1
-        with:
-          use_oidc: true
-          files: rust.lcov
-          flags: rust
 
       - uses: codecov/codecov-action@v7.1.1
         with:
