@@ -19,6 +19,7 @@ pub mod schema;
 pub mod startup;
 pub mod template;
 pub mod tls;
+pub mod upgrade;
 
 pub use collections::{Activation, Collection, CollectionRouteRef, CollectionsFile};
 pub use control_api::{
