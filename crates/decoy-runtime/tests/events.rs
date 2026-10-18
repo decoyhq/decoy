@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use decoy_runtime::config::{ProtoSources, ServeCliOptions, ServeConfig};
 use decoy_runtime::events::{
-    CAPACITY, Event, Outcome, RequestEvent, SessionChange, SessionEvent, SessionSource,
+    CAPACITY, Event, Level, Outcome, RequestEvent, SessionChange, SessionEvent, SessionSource,
 };
 use decoy_runtime::{Candidate, HttpExecutionRequest, HttpMethod, Rejection, Server};
 use tokio::sync::broadcast::Receiver;
@@ -426,4 +426,32 @@ async fn a_lagging_subscriber_loses_the_oldest_events_without_blocking_requests(
         panic!("expected a request event")
     };
     assert!(next.id > oldest_kept.id);
+}
+
+#[tokio::test]
+async fn runtime_warnings_reach_subscribers_as_log_events() {
+    // `abs` of a string fails at request time; the Case reads as not matching and the runtime warns.
+    let route = "id: bad-predicate\ntransport: http\nmatch: { method: GET, path: /bad-predicate }\ncases:\n  any:\n    match: '${ abs(path) }'\n    behaviors:\n      ok: { status: 200 }\n";
+    let running = start(
+        &[route],
+        "- id: default\n  routes: [bad-predicate:any:ok]\n",
+    )
+    .await;
+    let mut events = running.server.subscribe();
+
+    reqwest::get(format!("{}/bad-predicate", running.base))
+        .await
+        .unwrap();
+
+    let log = loop {
+        if let Event::Log(log) = events.recv().await.unwrap() {
+            break log;
+        }
+    };
+    assert_eq!(log.level, Level::Warn);
+    assert!(
+        log.message.starts_with("predicate `${ abs(path) }` failed"),
+        "{}",
+        log.message
+    );
 }

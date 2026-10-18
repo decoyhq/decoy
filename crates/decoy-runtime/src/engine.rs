@@ -858,6 +858,11 @@ impl Controller {
         self.selection(session).snapshot()
     }
 
+    /// The Session's Selection; the defaults for a Session that holds none.
+    pub fn selection_snapshot(&self, session: &str) -> SelectionSnapshot {
+        self.selection(session).snapshot()
+    }
+
     pub fn resolve_http(&self, session: &str, request: &HttpRequest) -> ResolveOutcome<'_> {
         let selection = self.selection(session);
         self.catalog.resolve_http_with_overrides(

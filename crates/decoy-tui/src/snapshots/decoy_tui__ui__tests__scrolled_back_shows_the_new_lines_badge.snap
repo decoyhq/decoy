@@ -1,0 +1,14 @@
+---
+source: crates/decoy-tui/src/ui.rs
+expression: "plain(&render(&mut app, 100, 10))"
+---
+#10 12:01:03 GET     /users/123                    → users-by-id:user-123:success 200 4ms
+#11 12:01:03 GET     /users/123                    → users-by-id:user-123:success 200 4ms
+#12 12:01:03 GET     /users/123                    → users-by-id:user-123:success 200 4ms
+#13 12:01:03 GET     /users/123                    → users-by-id:user-123:success 200 4ms
+#14 12:01:03 GET     /users/123                    → users-by-id:user-123:success 200 4ms
+#15 12:01:03 GET     /users/123                    → users-by-id:user-123: ↓ 2 new · End to follow
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│› type / for commands                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ http://127.0.0.1:4010 · session default · collection happy-path · 0 overrides

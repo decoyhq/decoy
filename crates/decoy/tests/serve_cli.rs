@@ -383,6 +383,20 @@ fn duplicate_route_ids_fail_startup_with_diagnostic() {
 }
 
 #[test]
+fn bare_decoy_without_a_terminal_points_to_serve() {
+    let output = Command::new(env!("CARGO_BIN_EXE_decoy"))
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "decoy: no terminal; use `decoy serve`\n"
+    );
+}
+
+#[test]
 fn missing_startup_collection_fails_startup() {
     let fixture = Fixture::new();
     fixture.write_route("users.yaml", route_with_id("users"));

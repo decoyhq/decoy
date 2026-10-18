@@ -37,9 +37,19 @@ pub struct BoundListener {
     pub addr: SocketAddr,
 }
 
+impl BoundListener {
+    pub fn url(&self) -> String {
+        let scheme = if self.tls { "https" } else { "http" };
+        format!("{scheme}://{}", self.addr)
+    }
+}
+
 /// A started runtime: every listener is bound and serving until the shutdown signal fires.
 pub struct Server {
     pub listeners: Vec<BoundListener>,
+    /// Startup messages for the caller to show, e.g. where the auto TLS CA lives. `serve` prints
+    /// nothing itself, not even the listen addresses.
+    pub notices: Vec<String>,
     pub controller: Arc<RwLock<Controller>>,
     events: crate::events::Sender,
     shutdown: Pin<Box<dyn Future<Output = ()> + Send>>,
@@ -71,6 +81,8 @@ pub async fn serve(
 
     let controller = Controller::new(startup.catalog, startup.default_collection);
     let events = controller.events();
+    crate::events::set_log_sink(events.clone());
+    let mut notices = Vec::new();
     let controller = Arc::new(RwLock::new(controller));
     let app = Router::new()
         .fallback(any(handle_request))
@@ -81,10 +93,10 @@ pub async fn serve(
         Some(TlsSource::Files(files)) => Some(tls::server_config(files)?),
         Some(TlsSource::Auto { dir }) => {
             let (tls_config, ca) = tls::auto_server_config(dir)?;
-            eprintln!(
-                "decoy serve: TLS cert signed by {}; trust it with e.g. NODE_EXTRA_CA_CERTS",
+            notices.push(format!(
+                "TLS cert signed by {}; trust it with e.g. NODE_EXTRA_CA_CERTS",
                 ca.display()
-            );
+            ));
             Some(tls_config)
         }
     };
@@ -97,7 +109,7 @@ pub async fn serve(
             .map(|(name, listener)| (format!("listeners.{name}"), listener)),
     );
     for (name, listener) in named {
-        for bound in bind(&name, &listener.host, listener.port).await? {
+        for bound in bind(&name, &listener.host, listener.port, &mut notices).await? {
             listeners.push((name.clone(), listener.tls, bound));
         }
     }
@@ -112,12 +124,6 @@ pub async fn serve(
             tls: secure,
             addr,
         });
-        let scheme = if secure { "https" } else { "http" };
-        if name == "port" {
-            eprintln!("decoy serve listening on {scheme}://{addr}");
-        } else {
-            eprintln!("decoy serve listening on {scheme}://{addr} ({name})");
-        }
         let mut stop = stop_all.subscribe();
         match tls_config.clone().filter(|_| secure) {
             Some(tls_config) => {
@@ -137,6 +143,7 @@ pub async fn serve(
     }
     Ok(Server {
         listeners: bound,
+        notices,
         controller,
         events,
         shutdown: Box::pin(shutdown),
@@ -175,10 +182,10 @@ impl Server {
         match drained {
             Ok(result) => result?,
             Err(_) => {
-                eprintln!(
-                    "decoy serve: closed connections still open after {}s",
+                crate::events::warn(format!(
+                    "closed connections still open after {}s",
                     DRAIN_TIMEOUT.as_secs()
-                );
+                ));
                 servers.abort_all();
             }
         }
@@ -200,8 +207,13 @@ struct Secure;
 /// Binds every address `host` resolves to on one port. `localhost` is both loopbacks (`127.0.0.1`,
 /// `::1`) without asking the resolver, which often maps it to `127.0.0.1` only. An address the
 /// machine can't bind (e.g. `::1` with IPv6 off) is skipped while another one binds; a taken port
-/// always fails.
-async fn bind(name: &str, host: &str, port: u16) -> Result<Vec<TcpListener>, String> {
+/// always fails; a skipped address adds a notice.
+async fn bind(
+    name: &str,
+    host: &str,
+    port: u16,
+    notices: &mut Vec<String>,
+) -> Result<Vec<TcpListener>, String> {
     let mut addrs: Vec<SocketAddr> = if host.eq_ignore_ascii_case("localhost") {
         vec![
             SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port)),
@@ -233,7 +245,7 @@ async fn bind(name: &str, host: &str, port: u16) -> Result<Vec<TcpListener>, Str
                     std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied
                 ) =>
             {
-                eprintln!("decoy serve: skipped `{name}` on {addr}: {error}");
+                notices.push(format!("skipped `{name}` on {addr}: {error}"));
                 skipped = Some(format!("cannot listen on `{name}` ({addr}): {error}"));
             }
             Err(error) => return Err(format!("cannot listen on `{name}` ({addr}): {error}")),
@@ -439,7 +451,9 @@ fn response_from_forward_response(plan: ForwardResponse) -> Response<Body> {
             (Ok(name), Ok(value)) => {
                 response.headers_mut().append(name, value);
             }
-            _ => eprintln!("decoy serve: dropped response header `{name}`: invalid name or value"),
+            _ => crate::events::warn(format!(
+                "dropped response header `{name}`: invalid name or value"
+            )),
         }
     }
 
@@ -475,7 +489,9 @@ fn http_response(plan: HttpResponsePlan) -> Response<Body> {
             (Ok(name), Ok(value)) => {
                 response.headers_mut().insert(name, value);
             }
-            _ => eprintln!("decoy serve: dropped response header `{name}`: invalid name or value"),
+            _ => crate::events::warn(format!(
+                "dropped response header `{name}`: invalid name or value"
+            )),
         }
     }
 
@@ -548,7 +564,7 @@ mod tests {
 
     #[tokio::test]
     async fn port_zero_picks_one_port_for_every_address_of_a_host() {
-        let bound = bind("t", "localhost", 0).await.unwrap();
+        let bound = bind("t", "localhost", 0, &mut Vec::new()).await.unwrap();
         assert!(!bound.is_empty());
         let ports: Vec<u16> = bound
             .iter()

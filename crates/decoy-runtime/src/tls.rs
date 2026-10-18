@@ -228,7 +228,7 @@ pub async fn serve(
                             | ErrorKind::ConnectionAborted
                             | ErrorKind::ConnectionReset
                     ) {
-                        eprintln!("decoy serve: accept failed: {error}");
+                        crate::events::error(format!("accept failed: {error}"));
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }
                     continue;

@@ -121,11 +121,16 @@ with stable labels and no box-drawing, readable by a human or by an agent in a n
 - Crates: `decoy` (bin: clap, `main.rs`, `upgrade`), `decoy-runtime` (lib: engine + server),
   `decoy-tui` (lib: ratatui + crossterm, depends on the runtime).
 - `decoy_runtime::serve(config, shutdown)` binds every listener and returns a `Server` with the
-  bound `listeners` and the shared `controller` (`Arc<RwLock<Controller>>`); `Server::wait()`
-  serves until `shutdown` resolves, then drains. `decoy serve` passes Ctrl-C/SIGTERM; the TUI will
-  pass its own quit signal.
+  bound `listeners`, startup `notices` (e.g. the auto TLS CA path) and the shared `controller`
+  (`Arc<RwLock<Controller>>`); `Server::wait()` serves until `shutdown` resolves, then drains.
+  `serve()` prints nothing: `decoy serve` prints the notices and `listening on` lines from
+  `Server`, and the TUI shows them as system lines. `decoy serve` passes Ctrl-C/SIGTERM; the TUI
+  passes its own quit signal too.
 - The TUI talks to the in-process `Controller` and subscribes to an in-process event broadcast
-  (`RequestEvent`, `SessionEvent`). The Control API does not change.
+  (`RequestEvent`, `SessionEvent`, `LogEvent`). The Control API does not change.
+- Runtime warnings and errors are `Event::Log` on the broadcast of the last started server, and go
+  to stderr only while nobody subscribes, so headless output is unchanged and nothing draws over
+  the TUI. No fd redirection, so it works on Windows.
 - `Server::subscribe()` (or `Controller::subscribe()`) returns a `tokio::sync::broadcast` receiver
   of `decoy_runtime::events::Event`. With no receiver nothing is captured; a receiver more than
   `events::CAPACITY` events behind gets `Lagged` and loses the oldest. WS/SSE connection events

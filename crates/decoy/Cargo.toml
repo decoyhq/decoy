@@ -10,7 +10,8 @@ publish = false
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 decoy-runtime = { path = "../decoy-runtime" }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+decoy-tui = { path = "../decoy-tui" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
 
 [dev-dependencies]
 bytes = "1"
