@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path'
 
 /** `<process.platform>-<process.arch>` → the npm package that ships that `decoy` binary. */
-export const PLATFORM_PACKAGES : Readonly<Record<string,string>> =   {
+export const PLATFORM_PACKAGES: Readonly<Record<string, string>> = {
   'linux-x64': '@decoyhq/cli-linux-x64',
   'linux-arm64': '@decoyhq/cli-linux-arm64',
   'darwin-x64': '@decoyhq/cli-darwin-x64',
