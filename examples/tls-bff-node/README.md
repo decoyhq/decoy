@@ -14,7 +14,7 @@ pnpm --filter ./examples/tls-bff-node test:e2e
 pnpm --filter ./examples/tls-bff-node dev    # serve the mocks by hand
 ```
 
-`tests/run.ts` starts Decoy (or reuses one already serving), then runs the tests with
+`tests/run.ts` starts Decoy, then runs the tests with
 `NODE_EXTRA_CA_CERTS=mocks/.decoy/ca.pem`, the CA `tls: auto` writes. The BFF itself has no
 test-only TLS code: `fetch` and grpc-js `credentials.createSsl()` both use Node's trust store.
 
@@ -22,6 +22,5 @@ test-only TLS code: `fetch` and grpc-js `credentials.createSsl()` both use Node'
 | -------------------------- | --------------------------------------------------------------------------------- |
 | https, http and gRPC/TLS   | One order joins a payment (https), a customer (http) and stock (gRPC over TLS).   |
 | one Session, all listeners | `useCollection` sent to the http listener switches the gRPC reply on the TLS one. |
-| generated cert is trusted  | `https://localhost:8443` verifies against `mocks/.decoy/ca.pem`.                  |
 
 See the [TLS guide](../../docs/guide/tls.md).

@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const exampleDir = fileURLToPath(new URL('..', import.meta.url))
-export const CRM_URL = 'http://127.0.0.1:8092'
+const CRM_URL = 'http://127.0.0.1:8092'
 
 async function healthy(): Promise<boolean> {
   try {
@@ -14,23 +14,24 @@ async function healthy(): Promise<boolean> {
   }
 }
 
-let stopDecoy = (): void => undefined
-if (!(await healthy())) {
-  const decoy = spawn(
-    'cargo',
-    ['run', '--quiet', '-p', 'decoy-runtime', '--', 'serve', '--config', 'mocks/decoy.yaml'],
-    { cwd: exampleDir, stdio: ['ignore', 'ignore', 'inherit'] },
-  )
-  stopDecoy = () => decoy.kill()
-  // The first run compiles the decoy binary.
-  const deadline = Date.now() + 180_000
-  while (!(await healthy())) {
-    if (decoy.exitCode !== null || Date.now() > deadline) {
-      stopDecoy()
-      throw new Error('decoy did not become healthy')
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100))
+// Always start our own Decoy: its cert is signed by this checkout's `.decoy/` CA, which a Decoy
+// started elsewhere wouldn't use. A taken port fails fast with "Address already in use".
+const decoy = spawn(
+  'cargo',
+  ['run', '--quiet', '-p', 'decoy-runtime', '--', 'serve', '--config', 'mocks/decoy.yaml'],
+  { cwd: exampleDir, stdio: ['ignore', 'ignore', 'inherit'] },
+)
+const stopDecoy = (): void => {
+  decoy.kill()
+}
+// The first run compiles the decoy binary.
+const deadline = Date.now() + 180_000
+while (!(await healthy())) {
+  if (decoy.exitCode !== null || Date.now() > deadline) {
+    stopDecoy()
+    throw new Error('decoy did not become healthy')
   }
+  await new Promise((resolve) => setTimeout(resolve, 100))
 }
 
 const tests = spawn(process.execPath, ['--test', 'tests/*.test.ts'], {

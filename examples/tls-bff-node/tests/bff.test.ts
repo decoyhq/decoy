@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import { type Bff, startBff } from '../src/bff.ts'
 
+// Trusted only because NODE_EXTRA_CA_CERTS names mocks/.decoy/ca.pem (see run.ts).
 const DECOY_HTTPS = 'https://localhost:8443'
 const DECOY_HTTP = 'http://127.0.0.1:8092'
 
@@ -47,10 +48,4 @@ void test('one Session switches every listener, https and http alike', async () 
 
   assert.deepEqual((await order('7', 'empty')).stock, { sku: 'sku-7', available: 0 })
   assert.deepEqual((await order('7')).stock, { sku: 'sku-7', available: 3 })
-})
-
-void test('the https backend serves the generated localhost cert', async () => {
-  // Trusted only because NODE_EXTRA_CA_CERTS names mocks/.decoy/ca.pem.
-  const response = await fetch(`${DECOY_HTTPS}/__decoy__/health`)
-  assert.equal(response.status, 200)
 })
