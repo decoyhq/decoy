@@ -1,11 +1,12 @@
 // One version for the decoy binary and every published npm package.
 //   node scripts/versions.mjs check          fail if any version differs from Cargo.toml
 //   node scripts/versions.mjs set <version>  rewrite them all (used by `task release`)
+import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-const root = new URL('..', import.meta.url).pathname
+const root = fileURLToPath(new URL('..', import.meta.url))
 const cargoToml = join(root, 'Cargo.toml')
 const WORKSPACE_VERSION = /(\[workspace\.package\][^[]*?\nversion = ")([^"]+)(")/
 const SEMVER = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/

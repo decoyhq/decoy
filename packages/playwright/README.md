@@ -6,8 +6,9 @@ Playwright fixtures and global setup for the native `decoy` runtime.
 npm i -D @decoyhq/cli @decoyhq/playwright
 ```
 
-`@decoyhq/cli` puts the `decoy` binary on the project's PATH, so the default `command: 'decoy serve'`
-works as is.
+`@decoyhq/cli` installs the `decoy` binary into `node_modules/.bin`, and `setup` runs `command` with
+every `node_modules/.bin` up from `cwd` on PATH, so the default `command: 'decoy serve'` works as is,
+from an npm script, the VS Code extension, or `npx playwright test`.
 
 ```ts
 // playwright.config.ts

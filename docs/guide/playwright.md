@@ -65,7 +65,11 @@ test('switching the Collection changes what the page shows', async ({ page, deco
 | `urls`                | none                          | glob/RegExp (or list) of browser requests to route |
 | `collection`          | Decoy's default               | Collection each test's Session starts on           |
 
-Decoy is off for projects without `decoyOptions`.
+Decoy is off for projects without `decoyOptions`. `setup` starts one Decoy per distinct `url`:
+projects that share a `url` share a Decoy, and each other `url` gets its own `command`. `command`
+runs with `node_modules/.bin` (from `cwd` up) on PATH. Teardown sends SIGTERM and, if Decoy hasn't
+exited after 8s, SIGKILL (Windows: `taskkill /T /F`). Projects that share a `url` must agree on
+`command`, `cwd`, `reuseExistingServer` and `timeout`, or `setup` fails.
 
 ## What happens per test
 
