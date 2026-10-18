@@ -9,7 +9,7 @@ use decoy_runtime::config::{ProtoSources, ServeCliOptions, ServeConfig};
 use decoy_runtime::events::{
     CAPACITY, Event, Outcome, RequestEvent, SessionChange, SessionEvent, SessionSource,
 };
-use decoy_runtime::{HttpExecutionRequest, HttpMethod, Rejection, Server};
+use decoy_runtime::{Candidate, HttpExecutionRequest, HttpMethod, Rejection, Server};
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::RecvError;
 
@@ -76,9 +76,10 @@ async fn next_request(events: &mut Receiver<Event>) -> Arc<RequestEvent> {
 
 #[tokio::test]
 async fn a_hit_emits_the_request_the_winner_and_the_response() {
+    let other = "id: other\ntransport: http\nmatch: { method: GET, path: /other }\ncases:\n  any:\n    behaviors:\n      ok: { status: 200 }\n";
     let running = start(
-        &[USERS],
-        "- id: default\n  routes: [get-user:user-123:success]\n",
+        &[USERS, other],
+        "- id: default\n  routes: [get-user:user-123:success, other:any:ok]\n",
     )
     .await;
     let mut events = running.server.subscribe();
@@ -101,6 +102,15 @@ async fn a_hit_emits_the_request_the_winner_and_the_response() {
         panic!("{:?}", event.outcome)
     };
     assert_eq!(hit.activation.address(), "get-user:user-123:success");
+    assert_eq!(
+        hit.skipped,
+        [Candidate {
+            address: "other:any:ok".into(),
+            rejection: Rejection::Path {
+                expected: "/other".into()
+            },
+        }]
+    );
     assert_eq!(
         hit.path_params,
         BTreeMap::from([("id".into(), "123".into())])

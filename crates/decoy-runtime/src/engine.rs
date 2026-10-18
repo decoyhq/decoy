@@ -207,17 +207,19 @@ impl Catalog {
         collection_id: &str,
         request: HttpExecutionRequest,
     ) -> HttpExecutionOutcome {
-        self.execute_http_with_overrides(collection_id, &BTreeMap::new(), request)
+        self.execute_http_with_overrides(collection_id, &BTreeMap::new(), request, false)
             .await
             .0
     }
 
+    /// With `explain`, also returns the event [`Outcome`]; without it, serving skips building one.
     async fn execute_http_with_overrides(
         &self,
         collection_id: &str,
         overrides: &BTreeMap<(String, String), String>,
         request: HttpExecutionRequest,
-    ) -> (HttpExecutionOutcome, Outcome) {
+        explain: bool,
+    ) -> (HttpExecutionOutcome, Option<Outcome>) {
         let resolve_request = HttpRequest {
             method: request.method.clone(),
             path: request.path.clone(),
@@ -234,7 +236,7 @@ impl Catalog {
             &resolve_request,
             overrides,
             &request.metadata,
-            false,
+            explain,
         ) {
             ResolveOutcome::Matched {
                 activation,
@@ -247,26 +249,30 @@ impl Catalog {
                 if let Some(delay) = delay {
                     tokio::time::sleep(delay).await;
                 }
-                let matched = Match {
+                let matched = explain.then(|| Match {
                     activation: activation.clone(),
                     skipped,
                     conditions: conditions.clone(),
                     path_params,
-                };
+                });
                 match plan {
                     ResponsePlan::Response(response) => (
                         HttpExecutionOutcome::Response {
                             activation: Some(activation),
                             response: response.into(),
                         },
-                        Outcome::Hit(matched),
+                        matched.map(Outcome::Hit),
                     ),
                     ResponsePlan::Passthrough(plan) => {
-                        let upstream_url = plan.base_url.as_deref().and_then(|base_url| {
-                            target_url(base_url, &request.path_and_query)
-                                .ok()
-                                .map(String::from)
-                        });
+                        let upstream_url =
+                            plan.base_url
+                                .as_deref()
+                                .filter(|_| explain)
+                                .and_then(|base_url| {
+                                    target_url(base_url, &request.path_and_query)
+                                        .ok()
+                                        .map(String::from)
+                                });
                         let source = forward_passthrough(
                             &plan,
                             ForwardRequest {
@@ -290,11 +296,11 @@ impl Catalog {
                         };
                         (
                             outcome,
-                            Outcome::Passthrough {
+                            matched.map(|matched| Outcome::Passthrough {
                                 matched,
                                 upstream_url,
                                 upstream_status,
-                            },
+                            }),
                         )
                     }
                 }
@@ -309,7 +315,7 @@ impl Catalog {
                         }
                     },
                 },
-                Outcome::Miss(miss),
+                explain.then_some(Outcome::Miss(miss)),
             ),
         }
     }
@@ -653,9 +659,10 @@ impl SessionView {
                 &self.selection.collection,
                 &self.selection.route_overrides,
                 request,
+                started.is_some(),
             )
             .await;
-        if let Some((started, body)) = started {
+        if let (Some((started, body)), Some(explained)) = (started, explained) {
             let failed;
             let response = match &outcome {
                 HttpExecutionOutcome::Response { response, .. } => response,
@@ -699,7 +706,7 @@ impl SessionView {
                 capture,
             )
             .await;
-        if let (Some(started), Some(raw_body)) = (started, raw_body) {
+        if let (Some(started), Some(raw_body), Some(outcome)) = (started, raw_body, call.outcome) {
             let response = &call.response;
             let mut headers: Vec<_> = response.metadata.clone().into_iter().collect();
             if !response.status_message.is_empty() {
@@ -711,7 +718,7 @@ impl SessionView {
                 call.request
                     .as_ref()
                     .map_or(raw_body, CapturedBody::decoded),
-                call.outcome,
+                outcome,
                 CapturedResponse {
                     status: response.status.into(),
                     headers,

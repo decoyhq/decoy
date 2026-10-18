@@ -99,7 +99,8 @@ pub enum GrpcResolution<'a> {
 /// A served unary call and what an event needs to explain it.
 pub(crate) struct GrpcCall {
     pub response: GrpcResponse,
-    pub outcome: Outcome,
+    /// Only when `capture` was asked for.
+    pub outcome: Option<Outcome>,
     /// The Pipeline-decoded request message, when a Route decoded it.
     pub request: Option<Value>,
     /// The response message before encoding; only when `capture` was asked for.
@@ -139,11 +140,13 @@ impl Catalog {
                     .flatten();
                 GrpcCall {
                     response,
-                    outcome: Outcome::Hit(Match {
-                        activation,
-                        skipped,
-                        conditions: conditions.clone(),
-                        path_params: BTreeMap::new(),
+                    outcome: capture.then(|| {
+                        Outcome::Hit(Match {
+                            activation,
+                            skipped,
+                            conditions: conditions.clone(),
+                            path_params: BTreeMap::new(),
+                        })
                     }),
                     request: Some(envelope["message"].take()),
                     message,
@@ -151,15 +154,17 @@ impl Catalog {
             }
             GrpcResolution::Miss(miss) => GrpcCall {
                 response: GrpcResponse::miss(miss.reason.clone()),
-                outcome: Outcome::Miss(miss),
+                outcome: capture.then_some(Outcome::Miss(miss)),
                 request: None,
                 message: None,
             },
             GrpcResolution::Failed(response) => GrpcCall {
-                outcome: Outcome::Miss(MissDiagnostic {
-                    collection: collection_id.to_owned(),
-                    reason: response.status_message.clone(),
-                    candidates: Vec::new(),
+                outcome: capture.then(|| {
+                    Outcome::Miss(MissDiagnostic {
+                        collection: collection_id.to_owned(),
+                        reason: response.status_message.clone(),
+                        candidates: Vec::new(),
+                    })
                 }),
                 response,
                 request: None,
