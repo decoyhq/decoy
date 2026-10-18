@@ -13,7 +13,7 @@ use crate::control_api::{
 use crate::engine::{Controller, HttpExecutionOutcome, HttpExecutionRequest};
 use crate::grpc::{GrpcRequest, GrpcResponse, RESOURCE_EXHAUSTED, UNIMPLEMENTED};
 use crate::http::{BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig};
-use crate::http_forward::{ForwardResponse, ForwardingError};
+use crate::http_forward::ForwardResponse;
 use crate::protos::load_descriptor_pool;
 use crate::schema::{HttpMethod, PassthroughTarget};
 use crate::startup::load_catalog_from_files;
@@ -41,6 +41,7 @@ pub struct BoundListener {
 pub struct Server {
     pub listeners: Vec<BoundListener>,
     pub controller: Arc<RwLock<Controller>>,
+    events: crate::events::Sender,
     shutdown: Pin<Box<dyn Future<Output = ()> + Send>>,
     stop_all: tokio::sync::watch::Sender<()>,
     servers: tokio::task::JoinSet<std::io::Result<()>>,
@@ -68,10 +69,9 @@ pub async fn serve(
         config.collection.as_deref(),
     )?;
 
-    let controller = Arc::new(RwLock::new(Controller::new(
-        startup.catalog,
-        startup.default_collection,
-    )));
+    let controller = Controller::new(startup.catalog, startup.default_collection);
+    let events = controller.events();
+    let controller = Arc::new(RwLock::new(controller));
     let app = Router::new()
         .fallback(any(handle_request))
         .with_state(controller.clone())
@@ -138,6 +138,7 @@ pub async fn serve(
     Ok(Server {
         listeners: bound,
         controller,
+        events,
         shutdown: Box::pin(shutdown),
         stop_all,
         servers,
@@ -145,6 +146,11 @@ pub async fn serve(
 }
 
 impl Server {
+    /// Every [`crate::events::Event`] from now on; see [`crate::events`].
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<crate::events::Event> {
+        self.events.subscribe()
+    }
+
     /// Serves until the shutdown signal fires or a listener fails, then drains.
     pub async fn wait(self) -> Result<(), ServeError> {
         let Self {
@@ -391,17 +397,9 @@ fn percent_encode(text: &str) -> String {
 fn response_from_execution_outcome(outcome: HttpExecutionOutcome) -> Response<Body> {
     match outcome {
         HttpExecutionOutcome::Response { response, .. } => response_from_forward_response(response),
-        HttpExecutionOutcome::ForwardingError { source, .. } => json_response(
-            match source {
-                ForwardingError::Loop => StatusCode::LOOP_DETECTED,
-                ForwardingError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
-                _ => StatusCode::BAD_GATEWAY,
-            },
-            serde_json::json!({
-                "error": "passthrough forwarding failed",
-                "detail": source.to_string(),
-            }),
-        ),
+        HttpExecutionOutcome::ForwardingError { source, .. } => {
+            response_from_forward_response(source.response())
+        }
     }
 }
 

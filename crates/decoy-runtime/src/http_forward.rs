@@ -65,6 +65,26 @@ pub enum ForwardingError {
     Request(#[source] reqwest::Error),
 }
 
+impl ForwardingError {
+    /// What Decoy answers when forwarding fails.
+    pub fn response(&self) -> ForwardResponse {
+        let status = match self {
+            Self::Loop => 508,
+            Self::Timeout(_) => 504,
+            _ => 502,
+        };
+        let body = serde_json::json!({
+            "error": "passthrough forwarding failed",
+            "detail": self.to_string(),
+        });
+        ForwardResponse {
+            status,
+            headers: vec![("content-type".to_owned(), "application/json".to_owned())],
+            body: serde_json::to_vec(&body).expect("JSON response serializes"),
+        }
+    }
+}
+
 impl From<reqwest::Error> for ForwardingError {
     fn from(error: reqwest::Error) -> Self {
         if error.is_timeout() {
@@ -176,7 +196,10 @@ pub async fn forward_passthrough(
     })
 }
 
-fn target_url(base_url: &str, path_and_query: &str) -> Result<url::Url, ForwardingError> {
+pub(crate) fn target_url(
+    base_url: &str,
+    path_and_query: &str,
+) -> Result<url::Url, ForwardingError> {
     let normalized_path = if path_and_query.starts_with('/') {
         path_and_query.to_owned()
     } else {
@@ -438,6 +461,7 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, ForwardingError::Loop), "{error}");
+        assert_eq!(error.response().status, 508);
     }
 
     #[tokio::test]
@@ -454,10 +478,9 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(
-            ForwardingError::from(error),
-            ForwardingError::Timeout(_)
-        ));
+        let error = ForwardingError::from(error);
+        assert!(matches!(error, ForwardingError::Timeout(_)));
+        assert_eq!(error.response().status, 504);
     }
 
     #[tokio::test]
@@ -498,6 +521,16 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, ForwardingError::Request(_)));
+        let response = error.response();
+        assert_eq!(response.status, 502);
+        assert_eq!(response.header("content-type"), Some("application/json"));
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&response.body).unwrap(),
+            serde_json::json!({
+                "error": "passthrough forwarding failed",
+                "detail": error.to_string(),
+            })
+        );
     }
 
     #[tokio::test]

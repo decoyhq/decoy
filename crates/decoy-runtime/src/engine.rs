@@ -4,12 +4,18 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::collections::{Activation, CollectionError, CollectionsFile};
+use crate::events::{
+    CapturedBody, CapturedResponse, Event, Match, Outcome, RequestEvent, SessionChange,
+    SessionEvent, SessionSource,
+};
 use crate::grpc::{GrpcRequest, GrpcResponse};
 use crate::http::{BodyPlan, RequestMetadata, ResponsePlan, RuntimeConfig};
-use crate::http_forward::{ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough};
+use crate::http_forward::{
+    ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough, target_url,
+};
 use crate::matching::{ConditionFailure, MatchInput, case_matches, case_mismatch};
 use crate::request::RequestEnvelope;
-use crate::schema::{Behavior, HttpMethod, Route, RouteMatch};
+use crate::schema::{Behavior, HttpMethod, Route, RouteMatch, Transport};
 use crate::template::{has_templates, render_response};
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -201,16 +207,19 @@ impl Catalog {
         collection_id: &str,
         request: HttpExecutionRequest,
     ) -> HttpExecutionOutcome {
-        self.execute_http_with_overrides(collection_id, &BTreeMap::new(), request)
+        self.execute_http_with_overrides(collection_id, &BTreeMap::new(), request, false)
             .await
+            .0
     }
 
+    /// With `explain`, also returns the event [`Outcome`]; without it, serving skips building one.
     async fn execute_http_with_overrides(
         &self,
         collection_id: &str,
         overrides: &BTreeMap<(String, String), String>,
         request: HttpExecutionRequest,
-    ) -> HttpExecutionOutcome {
+        explain: bool,
+    ) -> (HttpExecutionOutcome, Option<Outcome>) {
         let resolve_request = HttpRequest {
             method: request.method.clone(),
             path: request.path.clone(),
@@ -227,23 +236,43 @@ impl Catalog {
             &resolve_request,
             overrides,
             &request.metadata,
-            false,
+            explain,
         ) {
             ResolveOutcome::Matched {
                 activation,
+                path_params,
                 plan,
                 delay,
-                ..
+                skipped,
+                conditions,
             } => {
                 if let Some(delay) = delay {
                     tokio::time::sleep(delay).await;
                 }
+                let matched = explain.then(|| Match {
+                    activation: activation.clone(),
+                    skipped,
+                    conditions: conditions.clone(),
+                    path_params,
+                });
                 match plan {
-                    ResponsePlan::Response(response) => HttpExecutionOutcome::Response {
-                        activation: Some(activation),
-                        response: response.into(),
-                    },
+                    ResponsePlan::Response(response) => (
+                        HttpExecutionOutcome::Response {
+                            activation: Some(activation),
+                            response: response.into(),
+                        },
+                        matched.map(Outcome::Hit),
+                    ),
                     ResponsePlan::Passthrough(plan) => {
+                        let upstream_url =
+                            plan.base_url
+                                .as_deref()
+                                .filter(|_| explain)
+                                .and_then(|base_url| {
+                                    target_url(base_url, &request.path_and_query)
+                                        .ok()
+                                        .map(String::from)
+                                });
                         let source = forward_passthrough(
                             &plan,
                             ForwardRequest {
@@ -255,7 +284,8 @@ impl Catalog {
                         )
                         .await;
 
-                        match source {
+                        let upstream_status = source.as_ref().ok().map(|response| response.status);
+                        let outcome = match source {
                             Ok(response) => HttpExecutionOutcome::Response {
                                 activation: Some(activation),
                                 response,
@@ -263,17 +293,30 @@ impl Catalog {
                             Err(source) => {
                                 HttpExecutionOutcome::ForwardingError { activation, source }
                             }
-                        }
+                        };
+                        (
+                            outcome,
+                            matched.map(|matched| Outcome::Passthrough {
+                                matched,
+                                upstream_url,
+                                upstream_status,
+                            }),
+                        )
                     }
                 }
             }
-            ResolveOutcome::Miss(miss) => HttpExecutionOutcome::Response {
-                activation: None,
-                response: match ResponsePlan::explained_miss(&miss) {
-                    ResponsePlan::Response(response) => response.into(),
-                    ResponsePlan::Passthrough(_) => unreachable!("fail-closed miss is a response"),
+            ResolveOutcome::Miss(miss) => (
+                HttpExecutionOutcome::Response {
+                    activation: None,
+                    response: match ResponsePlan::explained_miss(&miss) {
+                        ResponsePlan::Response(response) => response.into(),
+                        ResponsePlan::Passthrough(_) => {
+                            unreachable!("fail-closed miss is a response")
+                        }
+                    },
                 },
-            },
+                explain.then_some(Outcome::Miss(miss)),
+            ),
         }
     }
 
@@ -566,12 +609,15 @@ pub enum ControlError {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Controller {
     /// Immutable after startup; requests share it instead of copying Routes and Collections.
     catalog: Arc<Catalog>,
     default_collection: String,
     sessions: BTreeMap<String, Selection>,
+    events: crate::events::Sender,
+    /// Who is calling the verbs; the Control API sets it for the length of its call.
+    pub(crate) source: SessionSource,
 }
 
 /// What one request needs: the shared Catalog and a copy of its Session's Selection, taken under
@@ -579,28 +625,145 @@ pub struct Controller {
 #[derive(Debug, Clone)]
 pub struct SessionView {
     catalog: Arc<Catalog>,
+    session: String,
     selection: Selection,
+    events: crate::events::Sender,
+}
+
+/// The request half of a [`RequestEvent`], captured before the request is consumed.
+struct Started {
+    at: std::time::SystemTime,
+    clock: std::time::Instant,
+    method: String,
+    url: String,
+    headers: BTreeMap<String, String>,
 }
 
 impl SessionView {
+    /// Executes the request and, if anyone subscribed, emits its [`RequestEvent`].
     pub async fn execute_http(&self, request: HttpExecutionRequest) -> HttpExecutionOutcome {
-        self.catalog
+        // No subscriber (headless `serve`): skip every capture and clone.
+        let started = (self.events.receiver_count() > 0).then(|| {
+            (
+                self.start(
+                    request.method.as_str(),
+                    &request.path_and_query,
+                    &request.headers,
+                ),
+                CapturedBody::raw(&request.body),
+            )
+        });
+        let (outcome, explained) = self
+            .catalog
             .execute_http_with_overrides(
                 &self.selection.collection,
                 &self.selection.route_overrides,
                 request,
+                started.is_some(),
             )
-            .await
+            .await;
+        if let (Some((started, body)), Some(explained)) = (started, explained) {
+            let failed;
+            let response = match &outcome {
+                HttpExecutionOutcome::Response { response, .. } => response,
+                HttpExecutionOutcome::ForwardingError { source, .. } => {
+                    failed = source.response();
+                    &failed
+                }
+            };
+            self.emit(
+                Transport::Http,
+                started,
+                body,
+                explained,
+                CapturedResponse {
+                    status: response.status,
+                    headers: response.headers.clone(),
+                    body: CapturedBody::raw(&response.body),
+                },
+            );
+        }
+        outcome
     }
 
+    /// Executes the call and, if anyone subscribed, emits its [`RequestEvent`].
     pub async fn execute_grpc(&self, request: GrpcRequest) -> GrpcResponse {
-        self.catalog
+        let capture = self.events.receiver_count() > 0;
+        let started = capture.then(|| {
+            self.start(
+                "POST",
+                &format!("/{}/{}", request.service, request.method),
+                &request.metadata,
+            )
+        });
+        let raw_body = capture.then(|| CapturedBody::raw(&request.body));
+        let call = self
+            .catalog
             .execute_grpc(
                 &self.selection.collection,
                 &self.selection.route_overrides,
                 request,
+                capture,
             )
-            .await
+            .await;
+        if let (Some(started), Some(raw_body), Some(outcome)) = (started, raw_body, call.outcome) {
+            let response = &call.response;
+            let mut headers: Vec<_> = response.metadata.clone().into_iter().collect();
+            if !response.status_message.is_empty() {
+                headers.push(("grpc-message".to_owned(), response.status_message.clone()));
+            }
+            self.emit(
+                Transport::Grpc,
+                started,
+                call.request
+                    .as_ref()
+                    .map_or(raw_body, CapturedBody::decoded),
+                outcome,
+                CapturedResponse {
+                    status: response.status.into(),
+                    headers,
+                    body: call
+                        .message
+                        .as_ref()
+                        .map_or_else(|| CapturedBody::raw(&response.body), CapturedBody::decoded),
+                },
+            );
+        }
+        call.response
+    }
+
+    fn start(&self, method: &str, url: &str, headers: &BTreeMap<String, String>) -> Started {
+        Started {
+            at: std::time::SystemTime::now(),
+            clock: std::time::Instant::now(),
+            method: method.to_owned(),
+            url: url.to_owned(),
+            headers: headers.clone(),
+        }
+    }
+
+    fn emit(
+        &self,
+        transport: Transport,
+        started: Started,
+        body: CapturedBody,
+        outcome: Outcome,
+        response: CapturedResponse,
+    ) {
+        // An error only means every subscriber left meanwhile.
+        let _ = self.events.send(Event::Request(Arc::new(RequestEvent {
+            id: crate::events::next_id(),
+            at: started.at,
+            transport,
+            session: self.session.clone(),
+            method: started.method,
+            url: started.url,
+            headers: started.headers,
+            body,
+            outcome,
+            response,
+            duration: started.clock.elapsed(),
+        })));
     }
 }
 
@@ -610,11 +773,23 @@ impl Controller {
             catalog: Arc::new(catalog),
             default_collection: default_collection.into(),
             sessions: BTreeMap::new(),
+            events: crate::events::channel(),
+            source: SessionSource::InProcess,
         }
+    }
+
+    /// Every [`RequestEvent`] and [`SessionEvent`] from now on.
+    pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Event> {
+        self.events.subscribe()
+    }
+
+    pub(crate) fn events(&self) -> crate::events::Sender {
+        self.events.clone()
     }
 
     pub fn use_collection(&mut self, session: &str, collection: impl Into<String>) {
         self.selection_mut(session).collection = collection.into();
+        self.emit(session, SessionChange::UseCollection);
     }
 
     pub fn try_use_collection(
@@ -625,6 +800,7 @@ impl Controller {
         let collection = collection.into();
         self.catalog.validate_collection(&collection)?;
         self.selection_mut(session).collection = collection;
+        self.emit(session, SessionChange::UseCollection);
         Ok(self.selection(session).snapshot())
     }
 
@@ -638,6 +814,7 @@ impl Controller {
         self.selection_mut(session)
             .route_overrides
             .insert((route.into(), case.into()), behavior.into());
+        self.emit(session, SessionChange::UseRoute);
     }
 
     pub fn try_use_route(
@@ -655,17 +832,21 @@ impl Controller {
         self.selection_mut(session)
             .route_overrides
             .insert((route, case), behavior);
+        self.emit(session, SessionChange::UseRoute);
         Ok(self.selection(session).snapshot())
     }
 
     pub fn reset(&mut self, session: &str) -> SelectionSnapshot {
         self.selection_mut(session).route_overrides.clear();
+        self.emit(session, SessionChange::Reset);
         self.selection(session).snapshot()
     }
 
     /// Forgets the Session's Selection, freeing it; a later request starts from the defaults.
     pub fn end_session(&mut self, session: &str) -> SelectionSnapshot {
-        self.sessions.remove(session);
+        if self.sessions.remove(session).is_some() {
+            self.emit(session, SessionChange::Ended);
+        }
         self.selection(session).snapshot()
     }
 
@@ -683,7 +864,9 @@ impl Controller {
     pub fn session_view(&self, session: &str) -> SessionView {
         SessionView {
             catalog: Arc::clone(&self.catalog),
+            session: session.to_owned(),
             selection: self.selection(session),
+            events: self.events.clone(),
         }
     }
 
@@ -695,9 +878,23 @@ impl Controller {
     }
 
     fn selection_mut(&mut self, session: &str) -> &mut Selection {
-        self.sessions
-            .entry(session.to_owned())
-            .or_insert_with(|| Selection::new(self.default_collection.clone()))
+        if !self.sessions.contains_key(session) {
+            let selection = Selection::new(self.default_collection.clone());
+            self.sessions.insert(session.to_owned(), selection);
+            self.emit(session, SessionChange::Created);
+        }
+        self.sessions.get_mut(session).expect("inserted above")
+    }
+
+    fn emit(&self, session: &str, change: SessionChange) {
+        if self.events.receiver_count() > 0 {
+            let _ = self.events.send(Event::Session(SessionEvent {
+                session: session.to_owned(),
+                change,
+                source: self.source,
+                selection: self.selection(session).snapshot(),
+            }));
+        }
     }
 }
 
@@ -972,6 +1169,35 @@ cases:
 
         assert_eq!(session_a.address(), "get-user:user-123:missing");
         assert_eq!(session_b.address(), "get-user:user-123:success");
+    }
+
+    #[test]
+    fn an_embedded_controller_broadcasts_its_session_changes() {
+        let mut controller = Controller::new(explain_catalog(), "local");
+        let mut events = controller.subscribe();
+
+        controller.use_collection("s1", "local");
+
+        let changes: Vec<_> = std::iter::from_fn(|| match events.try_recv() {
+            Ok(Event::Session(event)) => Some((event.session, event.change, event.source)),
+            _ => None,
+        })
+        .collect();
+        assert_eq!(
+            changes,
+            [
+                (
+                    "s1".to_owned(),
+                    SessionChange::Created,
+                    SessionSource::InProcess
+                ),
+                (
+                    "s1".to_owned(),
+                    SessionChange::UseCollection,
+                    SessionSource::InProcess
+                ),
+            ]
+        );
     }
 
     #[test]

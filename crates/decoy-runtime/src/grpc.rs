@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 
 use crate::collections::Activation;
 use crate::engine::{Candidate, Catalog, MissDiagnostic, Rejection, reject};
+use crate::events::{Match, Outcome};
 use crate::grpc_schema::{STATUS_CODES, find_method, request_json_options};
 use crate::matching::{grpc_case_matches, grpc_case_mismatch};
 use crate::schema::{Behavior, PipelineStep, ResponseBehavior, Route, RouteMatch};
@@ -95,34 +96,83 @@ pub enum GrpcResolution<'a> {
     Failed(GrpcResponse),
 }
 
+/// A served unary call and what an event needs to explain it.
+pub(crate) struct GrpcCall {
+    pub response: GrpcResponse,
+    /// Only when `capture` was asked for.
+    pub outcome: Option<Outcome>,
+    /// The Pipeline-decoded request message, when a Route decoded protobuf and `capture` was
+    /// asked for.
+    pub request: Option<Value>,
+    /// The response message before encoding; only when `capture` was asked for.
+    pub message: Option<Value>,
+}
+
 impl Catalog {
     pub(crate) async fn execute_grpc(
         &self,
         collection_id: &str,
         overrides: &BTreeMap<(String, String), String>,
         request: GrpcRequest,
-    ) -> GrpcResponse {
-        match self.resolve_grpc_with(collection_id, overrides, &request, false) {
+        capture: bool,
+    ) -> GrpcCall {
+        match self.resolve_grpc_with(collection_id, overrides, &request, capture) {
             GrpcResolution::Matched {
                 activation,
+                skipped,
+                conditions,
                 route,
                 method,
                 response,
-                envelope,
-                ..
+                mut envelope,
             } => {
                 if let Some(delay) = response.delay {
                     tokio::time::sleep(delay).await;
                 }
-                respond(route, &method, response, &envelope).unwrap_or_else(|reason| {
-                    GrpcResponse::error(
-                        INTERNAL,
-                        format!("behavior `{}` failed: {reason}", activation.address()),
-                    )
-                })
+                let response =
+                    respond(route, &method, response, &envelope).unwrap_or_else(|reason| {
+                        GrpcResponse::error(
+                            INTERNAL,
+                            format!("behavior `{}` failed: {reason}", activation.address()),
+                        )
+                    });
+                // A raw Pipeline leaves base64 in `message`; that is not a decoded body.
+                let decoded = capture && route.decodes_protobuf();
+                let message = (decoded && !response.body.is_empty())
+                    .then(|| decode(&response.body, pipeline(route), &method.output()).ok())
+                    .flatten();
+                GrpcCall {
+                    response,
+                    outcome: capture.then(|| {
+                        Outcome::Hit(Match {
+                            activation,
+                            skipped,
+                            conditions: conditions.clone(),
+                            path_params: BTreeMap::new(),
+                        })
+                    }),
+                    request: decoded.then(|| envelope["message"].take()),
+                    message,
+                }
             }
-            GrpcResolution::Miss(miss) => GrpcResponse::miss(miss.reason),
-            GrpcResolution::Failed(response) => response,
+            GrpcResolution::Miss(miss) => GrpcCall {
+                response: GrpcResponse::miss(miss.reason.clone()),
+                outcome: capture.then_some(Outcome::Miss(miss)),
+                request: None,
+                message: None,
+            },
+            GrpcResolution::Failed(response) => GrpcCall {
+                outcome: capture.then(|| {
+                    Outcome::Miss(MissDiagnostic {
+                        collection: collection_id.to_owned(),
+                        reason: response.status_message.clone(),
+                        candidates: Vec::new(),
+                    })
+                }),
+                response,
+                request: None,
+                message: None,
+            },
         }
     }
 
@@ -466,8 +516,10 @@ mod tests {
                 "default",
                 &BTreeMap::new(),
                 request(&catalog, json!({ "id": "a-1" })),
+                false,
             )
-            .await;
+            .await
+            .response;
         assert_eq!(response.status, OK, "{response:?}");
         assert_eq!(
             decoded(&catalog, &response),
@@ -493,8 +545,10 @@ mod tests {
                 "default",
                 &BTreeMap::new(),
                 request(&catalog, json!({ "id": "a-9" })),
+                false,
             )
-            .await;
+            .await
+            .response;
         assert_eq!(
             response,
             GrpcResponse {
@@ -517,8 +571,10 @@ mod tests {
                 "default",
                 &BTreeMap::new(),
                 request(&catalog, json!({ "id": "a-2" })),
+                false,
             )
-            .await;
+            .await
+            .response;
         assert_eq!(
             response,
             GrpcResponse::miss("no active route case matched request")
@@ -685,8 +741,10 @@ cases:
                 "default",
                 &BTreeMap::new(),
                 request(&catalog, json!({ "id": "a-1" })),
+                false,
             )
-            .await;
+            .await
+            .response;
         assert!(started.elapsed() >= std::time::Duration::from_millis(20));
         assert_eq!(decoded(&catalog, &response), json!({ "id": "late" }));
     }
@@ -698,8 +756,14 @@ cases:
             "get:empty:ok",
         );
         let response = catalog
-            .execute_grpc("default", &BTreeMap::new(), request(&catalog, json!({})))
-            .await;
+            .execute_grpc(
+                "default",
+                &BTreeMap::new(),
+                request(&catalog, json!({})),
+                false,
+            )
+            .await
+            .response;
         assert_eq!(decoded(&catalog, &response), json!({ "id": "empty" }));
     }
 
@@ -720,8 +784,10 @@ cases:
                 "default",
                 &BTreeMap::new(),
                 request(&catalog, json!({ "id": "PERMISSION_DENIED" })),
+                false,
             )
-            .await;
+            .await
+            .response;
         assert_eq!(response.status, 7);
         assert_eq!(response.status_message, "picked");
 
@@ -730,8 +796,10 @@ cases:
                 "default",
                 &BTreeMap::new(),
                 request(&catalog, json!({ "id": "NOPE" })),
+                false,
             )
-            .await;
+            .await
+            .response;
         assert_eq!(response.status, INTERNAL);
         assert!(
             response.status_message.contains("not a gRPC status name"),
@@ -748,13 +816,53 @@ cases:
         let mut call = request(&catalog, json!({ "id": "a-1" }));
         call.body.truncate(3);
         let response = catalog
-            .execute_grpc("default", &BTreeMap::new(), call)
-            .await;
+            .execute_grpc("default", &BTreeMap::new(), call, false)
+            .await
+            .response;
         assert_eq!(response.status, INVALID_ARGUMENT);
         assert!(
             response.status_message.contains("5-byte header"),
             "{response:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_captured_undecodable_request_is_a_miss_naming_the_decode_error() {
+        let catalog = catalog(
+            "  any:\n    behaviors:\n      ok: { message: {} }\n",
+            "get:any:ok",
+        );
+        let mut call = request(&catalog, json!({ "id": "a-1" }));
+        call.body.truncate(3);
+        let call = catalog
+            .execute_grpc("default", &BTreeMap::new(), call, true)
+            .await;
+        let Some(Outcome::Miss(miss)) = call.outcome else {
+            panic!("expected a miss")
+        };
+        assert_eq!(miss.collection, "default");
+        assert_eq!(miss.reason, call.response.status_message);
+        assert!(miss.candidates.is_empty());
+    }
+
+    #[tokio::test]
+    async fn captured_raw_pipelines_hand_back_no_decoded_messages() {
+        let catalog = catalog_with_pipeline(
+            Some("[grpc-frame]"),
+            "  any:\n    behaviors:\n      ok: { message: CgNhLTE= }\n",
+            "get:any:ok",
+        );
+        let call = catalog
+            .execute_grpc(
+                "default",
+                &BTreeMap::new(),
+                request(&catalog, json!({ "id": "x" })),
+                true,
+            )
+            .await;
+        assert_eq!(call.response.status, OK, "{:?}", call.response);
+        assert!(matches!(call.outcome, Some(Outcome::Hit(_))));
+        assert_eq!((call.request, call.message), (None, None));
     }
 
     #[tokio::test]
@@ -769,8 +877,10 @@ cases:
                 "default",
                 &BTreeMap::new(),
                 request(&catalog, json!({ "id": "x" })),
+                false,
             )
-            .await;
+            .await
+            .response;
         assert_eq!(response.status, OK, "{response:?}");
         assert_eq!(decoded(&catalog, &response), json!({ "id": "a-1" }));
     }

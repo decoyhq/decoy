@@ -7,6 +7,7 @@ pub mod collections;
 pub mod config;
 pub mod control_api;
 pub mod engine;
+pub mod events;
 pub mod expression;
 pub mod grpc;
 pub mod grpc_schema;

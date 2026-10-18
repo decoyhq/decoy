@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::engine::{ControlError, Controller, SelectionSnapshot};
+use crate::events::SessionSource;
 
 pub const CONTROL_PREFIX: &str = "/__decoy__";
 pub const SESSION_HEADER: &str = "x-mock-session";
@@ -119,6 +120,16 @@ pub fn handle_control_request(
 }
 
 pub fn try_handle_control_request(
+    controller: &mut Controller,
+    request: ControlApiRequest,
+) -> Result<SelectionSnapshot, ControlApiError> {
+    let previous = std::mem::replace(&mut controller.source, SessionSource::ControlApi);
+    let result = dispatch(controller, request);
+    controller.source = previous;
+    result
+}
+
+fn dispatch(
     controller: &mut Controller,
     request: ControlApiRequest,
 ) -> Result<SelectionSnapshot, ControlApiError> {
