@@ -163,8 +163,13 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           which -a npm && npm --version # publish-npm relies on proto's npm (trusted publishing)
-          (cd packages/cli && npm pack --pack-destination "$RUNNER_TEMP")
+          # pnpm pack rewrites `catalog:`/`workspace:` ranges; npm pack would ship them verbatim.
+          (cd packages/cli && pnpm pack --pack-destination "$RUNNER_TEMP")
           (cd npm/cli-linux-x64 && npm pack --pack-destination "$RUNNER_TEMP")
+          if tar -xOzf "$RUNNER_TEMP/decoyhq-cli-$VERSION.tgz" package/package.json | grep -E '"(catalog|workspace):'; then
+            echo "packed manifest still has catalog:/workspace: ranges" >&2
+            exit 1
+          fi
           mkdir "$RUNNER_TEMP/project" && cd "$RUNNER_TEMP/project"
           npm init -y > /dev/null
           npm install --no-audit --no-fund \
@@ -208,6 +213,13 @@ jobs:
           npm --version
           tag=latest
           case "$VERSION" in *-*) tag=next ;; esac
-          for dir in npm/*/ packages/cli/ packages/playwright/; do
+          for dir in npm/*/; do
             (cd "$dir" && npm publish --access public --tag "$tag")
+          done
+          # Workspace packages go through pnpm pack, which resolves `catalog:`/`workspace:` ranges.
+          packed="$RUNNER_TEMP/packed" && mkdir -p "$packed"
+          (cd packages/cli && pnpm pack --pack-destination "$packed")
+          (cd packages/playwright && pnpm pack --pack-destination "$packed")
+          for tarball in "$packed"/decoyhq-cli-*.tgz "$packed"/decoyhq-playwright-*.tgz; do
+            npm publish "$tarball" --access public --tag "$tag"
           done
