@@ -183,3 +183,19 @@ jobs:
 
       - name: e2e
         run: pnpm --filter "./examples/${{ matrix.example }}" run test:e2e
+
+  # The one check the `main` ruleset requires, so jobs and example matrices can change freely.
+  required:
+    if: always()
+    needs: [ci, cargo-deny, rust, discover-examples, example-e2e, example-e2e-browser]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every CI job passed (or was skipped)
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "$RESULTS"
+          for result in $RESULTS; do
+            case "$result" in success | skipped) ;; *) exit 1 ;; esac
+          done
