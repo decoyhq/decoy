@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::config::{ServeConfig, TlsSource};
 use crate::control_api::{
@@ -16,7 +17,7 @@ use crate::http::{BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan, Run
 use crate::http_forward::ForwardResponse;
 use crate::protos::load_descriptor_pool;
 use crate::schema::{HttpMethod, PassthroughTarget};
-use crate::startup::load_catalog_from_files;
+use crate::startup::{Startup, load_catalog_from_files};
 use crate::tls;
 use axum::body::{Body, to_bytes};
 use axum::extract::{OriginalUri, State};
@@ -59,6 +60,7 @@ pub struct Server {
     /// nothing itself, not even the listen addresses.
     pub notices: Vec<String>,
     pub controller: Arc<RwLock<Controller>>,
+    reloader: Reloader,
     events: crate::events::Sender,
     shutdown: Pin<Box<dyn Future<Output = ()> + Send>>,
     stop_all: tokio::sync::watch::Sender<()>,
@@ -74,27 +76,16 @@ pub async fn serve(
     config: ServeConfig,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<Server, ServeError> {
-    let protos = load_descriptor_pool(&config.protos)?;
-    let startup = load_catalog_from_files(
-        &config.routes,
-        &config.collections,
-        RuntimeConfig {
-            passthrough: config
-                .passthrough_base_url
-                .map(|base_url| PassthroughTarget { base_url }),
-            protos,
-        },
-        config.collection.as_deref(),
-    )?;
-
+    let startup = load(&config)?;
     let controller = Controller::new(startup.catalog, startup.default_collection);
     let events = controller.events();
     let mut notices = Vec::new();
     let controller = Arc::new(RwLock::new(controller));
+    let max_body_bytes = Arc::new(AtomicUsize::new(config.max_body_bytes));
     let app = Router::new()
         .fallback(any(handle_request))
         .with_state(controller.clone())
-        .layer(Extension(MaxBodyBytes(config.max_body_bytes)))
+        .layer(Extension(MaxBodyBytes(max_body_bytes.clone())))
         .layer(Extension(events.clone()));
     let tls_config = match &config.tls {
         None => None,
@@ -152,10 +143,16 @@ pub async fn serve(
             }
         }
     }
+    let reloader = Reloader {
+        controller: controller.clone(),
+        max_body_bytes,
+        listeners: Arc::new(ListenerFields::of(&config)),
+    };
     Ok(Server {
         listeners: bound,
         notices,
         controller,
+        reloader,
         events,
         shutdown: Box::pin(shutdown),
         stop_all,
@@ -163,7 +160,91 @@ pub async fn serve(
     })
 }
 
+/// Builds the Catalog from `config`'s protos, Routes and Collections.
+fn load(config: &ServeConfig) -> Result<Startup, ServeError> {
+    let protos = load_descriptor_pool(&config.protos)?;
+    Ok(load_catalog_from_files(
+        &config.routes,
+        &config.collections,
+        RuntimeConfig {
+            passthrough: config
+                .passthrough_base_url
+                .clone()
+                .map(|base_url| PassthroughTarget { base_url }),
+            protos,
+        },
+        config.collection.as_deref(),
+    )?)
+}
+
+/// Applies a re-read config to a running server (`/reload`, `--watch`): everything but the
+/// listeners, which stay bound as they are.
+#[derive(Clone)]
+pub struct Reloader {
+    controller: Arc<RwLock<Controller>>,
+    max_body_bytes: Arc<AtomicUsize>,
+    listeners: Arc<ListenerFields>,
+}
+
+/// What a successful reload applied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reloaded {
+    pub routes: usize,
+    pub collections: usize,
+    /// `listener changes need restart`, then one line per Selection fallback or dropped override.
+    pub warnings: Vec<String>,
+}
+
+/// The config fields a reload can't apply without rebinding.
+#[derive(Debug, PartialEq, Eq)]
+struct ListenerFields {
+    port: crate::config::Listener,
+    listeners: BTreeMap<String, crate::config::Listener>,
+    tls: Option<TlsSource>,
+}
+
+impl ListenerFields {
+    fn of(config: &ServeConfig) -> Self {
+        Self {
+            port: config.port.clone(),
+            listeners: config.listeners.clone(),
+            tls: config.tls.clone(),
+        }
+    }
+}
+
+impl Reloader {
+    /// Builds the new Catalog from `config` before taking the Controller's lock, then swaps it in.
+    /// On an error nothing changes. Requests already running finish against the old Catalog.
+    pub async fn reload(&self, config: ServeConfig) -> Result<Reloaded, ServeError> {
+        let startup = load(&config)?;
+        let mut warnings = Vec::new();
+        if ListenerFields::of(&config) != *self.listeners {
+            warnings.push("listener changes need restart".to_owned());
+        }
+        let routes = startup.catalog.routes().count();
+        let collections = startup.catalog.collection_ids().count();
+        warnings.extend(
+            self.controller
+                .write()
+                .await
+                .reload(startup.catalog, startup.default_collection),
+        );
+        self.max_body_bytes
+            .store(config.max_body_bytes, Ordering::Relaxed);
+        Ok(Reloaded {
+            routes,
+            collections,
+            warnings,
+        })
+    }
+}
+
 impl Server {
+    pub fn reloader(&self) -> Reloader {
+        self.reloader.clone()
+    }
+
     /// Every [`crate::events::Event`] from now on; see [`crate::events`].
     pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<crate::events::Event> {
         self.events.subscribe()
@@ -212,8 +293,8 @@ impl Server {
 pub const DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// `maxBodyBytes`: larger requests get `413` (or gRPC `RESOURCE_EXHAUSTED`) instead of buffering.
-#[derive(Debug, Clone, Copy)]
-struct MaxBodyBytes(usize);
+#[derive(Debug, Clone)]
+struct MaxBodyBytes(Arc<AtomicUsize>);
 
 /// Marks requests that arrived on a TLS listener.
 #[derive(Debug, Clone, Copy)]
@@ -300,7 +381,9 @@ async fn respond(
     let max_body_bytes = request
         .extensions()
         .get::<MaxBodyBytes>()
-        .map_or(crate::config::DEFAULT_MAX_BODY_BYTES, |max| max.0);
+        .map_or(crate::config::DEFAULT_MAX_BODY_BYTES, |max| {
+            max.0.load(Ordering::Relaxed)
+        });
     let body = match to_bytes(request.into_body(), max_body_bytes).await {
         Ok(body) => body.to_vec(),
         Err(error)

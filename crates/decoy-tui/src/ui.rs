@@ -786,4 +786,38 @@ mod tests {
         assert!(screen.contains("#1 expired"), "{screen}");
         insta::assert_snapshot!(screen);
     }
+
+    #[test]
+    fn reload_prints_its_result_and_follows_the_new_default() {
+        use crate::app::Reload;
+        use decoy_runtime::{Reloaded, SelectionSnapshot};
+
+        let mut app = app();
+        typed(&mut app, "/reload");
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(
+            app.handle_event(key(KeyCode::Enter, KeyModifiers::NONE)),
+            [Effect::Reload]
+        );
+        app.handle_event(session_event("e2e-1", SessionChange::Reload, &[]));
+        app.handle_event(Event::Reloaded(Ok(Reload {
+            reloaded: Reloaded {
+                routes: 2,
+                collections: 1,
+                warnings: vec![
+                    "listener changes need restart".into(),
+                    "session e2e-1: override `users-by-id:user-1:missing` dropped, it no longer exists".into(),
+                ],
+            },
+            catalog: std::sync::Arc::new(crate::complete::tests::catalog()),
+            defaults: SelectionSnapshot {
+                collection: "calm".into(),
+                overrides: vec![],
+            },
+        })));
+        app.handle_event(Event::Reloaded(Err(
+            "routes/users.yaml:2: expected a mapping".into(),
+        )));
+        insta::assert_snapshot!(styled(&render(&mut app, 120, 10)));
+    }
 }

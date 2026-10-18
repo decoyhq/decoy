@@ -17,22 +17,37 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::supports_keyboard_enhancement;
-use decoy_runtime::{ControlError, Controller, DEFAULT_SESSION, ServeError, Server};
+use decoy_runtime::config::ServeConfig;
+use decoy_runtime::{
+    ControlError, Controller, DEFAULT_SESSION, SelectionSnapshot, ServeError, Server,
+};
 use futures_util::{Stream, StreamExt};
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 use tokio::sync::RwLock;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
-pub use app::{App, Effect, Event, Options, Verb};
+pub use app::{App, Effect, Event, Options, Reload, Verb};
 
 /// Runtime events handled per frame, so a burst of traffic draws once and keys stay responsive.
 const BATCH: usize = 1024;
 
+/// Re-reads the config from the same flags and files the server started with, for `/reload`.
+pub type LoadConfig = Box<dyn Fn() -> Result<ServeConfig, ServeError> + Send>;
+
 /// Runs the TUI over a started `server` until the user quits or the server stops, then restores
 /// the terminal and waits for the server to drain. `quit` must resolve the shutdown future the
 /// server was started with.
-pub async fn run(server: Server, quit: tokio::sync::oneshot::Sender<()>) -> Result<(), ServeError> {
+pub async fn run(
+    server: Server,
+    quit: tokio::sync::oneshot::Sender<()>,
+    load_config: LoadConfig,
+) -> Result<(), ServeError> {
+    let reloader = Reloader {
+        reloader: server.reloader(),
+        controller: server.controller.clone(),
+        load_config,
+    };
     let controller = server.controller.clone();
     let (selection, catalog) = {
         let controller = controller.read().await;
@@ -91,6 +106,7 @@ pub async fn run(server: Server, quit: tokio::sync::oneshot::Sender<()>) -> Resu
         &mut std::io::stdout(),
         &mut app,
         &controller,
+        &reloader,
         &mut events,
         &mut served,
     )
@@ -138,6 +154,7 @@ async fn event_loop(
     out: &mut impl Write,
     app: &mut App,
     controller: &RwLock<Controller>,
+    reloader: &Reloader,
     events: &mut tokio::sync::broadcast::Receiver<decoy_runtime::events::Event>,
     served: &mut Served,
 ) -> std::io::Result<Option<Result<(), ServeError>>> {
@@ -176,9 +193,39 @@ async fn event_loop(
                             app.handle_event(Event::ControlFailed(error.to_string()));
                         }
                     }
+                    Effect::Reload => {
+                        app.handle_event(Event::Reloaded(reloader.reload().await));
+                    }
                 }
             }
         }
+    }
+}
+
+/// What `/reload` needs: the config loader and the server to apply it to.
+struct Reloader {
+    reloader: decoy_runtime::Reloader,
+    controller: std::sync::Arc<RwLock<Controller>>,
+    load_config: LoadConfig,
+}
+
+impl Reloader {
+    async fn reload(&self) -> Result<Reload, String> {
+        let config = (self.load_config)().map_err(|error| error.to_string())?;
+        let reloaded = self
+            .reloader
+            .reload(config)
+            .await
+            .map_err(|error| error.to_string())?;
+        let controller = self.controller.read().await;
+        Ok(Reload {
+            reloaded,
+            catalog: controller.catalog(),
+            defaults: SelectionSnapshot {
+                collection: controller.default_collection().to_owned(),
+                overrides: Vec::new(),
+            },
+        })
     }
 }
 
@@ -215,12 +262,22 @@ mod tests {
 
     type Input = std::io::Result<TermEvent>;
 
+    const USERS: &str = "id: users-by-id\ntransport: http\nmatch: { method: GET, path: '/users/{id}' }\n\
+        cases:\n  user-1:\n    behaviors:\n      ada: { status: 200 }\n      missing: { status: 404 }\n";
+    const COLLECTIONS: &str = "- id: happy-path\n  routes: [users-by-id:user-1:ada]\n\
+        - id: errors\n  routes: [users-by-id:user-1:missing]\n";
+
     /// The loop over a test terminal, with its keys, runtime events and server end in the test's
     /// hands.
     struct Harness {
         terminal: Terminal<TestBackend>,
         app: App,
-        controller: RwLock<Controller>,
+        /// A real server, for its Controller and Reloader; the loop gets the fakes below instead
+        /// of its events and its end.
+        _server: Server,
+        dir: tempfile::TempDir,
+        controller: std::sync::Arc<RwLock<Controller>>,
+        reloader: Reloader,
         out: Vec<u8>,
         keys: mpsc::UnboundedSender<Input>,
         input: std::pin::Pin<Box<dyn Stream<Item = Input>>>,
@@ -231,14 +288,42 @@ mod tests {
     }
 
     impl Harness {
-        fn new(capacity: usize) -> Self {
+        async fn new(capacity: usize) -> Self {
+            let dir = tempfile::TempDir::new().unwrap();
+            std::fs::create_dir(dir.path().join("routes")).unwrap();
+            std::fs::write(dir.path().join("routes/users.yaml"), USERS).unwrap();
+            std::fs::write(dir.path().join("collections.yaml"), COLLECTIONS).unwrap();
+            let config_dir = dir.path().to_owned();
+            let load_config: LoadConfig = Box::new(move || {
+                let options = decoy_runtime::config::ServeCliOptions {
+                    routes: Some(config_dir.join("routes")),
+                    collections: Some(config_dir.join("collections.yaml")),
+                    host: Some("127.0.0.1".into()),
+                    port: Some(0),
+                    ..Default::default()
+                };
+                Ok(ServeConfig::from_options(options, &config_dir)?)
+            });
+            let server = decoy_runtime::serve(load_config().unwrap(), std::future::pending())
+                .await
+                .unwrap();
+            let controller = server.controller.clone();
+            let reloader = Reloader {
+                reloader: server.reloader(),
+                controller: controller.clone(),
+                load_config,
+            };
+
             let (keys, mut rx) = mpsc::unbounded_channel();
             let (runtime, events) = broadcast::channel(capacity);
             let (stop, stopped) = oneshot::channel();
             Self {
                 terminal: Terminal::new(TestBackend::new(80, 8)).unwrap(),
                 app: app::tests::app(),
-                controller: RwLock::new(Controller::new(complete::tests::catalog(), "happy-path")),
+                _server: server,
+                dir,
+                controller,
+                reloader,
                 out: Vec::new(),
                 keys,
                 input: Box::pin(futures_util::stream::poll_fn(move |cx| rx.poll_recv(cx))),
@@ -278,6 +363,7 @@ mod tests {
                 &mut self.out,
                 &mut self.app,
                 &self.controller,
+                &self.reloader,
                 &mut self.events,
                 &mut self.served,
             )
@@ -305,9 +391,19 @@ mod tests {
         key(KeyCode::Char('d'), KeyModifiers::CONTROL)
     }
 
+    /// `text`, Enter, then Ctrl+D.
+    fn typed_then_quit(text: &str) -> Vec<Input> {
+        let mut keys: Vec<Input> = text
+            .chars()
+            .map(|c| key(KeyCode::Char(c), KeyModifiers::NONE))
+            .collect();
+        keys.extend([key(KeyCode::Enter, KeyModifiers::NONE), ctrl_d()]);
+        keys
+    }
+
     #[tokio::test]
     async fn runtime_events_are_drawn_until_the_user_quits() {
-        let mut harness = Harness::new(16);
+        let mut harness = Harness::new(16).await;
         harness.log("first");
         harness.log("second");
         harness.then_keys(vec![ctrl_d()]);
@@ -320,7 +416,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_lagging_log_says_how_many_events_it_missed() {
-        let mut harness = Harness::new(2);
+        let mut harness = Harness::new(2).await;
         for n in 1..=4 {
             harness.log(&format!("line {n}"));
         }
@@ -337,7 +433,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_copy_goes_to_the_terminal_as_osc_52() {
-        let mut harness = Harness::new(16);
+        let mut harness = Harness::new(16).await;
         harness.app.info("hello");
         harness.app.selected = Some((0, 0));
         harness.then_keys(vec![key(KeyCode::Enter, KeyModifiers::NONE), ctrl_d()]);
@@ -356,13 +452,8 @@ mod tests {
 
     #[tokio::test]
     async fn a_command_changes_the_controllers_selection() {
-        let mut harness = Harness::new(16);
-        let mut keys: Vec<Input> = "/collection errors"
-            .chars()
-            .map(|c| key(KeyCode::Char(c), KeyModifiers::NONE))
-            .collect();
-        keys.extend([key(KeyCode::Enter, KeyModifiers::NONE), ctrl_d()]);
-        harness.then_keys(keys);
+        let mut harness = Harness::new(16).await;
+        harness.then_keys(typed_then_quit("/collection errors"));
 
         assert!(harness.run().await.unwrap().is_none());
         let controller = harness.controller.read().await;
@@ -373,8 +464,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reload_swaps_in_the_new_config_or_keeps_the_old_one() {
+        let mut harness = Harness::new(16).await;
+        std::fs::write(
+            harness.dir.path().join("collections.yaml"),
+            "- id: calm\n  routes: [users-by-id:user-1:ada]\n",
+        )
+        .unwrap();
+        harness.then_keys(typed_then_quit("/reload"));
+        assert!(harness.run().await.unwrap().is_none());
+        let screen = harness.screen();
+        assert!(screen.contains("reloaded"), "{screen}");
+        let collection = |harness: &Harness| {
+            let controller = harness.controller.clone();
+            async move {
+                controller
+                    .read()
+                    .await
+                    .selection_snapshot("default")
+                    .collection
+            }
+        };
+        assert_eq!(collection(&harness).await, "calm");
+
+        std::fs::write(harness.dir.path().join("routes/users.yaml"), "cases: [").unwrap();
+        harness.then_keys(typed_then_quit("/reload"));
+        assert!(harness.run().await.unwrap().is_none());
+        let screen = harness.screen();
+        assert!(screen.contains("reload failed"), "{screen}");
+        assert_eq!(collection(&harness).await, "calm");
+    }
+
+    #[tokio::test]
     async fn a_server_that_stops_ends_the_loop_with_its_result() {
-        let mut harness = Harness::new(16);
+        let mut harness = Harness::new(16).await;
         let stop = harness.stop.take().unwrap();
         stop.send(Err("port gone".into())).unwrap();
 
@@ -384,11 +507,11 @@ mod tests {
 
     #[tokio::test]
     async fn a_closed_runtime_or_a_broken_terminal_ends_the_loop() {
-        let mut harness = Harness::new(16);
+        let mut harness = Harness::new(16).await;
         harness.runtime = broadcast::channel(1).0;
         assert!(harness.run().await.unwrap().is_none());
 
-        let mut harness = Harness::new(16);
+        let mut harness = Harness::new(16).await;
         harness
             .keys
             .send(Err(std::io::Error::other("tty gone")))

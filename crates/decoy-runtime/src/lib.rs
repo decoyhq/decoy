@@ -41,7 +41,7 @@ pub use schema::{
     Behavior, BehaviorKind, Case, GrpcRouteMatch, HttpMethod, HttpRouteMatch, Route, RouteMatch,
     Transport, ValidationError,
 };
-pub use serve::{BoundListener, ServeError, Server, serve};
+pub use serve::{BoundListener, Reloaded, Reloader, ServeError, Server, serve};
 pub use startup::{
     SourceLocation, Startup, StartupDiagnostic, StartupDiagnosticKind, StartupError,
     load_catalog_from_files,

@@ -584,6 +584,7 @@ dependencies = [
  "jiff",
  "ratatui",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 
