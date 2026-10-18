@@ -614,6 +614,36 @@ fn has_ipv6_loopback() -> bool {
     std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok()
 }
 
+#[tokio::test]
+async fn passthrough_back_to_decoy_itself_is_refused_as_a_loop() {
+    let fixture = Fixture::new();
+    // No target: passthrough falls back to the request's own origin, i.e. Decoy.
+    fixture.write_route(
+        "loop.yaml",
+        r#"
+id: loop
+transport: http
+match: { method: GET, path: /loop }
+cases:
+  any:
+    behaviors:
+      forward: { kind: passthrough }
+"#,
+    );
+    fixture.write_collections("- id: main\n  routes: [loop:any:forward]\n");
+    let port = unused_port();
+    let _server = fixture.spawn(port, &[]);
+    wait_for_server(port).await;
+
+    let response = reqwest::Client::new()
+        .get(format!("http://127.0.0.1:{port}/loop"))
+        .timeout(Duration::from_secs(5))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 508);
+}
+
 #[test]
 fn taken_extra_port_fails_startup() {
     let fixture = Fixture::new();

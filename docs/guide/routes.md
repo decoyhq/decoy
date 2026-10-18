@@ -171,7 +171,11 @@ cases:
 The target is the first one set, in this order: the Behavior's `target`, the Route's top-level
 `passthrough: { baseUrl }`, `decoy serve --passthrough-base-url`, then the request's own `Host`. If
 forwarding fails, Decoy answers `502` with `{"error":"passthrough forwarding failed", ...}`, which is
-never confused with a mock miss.
+never confused with a mock miss. An upstream that doesn't connect within 10s or answer within 30s
+gets `504`. A request that comes back to the same Decoy (e.g. the request's own `Host` is Decoy) gets
+`508` instead of looping: each Decoy adds its id to `x-decoy-via`. Decoy's own `x-mock-*` headers
+(such as `x-mock-session`) are not forwarded, and every repeated response header (such as
+`set-cookie`) comes back.
 
 ## Misses are fail-closed
 

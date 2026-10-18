@@ -377,7 +377,7 @@ impl From<crate::http::HttpResponsePlan> for ForwardResponse {
         let body = response.body.map(response_body_bytes).unwrap_or_default();
         Self {
             status: response.status,
-            headers: response.headers,
+            headers: response.headers.into_iter().collect(),
             body,
         }
     }
@@ -1179,7 +1179,7 @@ cases:
             Some("get-user:user-123:real".to_owned())
         );
         assert_eq!(response.status, 202);
-        assert_eq!(response.headers.get("x-upstream"), Some(&"yes".to_owned()));
+        assert_eq!(response.header("x-upstream"), Some("yes"));
         assert_eq!(response.body, b"accepted");
 
         let request = received.recv().unwrap();
@@ -1215,10 +1215,7 @@ cases:
             Some("get-user:user-123:success".to_owned())
         );
         assert_eq!(response.status, 200);
-        assert_eq!(
-            response.headers.get("content-type"),
-            Some(&"application/json".to_owned())
-        );
+        assert_eq!(response.header("content-type"), Some("application/json"));
         assert_eq!(response.body, br#"{"id":"123"}"#);
     }
 
@@ -1290,10 +1287,7 @@ cases:
         };
         assert_eq!(activation, None);
         assert_eq!(response.status, 501);
-        assert_eq!(
-            response.headers.get("x-mock-miss"),
-            Some(&"true".to_owned())
-        );
+        assert_eq!(response.header("x-mock-miss"), Some("true"));
     }
 
     #[test]
