@@ -301,6 +301,23 @@ impl App {
         }
         self.hint = None;
 
+        if let Some(row) = self.picker {
+            match key.code {
+                KeyCode::Esc => self.picker = None,
+                KeyCode::Char('c') if ctrl => self.picker = None,
+                KeyCode::Up => self.picker = Some((row + 1).min(self.records.len() - 1)),
+                KeyCode::Down => self.picker = Some(row.saturating_sub(1)),
+                KeyCode::Enter => {
+                    self.picker = None;
+                    if let Some(id) = self.records.iter().rev().nth(row).map(|record| record.id) {
+                        self.open(id);
+                    }
+                }
+                _ => {}
+            }
+            return vec![];
+        }
+
         if self.selected.is_some() {
             match key.code {
                 _ if copy_chord => {
@@ -318,23 +335,6 @@ impl App {
                 }
                 _ => {}
             }
-        }
-
-        if let Some(row) = self.picker {
-            match key.code {
-                KeyCode::Esc => self.picker = None,
-                KeyCode::Char('c') if ctrl => self.picker = None,
-                KeyCode::Up => self.picker = Some((row + 1).min(self.records.len() - 1)),
-                KeyCode::Down => self.picker = Some(row.saturating_sub(1)),
-                KeyCode::Enter => {
-                    self.picker = None;
-                    if let Some(id) = self.records.iter().rev().nth(row).map(|record| record.id) {
-                        self.open(id);
-                    }
-                }
-                _ => {}
-            }
-            return vec![];
         }
 
         let items = self.completions();

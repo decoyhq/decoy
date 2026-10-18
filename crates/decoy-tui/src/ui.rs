@@ -734,6 +734,23 @@ mod tests {
     }
 
     #[test]
+    fn the_picker_keeps_its_keys_while_log_lines_are_selected() {
+        let mut app = three_requests();
+        render(&mut app, 100, 12);
+        app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 5, 0));
+        app.handle_event(mouse(MouseEventKind::Drag(MouseButton::Left), 5, 1));
+        app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 5, 1));
+        assert!(app.selected.is_some());
+        app.handle_event(ctrl('o'));
+        assert_eq!(
+            app.handle_event(key(KeyCode::Enter, KeyModifiers::NONE)),
+            []
+        );
+        assert_eq!(open_id(&app), Some(3));
+        assert!(app.picker.is_none());
+    }
+
+    #[test]
     fn clicks_do_nothing_while_the_picker_is_open() {
         let mut app = three_requests();
         render(&mut app, 100, 12);

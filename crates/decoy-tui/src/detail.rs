@@ -9,7 +9,7 @@ use ratatui::text::{Line, Span};
 
 use crate::log::Theme;
 
-/// Label column width, so values line up (`passthrough`, `grpc-status`).
+/// Label column width, so values line up (`passthrough`, `collection`).
 const LABEL: usize = 11;
 /// Rendered bytes kept per body; the rest is reported as `…truncated N bytes`.
 pub const BODY_CAP: usize = 64 * 1024;
@@ -227,10 +227,6 @@ pub fn body_lines(body: &CapturedBody) -> Vec<String> {
     let mut text = match serde_json::from_slice::<serde_json::Value>(&body.bytes) {
         Ok(json) => serde_json::to_string_pretty(&json).expect("JSON value serializes"),
         Err(_) => match std::str::from_utf8(&body.bytes) {
-            // NUL never shows up in text a person would read.
-            Ok(text) if text.contains('\0') => {
-                return vec![format!("<binary, {} bytes>", body.size)];
-            }
             Ok(text) => text.to_owned(),
             // A capture cut inside a multi-byte character is still text.
             Err(error) if error.error_len().is_none() => {
@@ -240,6 +236,10 @@ pub fn body_lines(body: &CapturedBody) -> Vec<String> {
             Err(_) => return vec![format!("<binary, {} bytes>", body.size)],
         },
     };
+    // NUL never shows up in text a person would read.
+    if text.contains('\0') {
+        return vec![format!("<binary, {} bytes>", body.size)];
+    }
     if text.len() > BODY_CAP {
         let mut end = BODY_CAP;
         while !text.is_char_boundary(end) {
