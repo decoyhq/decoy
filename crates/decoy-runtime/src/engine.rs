@@ -1165,6 +1165,35 @@ cases:
     }
 
     #[test]
+    fn an_embedded_controller_broadcasts_its_session_changes() {
+        let mut controller = Controller::new(explain_catalog(), "local");
+        let mut events = controller.subscribe();
+
+        controller.use_collection("s1", "local");
+
+        let changes: Vec<_> = std::iter::from_fn(|| match events.try_recv() {
+            Ok(Event::Session(event)) => Some((event.session, event.change, event.source)),
+            _ => None,
+        })
+        .collect();
+        assert_eq!(
+            changes,
+            [
+                (
+                    "s1".to_owned(),
+                    SessionChange::Created,
+                    SessionSource::InProcess
+                ),
+                (
+                    "s1".to_owned(),
+                    SessionChange::UseCollection,
+                    SessionSource::InProcess
+                ),
+            ]
+        );
+    }
+
+    #[test]
     fn golden_control_verbs_use_collection_use_route_and_reset() {
         let mut controller = Controller::new(
             catalog(

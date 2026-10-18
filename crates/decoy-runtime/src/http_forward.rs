@@ -461,6 +461,7 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, ForwardingError::Loop), "{error}");
+        assert_eq!(error.response().status, 508);
     }
 
     #[tokio::test]
@@ -477,10 +478,9 @@ mod tests {
             .await
             .unwrap_err();
 
-        assert!(matches!(
-            ForwardingError::from(error),
-            ForwardingError::Timeout(_)
-        ));
+        let error = ForwardingError::from(error);
+        assert!(matches!(error, ForwardingError::Timeout(_)));
+        assert_eq!(error.response().status, 504);
     }
 
     #[tokio::test]
@@ -521,6 +521,16 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, ForwardingError::Request(_)));
+        let response = error.response();
+        assert_eq!(response.status, 502);
+        assert_eq!(response.header("content-type"), Some("application/json"));
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&response.body).unwrap(),
+            serde_json::json!({
+                "error": "passthrough forwarding failed",
+                "detail": error.to_string(),
+            })
+        );
     }
 
     #[tokio::test]

@@ -178,6 +178,41 @@ async fn a_passthrough_emits_the_upstream_url_and_status() {
     assert_eq!(event.response.body.bytes, b"real");
 }
 
+#[tokio::test]
+async fn a_failed_passthrough_emits_the_error_response_decoy_answered() {
+    let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let upstream_addr = closed.local_addr().unwrap();
+    drop(closed);
+    let route = format!(
+        "id: real\ntransport: http\nmatch: {{ method: GET, path: /real }}\ncases:\n  any:\n    behaviors:\n      upstream: {{ kind: passthrough, target: {{ baseUrl: 'http://{upstream_addr}' }} }}\n"
+    );
+    let running = start(&[&route], "- id: default\n  routes: [real:any:upstream]\n").await;
+    let mut events = running.server.subscribe();
+
+    let response = reqwest::get(format!("{}/real", running.base))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 502);
+    let answered = response.bytes().await.unwrap();
+
+    let event = next_request(&mut events).await;
+    let Outcome::Passthrough {
+        upstream_url,
+        upstream_status,
+        ..
+    } = &event.outcome
+    else {
+        panic!("{:?}", event.outcome)
+    };
+    assert_eq!(
+        upstream_url.as_deref(),
+        Some(format!("http://{upstream_addr}/real").as_str())
+    );
+    assert_eq!(*upstream_status, None);
+    assert_eq!(event.response.status, 502);
+    assert_eq!(event.response.body.bytes, answered);
+}
+
 const APPROVALS: &str = r#"
 id: approvals-get
 transport: grpc
@@ -247,6 +282,37 @@ async fn a_grpc_call_emits_its_decoded_messages_as_json() {
         (&message["id"], &message["state"]),
         (&"a-1".into(), &"PENDING".into())
     );
+}
+
+#[tokio::test]
+async fn a_grpc_miss_emits_its_status_message_as_a_header() {
+    let running = start(
+        &[APPROVALS],
+        "- id: default\n  routes: [approvals-get:any:ok]\n",
+    )
+    .await;
+    let view = running.server.controller.read().await.session_view("s1");
+    let call = || {
+        view.execute_grpc(decoy_runtime::grpc::GrpcRequest {
+            service: "approvals.v1.Approvals".into(),
+            method: "ListApprovals".into(),
+            metadata: BTreeMap::new(),
+            body: Vec::new(),
+        })
+    };
+    // Nobody subscribed yet: answered without capturing.
+    assert_eq!(call().await.status, 12);
+
+    let mut events = running.server.subscribe();
+    assert_eq!(call().await.status, 12);
+
+    let event = next_request(&mut events).await;
+    assert!(matches!(event.outcome, Outcome::Miss(_)));
+    assert_eq!(event.response.status, 12);
+    assert!(event.response.headers.contains(&(
+        "grpc-message".into(),
+        "no active route case matched request".into()
+    )));
 }
 
 async fn control(running: &Running, verb: &str, body: &str, session: &str) {

@@ -733,8 +733,10 @@ cases:
                 "default",
                 &BTreeMap::new(),
                 request(&catalog, json!({ "id": "a-1" })),
+                false,
             )
-            .await;
+            .await
+            .response;
         assert!(started.elapsed() >= std::time::Duration::from_millis(20));
         assert_eq!(decoded(&catalog, &response), json!({ "id": "late" }));
     }
