@@ -158,9 +158,13 @@ impl ConfigWatcher {
     /// being watched.
     pub async fn changed(&mut self) -> Option<()> {
         let changed = self.changes.recv().await;
-        if let Some(paths) = (self.read_paths)() {
-            self.paths = paths;
+        let paths = (self.read_paths)().unwrap_or_else(|| self.paths.clone());
+        // A poller walks its roots again on every look, so it already sees a recreated
+        // directory; starting a new one would hash every file on this thread for nothing.
+        if self.polling && paths == self.paths {
+            return changed;
         }
+        self.paths = paths;
         if let Ok((watcher, polling)) = arm(&self.paths, self.force_poll, &self.events) {
             self.watcher = watcher;
             self.polling = polling;

@@ -213,3 +213,23 @@ async fn a_config_pointing_at_another_routes_folder_is_followed() {
     write(temp.path(), "v2/users.yaml", &ROUTE.replace("200", "201"));
     assert_eq!(signals(&mut changes, Duration::from_secs(2)).await, 1);
 }
+
+#[tokio::test]
+async fn polling_picks_up_an_atomic_save_of_the_config_file() {
+    let temp = fixture();
+    let mut changes = watcher(temp.path(), true);
+    settle().await;
+
+    write(
+        temp.path(),
+        "decoy.yaml.tmp",
+        "routes: routes\ncollections: collections.yaml\nport: 4012\nprotos: { descriptorSets: [api.binpb] }\n",
+    );
+    fs::rename(
+        temp.path().join("decoy.yaml.tmp"),
+        temp.path().join("decoy.yaml"),
+    )
+    .unwrap();
+
+    assert_eq!(signals(&mut changes, Duration::from_secs(3)).await, 1);
+}
