@@ -393,12 +393,7 @@ fn match_path(pattern: &str, actual: &str) -> Option<BTreeMap<String, String>> {
     Some(params)
 }
 
-fn split_path(path: &str) -> Vec<&str> {
-    path.trim_matches('/')
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .collect()
-}
+fn split_path( path:&str ) -> Vec<&str> { path.trim_matches('/').split('/').filter(|part| !part.is_empty()).collect() }
 
 impl From<crate::http::HttpResponsePlan> for ForwardResponse {
     fn from(response: crate::http::HttpResponsePlan) -> Self {

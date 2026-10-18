@@ -1,6 +1,6 @@
 # Quickstart
 
-Mock `GET /users/123`, then switch it to a 404 without restarting.
+Mock the `GET /users/123` endpoint, then switch it to a 404 without restarting.
 
 `mocks/routes/users.yaml`, one [Route](routes.md):
 
