@@ -7,7 +7,11 @@ on:
   push:
     tags: ['v*']
   pull_request:
-    paths: ['.github/workflows/release.yml', 'scripts/npm-platform-packages.mjs', 'packages/cli/**']
+    paths:
+      - '.github/workflows/release.yml'
+      - 'scripts/npm-platform-packages.mjs'
+      - 'scripts/install.*'
+      - 'packages/cli/**'
   workflow_dispatch:
 
 permissions:
@@ -99,27 +103,37 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
 
+      - name: Install scripts (default to this release)
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          sed "s/DECOY_VERSION:-latest}}/DECOY_VERSION:-$VERSION}}/" scripts/install.sh > dist/install.sh
+          sed "s/} else { 'latest' }/} else { '$VERSION' }/" scripts/install.ps1 > dist/install.ps1
+          grep -q "$VERSION" dist/install.sh && grep -q "$VERSION" dist/install.ps1
+
       - name: Checksums
         working-directory: dist
-        run: sha256sum *.tar.gz *.zip > SHA256SUMS && cat SHA256SUMS
+        run: sha256sum *.tar.gz *.zip install.* > SHA256SUMS && cat SHA256SUMS
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          prerelease=()
-          case "$VERSION" in *-*) prerelease=(--prerelease) ;; esac
-          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/SHA256SUMS \
+          # Not --prerelease: GitHub never shows a pre-release as Latest, and every 0.x
+          # release has a pre-release version. npm still routes those to the `next` tag.
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/install.* dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
-            "${prerelease[@]}"
+            --latest
 
   npm-smoke:
     needs: [version, build]
