@@ -32,6 +32,9 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Check published package shape (publint, are-the-types-wrong)
+        run: pnpm --filter @decoyhq/playwright run check:package
+
       - name: Test
         run: pnpm test
 
