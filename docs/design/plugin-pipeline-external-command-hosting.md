@@ -1,6 +1,6 @@
 # Plugin pipeline external command hosting research
 
-Status: research note for [#163](https://github.com/what3verCODE/decoy/issues/163). This is design evidence, not an implementation decision.
+Status: research note for [#163](https://github.com/decoyhq/decoy/issues/163). This is design evidence, not an implementation decision.
 
 ## Context
 

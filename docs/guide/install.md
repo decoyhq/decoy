@@ -6,12 +6,12 @@ Decoy is one native binary, `decoy`. Pick the channel that fits your project.
 
 ```sh
 # macOS / Linux
-curl -fsSL https://github.com/what3verCODE/decoy/releases/latest/download/install.sh | sh
+curl -fsSL https://github.com/decoyhq/decoy/releases/latest/download/install.sh | sh
 ```
 
 ```powershell
 # Windows
-irm https://github.com/what3verCODE/decoy/releases/latest/download/install.ps1 | iex
+irm https://github.com/decoyhq/decoy/releases/latest/download/install.ps1 | iex
 ```
 
 Installs the release marked Latest to `~/.decoy/bin`, after checking it against the release's

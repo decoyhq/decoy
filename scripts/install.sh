@@ -1,14 +1,14 @@
 #!/bin/sh
 # Install the decoy binary from GitHub Releases.
 #
-#   curl -fsSL https://raw.githubusercontent.com/what3verCODE/decoy/main/scripts/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/decoyhq/decoy/main/scripts/install.sh | sh
 #   curl -fsSL ... | sh -s -- 0.1.0-alpha.6     # a specific version
 #
 # Env: DECOY_VERSION (same as the argument), DECOY_INSTALL_DIR (default ~/.decoy/bin),
 # GITHUB_TOKEN (optional, lifts the GitHub API rate limit when resolving the latest version).
 set -eu
 
-repo="what3verCODE/decoy"
+repo="decoyhq/decoy"
 version="${1:-${DECOY_VERSION:-latest}}"
 install_dir="${DECOY_INSTALL_DIR:-$HOME/.decoy/bin}"
 
