@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 use tonic::codec::{Codec, DecodeBuf, Decoder, EncodeBuf, Encoder};
 use tonic::metadata::MetadataValue;
-use tonic::transport::Channel;
+use tonic::transport::{Certificate, Channel, ClientTlsConfig};
 use tonic::{Code, Request, Status};
 
 const ROUTE: &str = r#"
@@ -136,11 +136,30 @@ async fn http_routes_keep_working_over_http2_on_the_same_port() {
     assert_eq!(response.status(), 200);
 }
 
+#[tokio::test]
+async fn serves_grpc_over_tls_with_alpn_h2() {
+    let server = Server::start_with(ROUTE, COLLECTIONS, true).await;
+    let mut client = server.client().await;
+
+    let reply = client.get(json!({ "id": "a-1" }), &[]).await.unwrap();
+    assert_eq!(reply["state"], "PENDING");
+    server
+        .control("useCollection", r#"{"collection":"approvals-down"}"#, "s1")
+        .await;
+    let status = client
+        .get(json!({ "id": "a-1" }), &[("x-mock-session", "s1")])
+        .await
+        .unwrap_err();
+    assert_eq!(status.code(), Code::NotFound);
+}
+
 struct Server {
     _temp: TempDir,
     child: Child,
     port: u16,
     pool: DescriptorPool,
+    /// PEM of the self-signed cert when the server listens with TLS.
+    cert: Option<String>,
 }
 
 impl Drop for Server {
@@ -152,6 +171,10 @@ impl Drop for Server {
 
 impl Server {
     async fn start(route: &str, collections: &str) -> Self {
+        Self::start_with(route, collections, false).await
+    }
+
+    async fn start_with(route: &str, collections: &str, tls: bool) -> Self {
         let temp = TempDir::new().unwrap();
         let protos = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proto");
         fs::create_dir_all(temp.path().join("routes")).unwrap();
@@ -165,11 +188,23 @@ impl Server {
         fs::write(
             temp.path().join("decoy.yaml"),
             format!(
-                "routes: routes\ncollections: collections.yaml\nport: {port}\nprotos:\n  roots: [{}]\n",
-                protos.display()
+                "routes: routes\ncollections: collections.yaml\nport: {port}\nprotos:\n  roots: [{}]\n{}",
+                protos.display(),
+                if tls { "tls: { cert: cert.pem, key: key.pem }\n" } else { "" }
             ),
         )
         .unwrap();
+        let cert = tls.then(|| {
+            let generated =
+                rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).unwrap();
+            fs::write(temp.path().join("cert.pem"), generated.cert.pem()).unwrap();
+            fs::write(
+                temp.path().join("key.pem"),
+                generated.signing_key.serialize_pem(),
+            )
+            .unwrap();
+            generated.cert.pem()
+        });
         let child = Command::new(env!("CARGO_BIN_EXE_decoy"))
             .args(["serve", "--config", "decoy.yaml"])
             .current_dir(temp.path())
@@ -177,33 +212,56 @@ impl Server {
             .stderr(Stdio::inherit())
             .spawn()
             .unwrap();
+        let pool = load_descriptor_pool(&ProtoSources {
+            roots: vec![protos],
+            descriptor_sets: vec![],
+        })
+        .unwrap();
+        let server = Self {
+            _temp: temp,
+            child,
+            port,
+            pool,
+            cert,
+        };
         let deadline = Instant::now() + Duration::from_secs(10);
-        while reqwest::get(format!("http://127.0.0.1:{port}/__decoy__/health"))
+        while server
+            .http()
+            .get(format!("{}/__decoy__/health", server.base_url()))
+            .send()
             .await
             .is_err()
         {
             assert!(Instant::now() < deadline, "decoy did not start");
             tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        let pool = load_descriptor_pool(&ProtoSources {
-            roots: vec![protos],
-            descriptor_sets: vec![],
-        })
-        .unwrap();
-        Self {
-            _temp: temp,
-            child,
-            port,
-            pool,
+        server
+    }
+
+    fn base_url(&self) -> String {
+        match self.cert {
+            Some(_) => format!("https://localhost:{}", self.port),
+            None => format!("http://127.0.0.1:{}", self.port),
         }
     }
 
+    fn http(&self) -> reqwest::Client {
+        let mut builder = reqwest::Client::builder();
+        if let Some(cert) = &self.cert {
+            builder = builder
+                .add_root_certificate(reqwest::Certificate::from_pem(cert.as_bytes()).unwrap());
+        }
+        builder.build().unwrap()
+    }
+
     async fn client(&self) -> ApprovalsClient {
-        let channel = Channel::from_shared(format!("http://127.0.0.1:{}", self.port))
-            .unwrap()
-            .connect()
-            .await
-            .unwrap();
+        let mut endpoint = Channel::from_shared(self.base_url()).unwrap();
+        if let Some(cert) = &self.cert {
+            endpoint = endpoint
+                .tls_config(ClientTlsConfig::new().ca_certificate(Certificate::from_pem(cert)))
+                .unwrap();
+        }
+        let channel = endpoint.connect().await.unwrap();
         ApprovalsClient {
             grpc: tonic::client::Grpc::new(channel),
             input: self
@@ -218,11 +276,9 @@ impl Server {
     }
 
     async fn control(&self, verb: &str, body: &str, session: &str) {
-        let response = reqwest::Client::new()
-            .post(format!(
-                "http://127.0.0.1:{}/__decoy__/control/{verb}",
-                self.port
-            ))
+        let response = self
+            .http()
+            .post(format!("{}/__decoy__/control/{verb}", self.base_url()))
             .header("x-mock-session", session)
             .body(body.to_owned())
             .send()
