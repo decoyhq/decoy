@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use thiserror::Error;
 
@@ -63,6 +64,8 @@ pub struct MissDiagnostic {
 pub struct Catalog {
     routes: BTreeMap<String, Route>,
     collections: CollectionsFile,
+    /// Each Collection resolved once (inheritance, validation) instead of on every request.
+    resolved: BTreeMap<String, Result<Vec<Activation>, String>>,
     runtime: RuntimeConfig,
 }
 
@@ -72,19 +75,39 @@ impl Catalog {
         collections: CollectionsFile,
         runtime: RuntimeConfig,
     ) -> Result<Self, CatalogError> {
+        for route in &routes {
+            route.validate()?;
+            crate::grpc_schema::check_route(route, &runtime.protos).map_err(CatalogError::Grpc)?;
+        }
+        Self::from_checked(routes, collections, runtime)
+    }
+
+    /// `new` for Routes startup already validated and checked against the protos (with file
+    /// paths in its diagnostics), so the expensive proto check runs once.
+    pub(crate) fn from_checked(
+        routes: Vec<Route>,
+        collections: CollectionsFile,
+        runtime: RuntimeConfig,
+    ) -> Result<Self, CatalogError> {
         let mut by_id = BTreeMap::new();
 
         for route in routes {
-            route.validate()?;
-            crate::grpc_schema::check_route(&route, &runtime.protos).map_err(CatalogError::Grpc)?;
             if by_id.insert(route.id.clone(), route).is_some() {
                 return Err(CatalogError::DuplicateRoute);
             }
         }
 
+        let resolved = collections
+            .ids()
+            .map(|id| {
+                let activations = collections.resolve(id).map_err(|error| error.to_string());
+                (id.to_owned(), activations)
+            })
+            .collect();
         Ok(Self {
             routes: by_id,
             collections,
+            resolved,
             runtime,
         })
     }
@@ -226,10 +249,13 @@ impl Catalog {
         collection_id: &str,
         overrides: &BTreeMap<(String, String), String>,
     ) -> Result<Vec<Activation>, String> {
-        let mut activations = self
-            .collections
-            .resolve(collection_id)
-            .map_err(|error| error.to_string())?;
+        let mut activations = match self.resolved.get(collection_id) {
+            Some(resolved) => resolved.clone()?,
+            None => self
+                .collections
+                .resolve(collection_id)
+                .map_err(|error| error.to_string())?,
+        };
         for ((route, case), behavior) in overrides {
             activations.push(Activation {
                 route: route.clone(),
@@ -466,15 +492,46 @@ pub enum ControlError {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Controller {
-    catalog: Catalog,
+    /// Immutable after startup; requests share it instead of copying Routes and Collections.
+    catalog: Arc<Catalog>,
     default_collection: String,
     sessions: BTreeMap<String, Selection>,
+}
+
+/// What one request needs: the shared Catalog and a copy of its Session's Selection, taken under
+/// the read lock so the lock isn't held across `delay`s or passthrough.
+#[derive(Debug, Clone)]
+pub struct SessionView {
+    catalog: Arc<Catalog>,
+    selection: Selection,
+}
+
+impl SessionView {
+    pub async fn execute_http(&self, request: HttpExecutionRequest) -> HttpExecutionOutcome {
+        self.catalog
+            .execute_http_with_overrides(
+                &self.selection.collection,
+                &self.selection.route_overrides,
+                request,
+            )
+            .await
+    }
+
+    pub async fn execute_grpc(&self, request: GrpcRequest) -> GrpcResponse {
+        self.catalog
+            .execute_grpc(
+                &self.selection.collection,
+                &self.selection.route_overrides,
+                request,
+            )
+            .await
+    }
 }
 
 impl Controller {
     pub fn new(catalog: Catalog, default_collection: impl Into<String>) -> Self {
         Self {
-            catalog,
+            catalog: Arc::new(catalog),
             default_collection: default_collection.into(),
             sessions: BTreeMap::new(),
         }
@@ -546,22 +603,23 @@ impl Controller {
         )
     }
 
+    pub fn session_view(&self, session: &str) -> SessionView {
+        SessionView {
+            catalog: Arc::clone(&self.catalog),
+            selection: self.selection(session),
+        }
+    }
+
     pub async fn execute_http(
         &self,
         session: &str,
         request: HttpExecutionRequest,
     ) -> HttpExecutionOutcome {
-        let selection = self.selection(session);
-        self.catalog
-            .execute_http_with_overrides(&selection.collection, &selection.route_overrides, request)
-            .await
+        self.session_view(session).execute_http(request).await
     }
 
     pub async fn execute_grpc(&self, session: &str, request: GrpcRequest) -> GrpcResponse {
-        let selection = self.selection(session);
-        self.catalog
-            .execute_grpc(&selection.collection, &selection.route_overrides, request)
-            .await
+        self.session_view(session).execute_grpc(request).await
     }
 
     fn selection(&self, session: &str) -> Selection {

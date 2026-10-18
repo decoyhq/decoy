@@ -322,17 +322,14 @@ async fn handle_request(
                 format!("`{}` is not a gRPC method path", uri.path()),
             ));
         };
-        let controller = controller.read().await.clone();
-        let response = controller
-            .execute_grpc(
-                &session,
-                GrpcRequest {
-                    service,
-                    method,
-                    metadata: headers,
-                    body,
-                },
-            )
+        let view = controller.read().await.session_view(&session);
+        let response = view
+            .execute_grpc(GrpcRequest {
+                service,
+                method,
+                metadata: headers,
+                body,
+            })
             .await;
         return grpc_response(response);
     }
@@ -353,22 +350,19 @@ async fn handle_request(
     let Some(method) = http_method(&request_method) else {
         return response_from_plan(ResponsePlan::fail_closed_miss("unsupported http method"));
     };
-    let controller = controller.read().await.clone();
-    let outcome = controller
-        .execute_http(
-            &session,
-            HttpExecutionRequest {
-                method,
-                path: uri.path().to_owned(),
-                path_and_query: uri
-                    .path_and_query()
-                    .map(|path| path.as_str().to_owned())
-                    .unwrap_or_else(|| uri.path().to_owned()),
-                headers,
-                body,
-                metadata,
-            },
-        )
+    let view = controller.read().await.session_view(&session);
+    let outcome = view
+        .execute_http(HttpExecutionRequest {
+            method,
+            path: uri.path().to_owned(),
+            path_and_query: uri
+                .path_and_query()
+                .map(|path| path.as_str().to_owned())
+                .unwrap_or_else(|| uri.path().to_owned()),
+            headers,
+            body,
+            metadata,
+        })
         .await;
 
     response_from_execution_outcome(outcome)
