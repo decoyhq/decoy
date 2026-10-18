@@ -101,7 +101,8 @@ pub(crate) struct GrpcCall {
     pub response: GrpcResponse,
     /// Only when `capture` was asked for.
     pub outcome: Option<Outcome>,
-    /// The Pipeline-decoded request message, when a Route decoded it.
+    /// The Pipeline-decoded request message, when a Route decoded protobuf and `capture` was
+    /// asked for.
     pub request: Option<Value>,
     /// The response message before encoding; only when `capture` was asked for.
     pub message: Option<Value>,
@@ -135,7 +136,9 @@ impl Catalog {
                             format!("behavior `{}` failed: {reason}", activation.address()),
                         )
                     });
-                let message = (capture && !response.body.is_empty())
+                // A raw Pipeline leaves base64 in `message`; that is not a decoded body.
+                let decoded = capture && route.decodes_protobuf();
+                let message = (decoded && !response.body.is_empty())
                     .then(|| decode(&response.body, pipeline(route), &method.output()).ok())
                     .flatten();
                 GrpcCall {
@@ -148,7 +151,7 @@ impl Catalog {
                             path_params: BTreeMap::new(),
                         })
                     }),
-                    request: Some(envelope["message"].take()),
+                    request: decoded.then(|| envelope["message"].take()),
                     message,
                 }
             }
@@ -821,6 +824,45 @@ cases:
             response.status_message.contains("5-byte header"),
             "{response:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_captured_undecodable_request_is_a_miss_naming_the_decode_error() {
+        let catalog = catalog(
+            "  any:\n    behaviors:\n      ok: { message: {} }\n",
+            "get:any:ok",
+        );
+        let mut call = request(&catalog, json!({ "id": "a-1" }));
+        call.body.truncate(3);
+        let call = catalog
+            .execute_grpc("default", &BTreeMap::new(), call, true)
+            .await;
+        let Some(Outcome::Miss(miss)) = call.outcome else {
+            panic!("expected a miss")
+        };
+        assert_eq!(miss.collection, "default");
+        assert_eq!(miss.reason, call.response.status_message);
+        assert!(miss.candidates.is_empty());
+    }
+
+    #[tokio::test]
+    async fn captured_raw_pipelines_hand_back_no_decoded_messages() {
+        let catalog = catalog_with_pipeline(
+            Some("[grpc-frame]"),
+            "  any:\n    behaviors:\n      ok: { message: CgNhLTE= }\n",
+            "get:any:ok",
+        );
+        let call = catalog
+            .execute_grpc(
+                "default",
+                &BTreeMap::new(),
+                request(&catalog, json!({ "id": "x" })),
+                true,
+            )
+            .await;
+        assert_eq!(call.response.status, OK, "{:?}", call.response);
+        assert!(matches!(call.outcome, Some(Outcome::Hit(_))));
+        assert_eq!((call.request, call.message), (None, None));
     }
 
     #[tokio::test]
