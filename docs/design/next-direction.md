@@ -78,7 +78,7 @@ Agreed 2026-10-17. The HTTP milestone above is done (#154).
    `send` to a Route's live connections in a Session, Playwright `decoy.connection(routeId)`.
 8. Plugin worker (ADR 0002).
 
-Deferred: client message/request log for assertions, flows/sequences, recording, custom
+Deferred: a log of Request and Message envelopes for assertions, flows/sequences, recording, custom
 matchers or Behavior kinds, plugin network access, WASM plugin loader.
 
 UI is no longer deferred: bare `decoy` will run the runtime plus an inline terminal UI (#285). See

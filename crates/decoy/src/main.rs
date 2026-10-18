@@ -72,10 +72,13 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         },
         &cwd,
     )?;
-    decoy_runtime::serve(config, shutdown_signal())
-        .await?
+    let server = decoy_runtime::serve(config, shutdown_signal())
+        .await
+        .map_err(|error| error as Box<dyn std::error::Error>)?;
+    server
         .wait()
         .await
+        .map_err(|error| error as Box<dyn std::error::Error>)
 }
 
 /// Ctrl-C, or SIGTERM (what `kill`, Docker and CI runners send).

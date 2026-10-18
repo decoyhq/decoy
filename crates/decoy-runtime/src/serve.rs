@@ -46,12 +46,15 @@ pub struct Server {
     servers: tokio::task::JoinSet<std::io::Result<()>>,
 }
 
+/// Error returned by [`serve`] and [`Server::wait`]; `Send + Sync` so `wait` can be spawned.
+pub type ServeError = Box<dyn std::error::Error + Send + Sync>;
+
 /// Loads `config`, binds every listener and starts serving. `shutdown` is awaited by
 /// [`Server::wait`]; when it resolves, open requests get [`DRAIN_TIMEOUT`] to finish.
 pub async fn serve(
     config: ServeConfig,
     shutdown: impl Future<Output = ()> + Send + 'static,
-) -> Result<Server, Box<dyn std::error::Error>> {
+) -> Result<Server, ServeError> {
     let protos = load_descriptor_pool(&config.protos)?;
     let startup = load_catalog_from_files(
         &config.routes,
@@ -143,7 +146,7 @@ pub async fn serve(
 
 impl Server {
     /// Serves until the shutdown signal fires or a listener fails, then drains.
-    pub async fn wait(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn wait(self) -> Result<(), ServeError> {
         let Self {
             shutdown,
             stop_all,
@@ -160,7 +163,7 @@ impl Server {
             while let Some(result) = servers.join_next().await {
                 result??;
             }
-            Ok::<_, Box<dyn std::error::Error>>(())
+            Ok::<_, ServeError>(())
         })
         .await;
         match drained {

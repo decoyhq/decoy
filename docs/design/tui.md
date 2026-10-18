@@ -84,7 +84,8 @@ Sessions are implicit (`Controller` creates a Selection on its first mutation).
 - `/session <unknown>` is allowed and shows a `new session` hint. The Session reads as defaults
   until the first mutation.
 - When the active Session is ended by someone else (e.g. Playwright teardown), print the system
-  line `session x ended`. The next command recreates it.
+  line `session x ended`. The next command reads it from defaults again; a Selection is created
+  only on its first mutation.
 
 ## Request detail
 
