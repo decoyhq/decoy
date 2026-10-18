@@ -185,7 +185,7 @@ pub struct Reloader {
     controller: Arc<RwLock<Controller>>,
     max_body_bytes: Arc<AtomicUsize>,
     listeners: Arc<ListenerFields>,
-    /// One reload at a time, so a slower, older one can't land last (`/reload` and `--watch`).
+    /// One reload at a time (`/reload` and `--watch`).
     running: Arc<tokio::sync::Mutex<()>>,
 }
 
@@ -198,6 +198,20 @@ pub struct Reloaded {
     pub default_collection: String,
     /// `listener changes need restart`, then one line per Selection fallback or dropped override.
     pub warnings: Vec<String>,
+}
+
+impl Reloaded {
+    /// `2 routes, 1 collection`.
+    pub fn summary(&self) -> String {
+        let count = |count: usize, noun: &str| {
+            format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
+        };
+        format!(
+            "{}, {}",
+            count(self.catalog.routes().count(), "route"),
+            count(self.catalog.collection_ids().count(), "collection")
+        )
+    }
 }
 
 /// The config fields a reload can't apply without rebinding.
@@ -219,10 +233,16 @@ impl ListenerFields {
 }
 
 impl Reloader {
-    /// Builds the new Catalog from `config` before taking the Controller's lock, then swaps it in.
-    /// On an error nothing changes. Requests already running finish against the old Catalog.
-    pub async fn reload(&self, config: ServeConfig) -> Result<Reloaded, ServeError> {
+    /// Reads the config with `read_config`, builds the new Catalog before taking the Controller's
+    /// lock, then swaps it in. On an error nothing changes. Requests already running finish
+    /// against the old Catalog. Reloads queue, and each one reads the files only once it runs,
+    /// so the last one always applies the newest files.
+    pub async fn reload(
+        &self,
+        read_config: impl FnOnce() -> Result<ServeConfig, ServeError>,
+    ) -> Result<Reloaded, ServeError> {
         let _running = self.running.lock().await;
+        let config = read_config()?;
         let startup = load(&config)?;
         let mut warnings = Vec::new();
         if ListenerFields::of(&config) != *self.listeners {

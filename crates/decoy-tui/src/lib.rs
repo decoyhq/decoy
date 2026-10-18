@@ -18,12 +18,13 @@ use crossterm::event::{
 use crossterm::execute;
 use crossterm::terminal::supports_keyboard_enhancement;
 use decoy_runtime::config::ServeConfig;
+use decoy_runtime::watch::ConfigWatcher;
 use decoy_runtime::{ControlError, Controller, DEFAULT_SESSION, ServeError, Server};
 use futures_util::{Stream, StreamExt};
 use ratatui::Terminal;
 use ratatui::backend::Backend;
-use tokio::sync::RwLock;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
+use tokio::sync::{RwLock, mpsc};
 
 pub use app::{App, Effect, Event, Options, Verb};
 
@@ -31,7 +32,7 @@ pub use app::{App, Effect, Event, Options, Verb};
 const BATCH: usize = 1024;
 
 /// Re-reads the config from the same flags and files the server started with, for `/reload`.
-pub type LoadConfig = Box<dyn Fn() -> Result<ServeConfig, ServeError> + Send>;
+pub type LoadConfig = Box<dyn Fn() -> Result<ServeConfig, ServeError> + Send + Sync>;
 
 /// Runs the TUI over a started `server` until the user quits or the server stops, then restores
 /// the terminal and waits for the server to drain. `quit` must resolve the shutdown future the
@@ -40,6 +41,7 @@ pub async fn run(
     server: Server,
     quit: tokio::sync::oneshot::Sender<()>,
     load_config: LoadConfig,
+    watching: Option<(ConfigWatcher, mpsc::Receiver<()>)>,
 ) -> Result<(), ServeError> {
     let reloader = Reloader {
         reloader: server.reloader(),
@@ -74,6 +76,12 @@ pub async fn run(
     for listener in &server.listeners {
         app.info(format!("listening on {}", listener.label()));
     }
+    // The watcher stops when dropped, at the end of `run`.
+    let (_watcher, mut changes) = watching.unzip();
+    if let Some(watcher) = &_watcher {
+        let polling = if watcher.polling { " (polling)" } else { "" };
+        app.info(format!("watching the config files{polling}"));
+    }
 
     let mut events = server.subscribe();
     let mut served = tokio::spawn(server.wait());
@@ -104,6 +112,7 @@ pub async fn run(
         &mut app,
         &controller,
         &reloader,
+        &mut changes,
         &mut events,
         &mut served,
     )
@@ -156,6 +165,7 @@ async fn event_loop(
     app: &mut App,
     controller: &RwLock<Controller>,
     reloader: &Reloader,
+    changes: &mut Option<mpsc::Receiver<()>>,
     events: &mut tokio::sync::broadcast::Receiver<decoy_runtime::events::Event>,
     served: &mut Served,
 ) -> std::io::Result<Option<Result<(), ServeError>>> {
@@ -174,6 +184,8 @@ async fn event_loop(
                 Err(RecvError::Closed) => return Ok(None),
             },
             stopped = &mut *served => return Ok(Some(joined(stopped))),
+            // `--watch`: a config file changed.
+            Some(()) = changed(changes) => Event::Reloaded(reloader.reload().await),
         };
         let mut batch = vec![first];
         while batch.len() < BATCH {
@@ -203,6 +215,14 @@ async fn event_loop(
     }
 }
 
+/// The next `--watch` signal; never without `--watch`.
+async fn changed(changes: &mut Option<mpsc::Receiver<()>>) -> Option<()> {
+    match changes {
+        Some(changes) => changes.recv().await,
+        None => std::future::pending().await,
+    }
+}
+
 /// What `/reload` needs: the config loader and the server to apply it to.
 struct Reloader {
     reloader: decoy_runtime::Reloader,
@@ -211,9 +231,8 @@ struct Reloader {
 
 impl Reloader {
     async fn reload(&self) -> Result<decoy_runtime::Reloaded, String> {
-        let config = (self.load_config)().map_err(|error| error.to_string())?;
         self.reloader
-            .reload(config)
+            .reload(&self.load_config)
             .await
             .map_err(|error| error.to_string())
     }
@@ -268,6 +287,7 @@ mod tests {
         dir: tempfile::TempDir,
         controller: std::sync::Arc<RwLock<Controller>>,
         reloader: Reloader,
+        watching: Option<mpsc::Receiver<()>>,
         out: Vec<u8>,
         keys: mpsc::UnboundedSender<Input>,
         input: std::pin::Pin<Box<dyn Stream<Item = Input>>>,
@@ -313,6 +333,7 @@ mod tests {
                 dir,
                 controller,
                 reloader,
+                watching: None,
                 out: Vec::new(),
                 keys,
                 input: Box::pin(futures_util::stream::poll_fn(move |cx| rx.poll_recv(cx))),
@@ -353,6 +374,7 @@ mod tests {
                 &mut self.app,
                 &self.controller,
                 &self.reloader,
+                &mut self.watching,
                 &mut self.events,
                 &mut self.served,
             )

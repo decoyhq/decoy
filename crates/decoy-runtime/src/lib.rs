@@ -21,6 +21,7 @@ pub mod serve;
 pub mod startup;
 pub mod template;
 pub mod tls;
+pub mod watch;
 
 pub use collections::{Activation, Collection, CollectionRouteRef, CollectionsFile};
 pub use control_api::{

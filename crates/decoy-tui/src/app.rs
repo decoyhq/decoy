@@ -190,11 +190,7 @@ impl App {
                 vec![]
             }
             Event::Reloaded(Ok(reloaded)) => {
-                self.info(format!(
-                    "reloaded: {}, {}",
-                    plural(reloaded.catalog.routes().count(), "route"),
-                    plural(reloaded.catalog.collection_ids().count(), "collection")
-                ));
+                self.info(format!("reloaded: {}", reloaded.summary()));
                 self.catalog = reloaded.catalog;
                 self.defaults = SelectionSnapshot {
                     collection: reloaded.default_collection,
