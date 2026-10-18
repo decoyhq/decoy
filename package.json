@@ -19,6 +19,7 @@
     "fix": "eslint . --fix && prettier --write ."
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
     "@commitlint/cli": "^21.2.3",
     "@commitlint/config-conventional": "^21.2.3",
     "@eslint/js": "^10.0.1",
@@ -32,6 +33,7 @@
     "jiti": "^2.7.0",
     "lefthook": "^2.1.9",
     "prettier": "^3.9.10",
+    "publint": "^0.3.25",
     "typescript": "npm:@typescript/typescript6@^6.0.2",
     "typescript-eslint": "^8.71.2"
   }

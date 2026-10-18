@@ -12,9 +12,14 @@
   "exports": {
     ".": {
       "@decoyhq/source": "./src/index.ts",
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js",
-      "require": "./dist/index.cjs"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     }
   },
   "files": [
@@ -23,7 +28,8 @@
   "scripts": {
     "build": "rslib build",
     "test": "rstest run",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "check:package": "publint --strict && attw --pack . --profile node16"
   },
   "peerDependencies": {
     "@playwright/test": ">=1.40"
@@ -32,5 +38,10 @@
     "@playwright/test": "catalog:",
     "@types/node": "catalog:",
     "expect-type": "^1.4.0"
+  },
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24"
   }
 }
