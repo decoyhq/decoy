@@ -77,7 +77,9 @@ Decoy is off for projects without `decoyOptions`.
   and `x-mock-session` set. Decoy's answer, including a 501 miss, reaches the page as-is. If Decoy
   is unreachable the request is aborted, never sent to the real network.
 - The `decoy` fixture: `sessionId`, `useCollection(id)`, `useRoute(route, case, behavior)`,
-  `reset()`. Each call hits the Control API immediately and rejects with Decoy's error.
+  `reset()`, `endSession()`. Each call hits the Control API immediately and rejects with Decoy's
+  error. When the test ends, the fixtures call `endSession()` for you, so a long-lived Decoy
+  doesn't keep one Session per test.
 
 The runnable version of all this is
 [`examples/playwright-ts-e2e`](../../examples/playwright-ts-e2e).

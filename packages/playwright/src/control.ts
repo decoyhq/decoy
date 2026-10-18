@@ -10,6 +10,8 @@ export interface DecoyRouter {
   useRoute(route: string, caseId: string, behavior: string): Promise<void>
   /** Drop this Session's route overrides. */
   reset(): Promise<void>
+  /** Free this Session in Decoy. The fixtures call it when the test ends. */
+  endSession(): Promise<void>
 }
 
 /** A Router bound to one Session of the Decoy runtime at `url`. Errors reject at the call site. */
@@ -30,6 +32,7 @@ export function createRouter(url: string, sessionId: string): DecoyRouter {
     useCollection: (collection) => control('useCollection', { collection }),
     useRoute: (route, caseId, behavior) => control('useRoute', { route, case: caseId, behavior }),
     reset: () => control('reset'),
+    endSession: () => control('endSession'),
   }
 }
 

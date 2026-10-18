@@ -528,6 +528,12 @@ impl Controller {
         self.selection(session).snapshot()
     }
 
+    /// Forgets the Session's Selection, freeing it; a later request starts from the defaults.
+    pub fn end_session(&mut self, session: &str) -> SelectionSnapshot {
+        self.sessions.remove(session);
+        self.selection(session).snapshot()
+    }
+
     pub fn resolve_http(&self, session: &str, request: &HttpRequest) -> ResolveOutcome {
         let selection = self.selection(session);
         self.catalog.resolve_http_with_overrides(

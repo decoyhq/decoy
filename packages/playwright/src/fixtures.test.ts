@@ -47,7 +47,10 @@ describe('decoy fixture', () => {
       await decoy.close()
     }
     expect(router?.sessionId).toMatch(/^users-spec-ts-shows-a-user-[0-9a-f-]{36}$/)
-    expect(decoy.calls).toEqual([])
+    // The Session is freed in Decoy when the test ends.
+    expect(decoy.calls).toEqual([
+      { path: '/__decoy__/control/endSession', session: router?.sessionId, body: '' },
+    ])
   })
 })
 

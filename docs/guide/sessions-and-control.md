@@ -12,11 +12,12 @@ New Sessions start on the default Collection.
 Command-shaped `POST` endpoints under the reserved `/__decoy__` path. Pick the Session with
 `x-mock-session`; leave it out for the default Session.
 
-| verb            | request                                 | body                                                         |
-| --------------- | --------------------------------------- | ------------------------------------------------------------ |
-| `useCollection` | `POST /__decoy__/control/useCollection` | `{"collection":"no-users"}`                                  |
-| `useRoute`      | `POST /__decoy__/control/useRoute`      | `{"route":"users-by-id","case":"user-1","behavior":"grace"}` |
-| `reset`         | `POST /__decoy__/control/reset`         | empty: drops the Session's route overrides                   |
+| verb            | request                                 | body                                                              |
+| --------------- | --------------------------------------- | ----------------------------------------------------------------- |
+| `useCollection` | `POST /__decoy__/control/useCollection` | `{"collection":"no-users"}`                                       |
+| `useRoute`      | `POST /__decoy__/control/useRoute`      | `{"route":"users-by-id","case":"user-1","behavior":"grace"}`      |
+| `reset`         | `POST /__decoy__/control/reset`         | empty: drops the Session's route overrides                        |
+| `endSession`    | `POST /__decoy__/control/endSession`    | empty: forgets the Session; its next request starts from defaults |
 
 Success returns `200` with the Session's Selection. Unknown Collections or Behavior addresses and
 malformed JSON return `400 {"error":"..."}`, and unknown `/__decoy__` paths return `404`.

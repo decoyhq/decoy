@@ -89,3 +89,9 @@ Paths in the file resolve relative to the file; flag paths resolve relative to t
 directory. Unknown keys, unreadable files, invalid Routes or Collections, duplicate Route ids,
 a port used twice or already taken, missing proto roots, protos that don't compile, unreadable or mismatched TLS cert/key, an unreadable `.decoy/` CA, and an unknown
 startup Collection all fail at startup with a diagnostic.
+
+## Limits and shutdown
+
+- Request bodies over 32 MiB get `413` (gRPC: `RESOURCE_EXHAUSTED`) instead of being buffered.
+- Ctrl-C or SIGTERM stops `decoy serve`: it stops accepting, gives open requests 5s to finish (a
+  long `delay` or a slow passthrough doesn't hold it up longer), then exits with status 0.

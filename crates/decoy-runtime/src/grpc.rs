@@ -22,6 +22,7 @@ pub const DEFAULT_PIPELINE: [PipelineStep; 2] = [PipelineStep::GrpcFrame, Pipeli
 /// gRPC status codes Decoy sends itself.
 pub const OK: u8 = 0;
 pub const INVALID_ARGUMENT: u8 = 3;
+pub const RESOURCE_EXHAUSTED: u8 = 8;
 pub const UNIMPLEMENTED: u8 = 12;
 pub const INTERNAL: u8 = 13;
 

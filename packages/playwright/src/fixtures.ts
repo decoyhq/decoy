@@ -56,6 +56,7 @@ export function createDecoyFixtures(): Fixtures<
         )
       }
       await use(context)
+      await endDecoySession(testInfo)
     },
     decoy: ({ decoyOptions }, use, testInfo) => provideDecoy(decoyOptions, use, testInfo),
   }
@@ -73,6 +74,21 @@ export async function provideDecoy(
     )
   }
   await use(await decoySession(decoyOptions, testInfo))
+  await endDecoySession(testInfo)
+}
+
+/**
+ * Frees the test's Session in Decoy once the test is done, so a long-lived Decoy doesn't keep one
+ * Selection per test. Best effort: a Decoy that is already gone can't hold the Session either.
+ */
+async function endDecoySession(testInfo: Pick<TestInfo, 'titlePath'>): Promise<void> {
+  const session = sessions.get(testInfo)
+  if (session === undefined) {
+    return
+  }
+  sessions.delete(testInfo)
+  const router = await session.catch(() => undefined)
+  await router?.endSession().catch(() => undefined)
 }
 
 const sessions = new WeakMap<object, Promise<DecoyRouter>>()

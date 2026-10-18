@@ -644,6 +644,115 @@ cases:
     assert_eq!(response.status(), 508);
 }
 
+#[tokio::test]
+async fn oversized_request_bodies_get_413() {
+    let fixture = Fixture::new();
+    fixture.write_route("who.yaml", route_response("who", "MAIN"));
+    fixture.write_collections("- id: main\n  routes: [who:any:ok]\n");
+    let port = unused_port();
+    let _server = fixture.spawn(port, &[]);
+    wait_for_server(port).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{port}/who"))
+        .body(vec![b'x'; 33 * 1024 * 1024])
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 413);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sigterm_stops_serve_within_the_drain_deadline() {
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "slow.yaml",
+        r#"
+id: slow
+transport: http
+match: { method: GET, path: /slow }
+cases:
+  any:
+    behaviors:
+      wait: { delay: 60s, body: late }
+"#,
+    );
+    fixture.write_collections("- id: main\n  routes: [slow:any:wait]\n");
+    let port = unused_port();
+    let mut server = fixture.spawn(port, &[]);
+    wait_for_server(port).await;
+    // A request stuck in a 60s delay must not hold shutdown.
+    let in_flight = tokio::spawn(reqwest::get(format!("http://127.0.0.1:{port}/slow")));
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let started = Instant::now();
+    let killed = Command::new("kill")
+        .args(["-TERM", &server.0.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let status = loop {
+        if let Some(status) = server.0.try_wait().unwrap() {
+            break status;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "decoy did not stop"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    };
+    // A clean exit, not death by signal: SIGTERM ran the graceful shutdown.
+    assert!(status.success(), "{status}");
+    in_flight.abort();
+}
+
+#[tokio::test]
+async fn end_session_forgets_the_sessions_selection() {
+    let fixture = Fixture::new();
+    fixture.write_route("who.yaml", route_response("who", "MAIN"));
+    fixture.write_route(
+        "who-alt.yaml",
+        route_response("who-alt", "ALT").replace("/who-alt", "/who"),
+    );
+    fixture.write_collections(
+        "- id: main\n  routes: [who:any:ok]\n- id: alt\n  routes: [who-alt:any:ok]\n",
+    );
+    let port = unused_port();
+    let _server = fixture.spawn(port, &[]);
+    wait_for_server(port).await;
+    let client = reqwest::Client::new();
+    let control = |verb: &'static str, body: &'static str| {
+        client
+            .post(format!("http://127.0.0.1:{port}/__decoy__/control/{verb}"))
+            .header("x-mock-session", "s")
+            .body(body)
+            .send()
+    };
+    let who = || async {
+        client
+            .get(format!("http://127.0.0.1:{port}/who"))
+            .header("x-mock-session", "s")
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap()
+    };
+
+    assert_eq!(
+        control("useCollection", r#"{"collection":"alt"}"#)
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    assert_eq!(who().await, "ALT");
+    assert_eq!(control("endSession", "").await.unwrap().status(), 200);
+    assert_eq!(who().await, "MAIN");
+}
+
 #[test]
 fn taken_extra_port_fails_startup() {
     let fixture = Fixture::new();

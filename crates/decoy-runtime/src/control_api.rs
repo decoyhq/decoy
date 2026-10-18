@@ -99,6 +99,7 @@ impl ControlApiError {
 /// - `POST /__decoy__/control/useCollection` with `{ "collection": "..." }`
 /// - `POST /__decoy__/control/useRoute` with `{ "route": "...", "case": "...", "behavior": "..." }`
 /// - `POST /__decoy__/control/reset` with an empty or absent body
+/// - `POST /__decoy__/control/endSession` with an empty or absent body: frees the Session
 ///
 /// The target Session is selected with `x-mock-session`; absent or empty headers use the default
 /// Session. Successful responses return the resulting Selection snapshot.
@@ -136,6 +137,10 @@ pub fn try_handle_control_request(
         Some("POST /control/reset") => {
             parse_optional_body_json(request.body)?;
             Ok(controller.reset(&session))
+        }
+        Some("POST /control/endSession") => {
+            parse_optional_body_json(request.body)?;
+            Ok(controller.end_session(&session))
         }
         _ => Err(ControlApiError::UnknownEndpoint {
             method: request.method,
