@@ -182,6 +182,26 @@ header (such as `set-cookie`) comes back.
 
 ## Misses are fail-closed
 
-A request no active Case matches gets `501` with `x-mock-miss: true` and
-`{"error":"no active route case matched request"}`. Decoy never forwards a request unless a
-Passthrough Behavior is selected.
+A request no active Case matches gets `501` with `x-mock-miss: true` and a body that says why each
+active route entry, checked bottom-to-top, did not match:
+
+```json
+{
+  "error": "no active route case matched request",
+  "candidates": [
+    {
+      "address": "get-user:user-123:success",
+      "reason": "condition",
+      "field": "pathParams.id",
+      "expected": "123",
+      "actual": "456"
+    },
+    { "address": "list-users:any:ok", "reason": "path", "expected": "/users" }
+  ]
+}
+```
+
+`reason` is one of `method`, `path` (with the Route's `expected` value), `condition` (the first
+failed Case condition: `field`, `expected`, and the request's `actual`, `null` when absent; `field`
+is `match` for a whole-Case predicate), `transport`, `missingRoute`, `missingCase`, or
+`missingBehavior`. Decoy never forwards a request unless a Passthrough Behavior is selected.

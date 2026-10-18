@@ -10,9 +10,10 @@ use prost::Message as _;
 use prost_reflect::{DynamicMessage, MessageDescriptor, MethodDescriptor};
 use serde_json::{Value, json};
 
-use crate::engine::Catalog;
+use crate::collections::Activation;
+use crate::engine::{Candidate, Catalog, MissDiagnostic, Rejection};
 use crate::grpc_schema::{STATUS_CODES, find_method, request_json_options};
-use crate::matching::grpc_case_matches;
+use crate::matching::grpc_case_mismatch;
 use crate::schema::{Behavior, PipelineStep, ResponseBehavior, Route, RouteMatch};
 use crate::template::render_grpc_response;
 
@@ -75,6 +76,25 @@ impl GrpcResponse {
     }
 }
 
+/// Which active route entry answers a unary call, and why the others did not.
+#[derive(Debug)]
+pub enum GrpcResolution<'a> {
+    Matched {
+        activation: Activation,
+        /// Candidates rejected before the winner, in evaluation order.
+        skipped: Vec<Candidate>,
+        /// The winning Case's `match`; every condition in it passed.
+        conditions: &'a Value,
+        route: &'a Route,
+        method: MethodDescriptor,
+        response: &'a ResponseBehavior,
+        envelope: Value,
+    },
+    Miss(MissDiagnostic),
+    /// The call failed before matching finished, e.g. the request did not decode.
+    Failed(GrpcResponse),
+}
+
 impl Catalog {
     pub(crate) async fn execute_grpc(
         &self,
@@ -82,35 +102,83 @@ impl Catalog {
         overrides: &BTreeMap<(String, String), String>,
         request: GrpcRequest,
     ) -> GrpcResponse {
+        match self.resolve_grpc(collection_id, overrides, &request) {
+            GrpcResolution::Matched {
+                activation,
+                route,
+                method,
+                response,
+                envelope,
+                ..
+            } => {
+                if let Some(delay) = response.delay {
+                    tokio::time::sleep(delay).await;
+                }
+                respond(route, &method, response, &envelope).unwrap_or_else(|reason| {
+                    GrpcResponse::error(
+                        INTERNAL,
+                        format!("behavior `{}` failed: {reason}", activation.address()),
+                    )
+                })
+            }
+            GrpcResolution::Miss(miss) => GrpcResponse::miss(miss.reason),
+            GrpcResolution::Failed(response) => response,
+        }
+    }
+
+    pub fn resolve_grpc(
+        &self,
+        collection_id: &str,
+        overrides: &BTreeMap<(String, String), String>,
+        request: &GrpcRequest,
+    ) -> GrpcResolution<'_> {
         let activations = match self.activations(collection_id, overrides) {
             Ok(activations) => activations,
-            Err(reason) => return GrpcResponse::miss(reason),
+            Err(reason) => {
+                return GrpcResolution::Miss(MissDiagnostic {
+                    collection: collection_id.to_owned(),
+                    reason,
+                    candidates: Vec::new(),
+                });
+            }
         };
 
+        let mut candidates = Vec::new();
         for activation in activations.iter().rev() {
+            let reject = |rejection| Candidate {
+                address: activation.address(),
+                rejection,
+            };
             let Some(route) = self.route(&activation.route) else {
+                candidates.push(reject(Rejection::MissingRoute));
                 continue;
             };
             let RouteMatch::Grpc(address) = &route.route_match else {
+                candidates.push(reject(Rejection::Transport));
                 continue;
             };
             if address.service != request.service || address.method != request.method {
+                candidates.push(reject(Rejection::Method {
+                    expected: format!("{}/{}", address.service, address.method),
+                }));
                 continue;
             }
+            // Startup checks every gRPC Route against the protos, so this only guards the lookup.
             let Ok(method) = find_method(&self.runtime().protos, &address.service, &address.method)
             else {
+                candidates.push(reject(Rejection::MissingRoute));
                 continue;
             };
             let message = match decode(&request.body, pipeline(route), &method.input()) {
                 Ok(message) => message,
                 Err(reason) => {
-                    return GrpcResponse::error(
+                    return GrpcResolution::Failed(GrpcResponse::error(
                         INVALID_ARGUMENT,
                         format!(
                             "route `{}` could not decode the request: {reason}",
                             route.id
                         ),
-                    );
+                    ));
                 }
             };
             let envelope = json!({
@@ -120,27 +188,34 @@ impl Catalog {
                 "message": message,
             });
             let Some(case) = route.cases.get(&activation.case) else {
+                candidates.push(reject(Rejection::MissingCase));
                 continue;
             };
-            if !grpc_case_matches(&case.case_match, &envelope) {
+            if let Some(failure) = grpc_case_mismatch(&case.case_match, &envelope) {
+                candidates.push(reject(Rejection::Condition(failure)));
                 continue;
             }
             let Some(Behavior::Response(response)) = case.behaviors.get(&activation.behavior)
             else {
+                candidates.push(reject(Rejection::MissingBehavior));
                 continue;
             };
-            if let Some(delay) = response.delay {
-                tokio::time::sleep(delay).await;
-            }
-            return respond(route, &method, response, &envelope).unwrap_or_else(|reason| {
-                GrpcResponse::error(
-                    INTERNAL,
-                    format!("behavior `{}` failed: {reason}", activation.address()),
-                )
-            });
+            return GrpcResolution::Matched {
+                activation: activation.clone(),
+                skipped: candidates,
+                conditions: &case.case_match,
+                route,
+                method,
+                response,
+                envelope,
+            };
         }
 
-        GrpcResponse::miss("no active route case matched request")
+        GrpcResolution::Miss(MissDiagnostic {
+            collection: collection_id.to_owned(),
+            reason: "no active route case matched request".to_owned(),
+            candidates,
+        })
     }
 }
 
@@ -300,12 +375,19 @@ mod tests {
         catalog_with_pipeline(None, cases, collection)
     }
 
-    fn catalog_with_pipeline(pipeline: Option<&str>, cases: &str, collection: &str) -> Catalog {
+    fn runtime() -> RuntimeConfig {
         let protos = load_descriptor_pool(&ProtoSources {
             roots: vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proto")],
             descriptor_sets: vec![],
         })
         .unwrap();
+        RuntimeConfig {
+            protos,
+            ..RuntimeConfig::default()
+        }
+    }
+
+    fn catalog_with_pipeline(pipeline: Option<&str>, cases: &str, collection: &str) -> Catalog {
         let route = Route::from_yaml(&format!(
             "id: get\ntransport: grpc\nmatch: {{ service: approvals.v1.Approvals, method: GetApproval }}\n{}cases:\n{cases}",
             pipeline.map(|steps| format!("pipeline: {steps}\n")).unwrap_or_default()
@@ -315,10 +397,7 @@ mod tests {
             vec![route],
             CollectionsFile::from_yaml(&format!("- id: default\n  routes: [{collection}]\n"))
                 .unwrap(),
-            RuntimeConfig {
-                protos,
-                ..RuntimeConfig::default()
-            },
+            runtime(),
         )
         .unwrap()
     }
@@ -431,6 +510,105 @@ mod tests {
         );
         assert_eq!(response.status, UNIMPLEMENTED);
         assert_eq!(response.metadata["x-mock-miss"], "true");
+    }
+
+    fn explain_catalog() -> Catalog {
+        let get = Route::from_yaml(
+            r#"
+id: get
+transport: grpc
+match: { service: approvals.v1.Approvals, method: GetApproval }
+cases:
+  any:
+    behaviors:
+      ok: { message: {} }
+  one:
+    match: { message: { id: a-1 } }
+    behaviors:
+      ok: { message: {} }
+"#,
+        )
+        .unwrap();
+        let http = Route::from_yaml(
+            "id: http\ntransport: http\nmatch: { method: GET, path: /x }\ncases:\n  any:\n    behaviors:\n      ok: { status: 200 }\n",
+        )
+        .unwrap();
+        Catalog::new(
+            vec![get, http],
+            CollectionsFile::from_yaml(
+                "- id: default\n  routes: [get:any:ok, get:any:ghost, get:one:ok, get:ghost:ok, http:any:ok, ghost:any:ok]\n",
+            )
+            .unwrap(),
+            runtime(),
+        )
+        .unwrap()
+    }
+
+    fn candidate(address: &str, rejection: Rejection) -> Candidate {
+        Candidate {
+            address: address.to_owned(),
+            rejection,
+        }
+    }
+
+    #[test]
+    fn a_hit_explains_skipped_candidates_and_the_winner() {
+        let catalog = explain_catalog();
+        let call = request(&catalog, json!({ "id": "a-2" }));
+        let GrpcResolution::Matched {
+            activation,
+            skipped,
+            conditions,
+            ..
+        } = catalog.resolve_grpc("default", &BTreeMap::new(), &call)
+        else {
+            panic!("expected match")
+        };
+        assert_eq!(activation.address(), "get:any:ok");
+        assert_eq!(conditions, &Value::Null);
+        assert_eq!(
+            skipped,
+            vec![
+                candidate("ghost:any:ok", Rejection::MissingRoute),
+                candidate("http:any:ok", Rejection::Transport),
+                candidate("get:ghost:ok", Rejection::MissingCase),
+                candidate(
+                    "get:one:ok",
+                    Rejection::Condition(crate::matching::ConditionFailure {
+                        field: "message.id".to_owned(),
+                        expected: json!("a-1"),
+                        actual: json!("a-2"),
+                    })
+                ),
+                candidate("get:any:ghost", Rejection::MissingBehavior),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_miss_lists_every_candidate() {
+        let catalog = explain_catalog();
+        let mut call = request(&catalog, json!({ "id": "a-1" }));
+        call.method = "ListApprovals".to_owned();
+        let GrpcResolution::Miss(miss) = catalog.resolve_grpc("default", &BTreeMap::new(), &call)
+        else {
+            panic!("expected miss")
+        };
+        let method = || Rejection::Method {
+            expected: "approvals.v1.Approvals/GetApproval".to_owned(),
+        };
+        assert_eq!(miss.reason, "no active route case matched request");
+        assert_eq!(
+            miss.candidates,
+            vec![
+                candidate("ghost:any:ok", Rejection::MissingRoute),
+                candidate("http:any:ok", Rejection::Transport),
+                candidate("get:ghost:ok", method()),
+                candidate("get:one:ok", method()),
+                candidate("get:any:ghost", method()),
+                candidate("get:any:ok", method()),
+            ]
+        );
     }
 
     #[tokio::test]

@@ -7,7 +7,7 @@ use crate::collections::{Activation, CollectionError, CollectionsFile};
 use crate::grpc::{GrpcRequest, GrpcResponse};
 use crate::http::{BodyPlan, RequestMetadata, ResponsePlan, RuntimeConfig};
 use crate::http_forward::{ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough};
-use crate::matching::{MatchInput, case_matches};
+use crate::matching::{ConditionFailure, MatchInput, case_mismatch};
 use crate::request::RequestEnvelope;
 use crate::schema::{Behavior, HttpMethod, Route, RouteMatch};
 use crate::template::{has_templates, render_response};
@@ -49,6 +49,10 @@ pub enum ResolveOutcome {
         plan: ResponsePlan,
         /// The selected Behavior's `delay`, applied before responding or forwarding.
         delay: Option<std::time::Duration>,
+        /// Candidates rejected before the winner, in evaluation order.
+        skipped: Vec<Candidate>,
+        /// The winning Case's `match`; every condition in it passed.
+        conditions: serde_json::Value,
     },
     Miss(MissDiagnostic),
 }
@@ -57,7 +61,34 @@ pub enum ResolveOutcome {
 pub struct MissDiagnostic {
     pub collection: String,
     pub reason: String,
-    pub checked: Vec<String>,
+    /// Every active route entry evaluated, bottom-to-top, with why it was rejected.
+    pub candidates: Vec<Candidate>,
+}
+
+/// One evaluated active route entry and why it did not match.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct Candidate {
+    pub address: String,
+    #[serde(flatten)]
+    pub rejection: Rejection,
+}
+
+/// Why a Candidate was rejected. `method`/`path` hold the Route's value; the request's is known.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "reason", rename_all = "camelCase")]
+pub enum Rejection {
+    MissingRoute,
+    MissingCase,
+    MissingBehavior,
+    /// The Route serves another transport (an HTTP request against a gRPC Route, or back).
+    Transport,
+    Method {
+        expected: String,
+    },
+    Path {
+        expected: String,
+    },
+    Condition(ConditionFailure),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -235,7 +266,7 @@ impl Catalog {
             }
             ResolveOutcome::Miss(miss) => HttpExecutionOutcome::Response {
                 activation: None,
-                response: match ResponsePlan::fail_closed_miss(miss.reason) {
+                response: match ResponsePlan::explained_miss(&miss) {
                     ResponsePlan::Response(response) => response.into(),
                     ResponsePlan::Passthrough(_) => unreachable!("fail-closed miss is a response"),
                 },
@@ -287,33 +318,45 @@ impl Catalog {
                 return ResolveOutcome::Miss(MissDiagnostic {
                     collection: collection_id.to_owned(),
                     reason,
-                    checked: Vec::new(),
+                    candidates: Vec::new(),
                 });
             }
         };
 
-        let mut checked = Vec::new();
+        let mut candidates = Vec::new();
 
         for activation in activations.iter().rev() {
-            checked.push(activation.address());
+            let reject = |rejection| Candidate {
+                address: activation.address(),
+                rejection,
+            };
 
             let Some(route) = self.routes.get(&activation.route) else {
+                candidates.push(reject(Rejection::MissingRoute));
                 continue;
             };
 
             let RouteMatch::Http(route_match) = &route.route_match else {
+                candidates.push(reject(Rejection::Transport));
                 continue;
             };
 
             if route_match.method != request.method {
+                candidates.push(reject(Rejection::Method {
+                    expected: route_match.method.as_str().to_owned(),
+                }));
                 continue;
             }
 
             let Some(path_params) = match_path(&route_match.path, &request.path) else {
+                candidates.push(reject(Rejection::Path {
+                    expected: route_match.path.clone(),
+                }));
                 continue;
             };
 
             let Some(case) = route.cases.get(&activation.case) else {
+                candidates.push(reject(Rejection::MissingCase));
                 continue;
             };
 
@@ -323,11 +366,13 @@ impl Catalog {
                 path_params: &path_params,
                 envelope: &request.envelope,
             };
-            if !case_matches(&case.case_match, &input) {
+            if let Some(failure) = case_mismatch(&case.case_match, &input) {
+                candidates.push(reject(Rejection::Condition(failure)));
                 continue;
             }
 
             let Some(behavior) = case.behaviors.get(&activation.behavior) else {
+                candidates.push(reject(Rejection::MissingBehavior));
                 continue;
             };
 
@@ -355,13 +400,15 @@ impl Catalog {
                 path_params,
                 plan,
                 delay: behavior.delay(),
+                skipped: candidates,
+                conditions: case.case_match.clone(),
             };
         }
 
         ResolveOutcome::Miss(MissDiagnostic {
             collection: collection_id.to_owned(),
             reason: "no active route case matched request".to_owned(),
-            checked,
+            candidates,
         })
     }
 }
@@ -1344,8 +1391,102 @@ cases:
         assert_eq!(response.header("x-mock-miss"), Some("true"));
     }
 
+    fn candidate(address: &str, rejection: Rejection) -> Candidate {
+        Candidate {
+            address: address.to_owned(),
+            rejection,
+        }
+    }
+
+    fn explain_catalog() -> Catalog {
+        let create_user = Route::from_yaml(
+            "id: create-user\ntransport: http\nmatch: { method: POST, path: '/users/{id}' }\ncases:\n  any:\n    behaviors:\n      ok: { status: 201 }\n",
+        )
+        .unwrap();
+        let list_users = Route::from_yaml(
+            "id: list-users\ntransport: http\nmatch: { method: GET, path: /users }\ncases:\n  any:\n    behaviors:\n      ok: { status: 200 }\n",
+        )
+        .unwrap();
+        Catalog::new(
+            vec![get_user_route(), create_user, list_users],
+            CollectionsFile::from_yaml(
+                r#"
+- id: local
+  routes:
+    - get-user:any:fallback
+    - get-user:any:ghost
+    - get-user:user-123:success
+    - get-user:ghost:ok
+    - list-users:any:ok
+    - create-user:any:ok
+    - ghost:any:ok
+"#,
+            )
+            .unwrap(),
+            RuntimeConfig::default(),
+        )
+        .unwrap()
+    }
+
+    fn get(path: &str) -> HttpRequest {
+        HttpRequest {
+            method: HttpMethod::Get,
+            path: path.to_owned(),
+            ..Default::default()
+        }
+    }
+
     #[test]
-    fn golden_fail_closed_miss_contains_checked_addresses() {
+    fn a_hit_explains_skipped_candidates_and_the_winner() {
+        let ResolveOutcome::Matched {
+            activation,
+            path_params,
+            skipped,
+            conditions,
+            ..
+        } = explain_catalog().resolve_http("local", &get("/users/456"))
+        else {
+            panic!("expected match")
+        };
+
+        assert_eq!(activation.address(), "get-user:any:fallback");
+        assert_eq!(path_params["id"], "456");
+        assert_eq!(
+            conditions,
+            serde_json::json!({ "pathParams": { "id": "*" } })
+        );
+        assert_eq!(
+            skipped,
+            vec![
+                candidate("ghost:any:ok", Rejection::MissingRoute),
+                candidate(
+                    "create-user:any:ok",
+                    Rejection::Method {
+                        expected: "POST".to_owned()
+                    }
+                ),
+                candidate(
+                    "list-users:any:ok",
+                    Rejection::Path {
+                        expected: "/users".to_owned()
+                    }
+                ),
+                candidate("get-user:ghost:ok", Rejection::MissingCase),
+                candidate(
+                    "get-user:user-123:success",
+                    Rejection::Condition(ConditionFailure {
+                        field: "pathParams.id".to_owned(),
+                        expected: serde_json::json!("123"),
+                        actual: serde_json::json!("456"),
+                    })
+                ),
+                candidate("get-user:any:ghost", Rejection::MissingBehavior),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_miss_lists_every_candidate_in_the_fail_closed_body() {
         let catalog = catalog(
             r#"
 - id: local
@@ -1354,38 +1495,41 @@ cases:
 "#,
         );
 
-        let outcome = catalog.resolve_http(
-            "local",
-            &HttpRequest {
-                method: HttpMethod::Get,
-                path: "/users/456".to_owned(),
-                ..Default::default()
-            },
-        );
-
         assert_eq!(
-            outcome,
+            catalog.resolve_http("local", &get("/users/456")),
             ResolveOutcome::Miss(MissDiagnostic {
                 collection: "local".to_owned(),
                 reason: "no active route case matched request".to_owned(),
-                checked: vec!["get-user:user-123:success".to_owned()],
+                candidates: vec![candidate(
+                    "get-user:user-123:success",
+                    Rejection::Condition(ConditionFailure {
+                        field: "pathParams.id".to_owned(),
+                        expected: serde_json::json!("123"),
+                        actual: serde_json::json!("456"),
+                    })
+                )],
             })
         );
 
-        let ResolveOutcome::Miss(miss) = outcome else {
-            panic!("expected miss")
+        let HttpExecutionOutcome::Response { response, .. } = catalog
+            .execute_http("local", execution_request("/users/456", "/users/456"))
+            .await
+        else {
+            panic!("expected fail-closed response")
         };
+        assert_eq!(response.status, 501);
+        assert_eq!(response.header("x-mock-miss"), Some("true"));
         assert_eq!(
-            ResponsePlan::fail_closed_miss(miss.reason),
-            ResponsePlan::Response(HttpResponsePlan {
-                status: 501,
-                headers: BTreeMap::from([
-                    ("x-mock-miss".to_owned(), "true".to_owned()),
-                    ("content-type".to_owned(), "application/json".to_owned()),
-                ]),
-                body: Some(BodyPlan::Json(serde_json::json!({
-                    "error": "no active route case matched request"
-                }))),
+            serde_json::from_slice::<serde_json::Value>(&response.body).unwrap(),
+            serde_json::json!({
+                "error": "no active route case matched request",
+                "candidates": [{
+                    "address": "get-user:user-123:success",
+                    "reason": "condition",
+                    "field": "pathParams.id",
+                    "expected": "123",
+                    "actual": "456",
+                }],
             })
         );
     }

@@ -101,7 +101,13 @@ cases:
     assert_eq!(miss.headers()["x-mock-miss"], "true");
     assert_eq!(
         miss.json::<serde_json::Value>().await.unwrap(),
-        serde_json::json!({ "error": "no active route case matched request" })
+        serde_json::json!({
+            "error": "no active route case matched request",
+            "candidates": [
+                { "address": "users-by-id:user-123:success", "reason": "path", "expected": "/users/{id}" },
+                { "address": "users:any:fallback", "reason": "path", "expected": "/users/{id}" },
+            ],
+        })
     );
 }
 

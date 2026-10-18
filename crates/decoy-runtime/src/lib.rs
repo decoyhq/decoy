@@ -27,8 +27,9 @@ pub use control_api::{
     handle_control_request, try_handle_control_request,
 };
 pub use engine::{
-    Catalog, ControlError, Controller, HttpExecutionOutcome, HttpExecutionRequest, HttpRequest,
-    MissDiagnostic, ResolveOutcome, RouteOverrideSnapshot, Selection, SelectionSnapshot,
+    Candidate, Catalog, ControlError, Controller, HttpExecutionOutcome, HttpExecutionRequest,
+    HttpRequest, MissDiagnostic, Rejection, ResolveOutcome, RouteOverrideSnapshot, Selection,
+    SelectionSnapshot,
 };
 pub use http::{
     BodyPlan, HttpResponsePlan, PassthroughPlan, RequestMetadata, ResponsePlan, RuntimeConfig,
