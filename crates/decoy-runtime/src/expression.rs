@@ -196,14 +196,33 @@ pub fn validate_predicate(predicate: &str) -> Result<(), String> {
 }
 
 /// Evaluate a validated predicate against `envelope`. JMESPath truthiness: `null`, `false`, `""`,
-/// `[]`, and `{}` are false. An evaluation error (e.g. a function given the wrong type) is false.
+/// `[]`, and `{}` are false. An evaluation error (e.g. a function given the wrong type) is false,
+/// and logged so the miss it causes isn't silent.
 pub fn predicate_holds(predicate: &str, envelope: &Value) -> bool {
-    let Ok(expression) = predicate_source(predicate).and_then(|source| compile(&source)) else {
-        return false;
-    };
-    expression
-        .search(envelope)
-        .is_ok_and(|result| result.is_truthy())
+    let result = predicate_source(predicate)
+        .and_then(|source| compile(&source))
+        .and_then(|expression| {
+            expression
+                .search(envelope)
+                .map_err(|error| error.to_string())
+        });
+    match result {
+        Ok(result) => result.is_truthy(),
+        Err(error) => {
+            // Once per predicate: a fallback Case checked on every request mustn't flood stderr.
+            static LOGGED: std::sync::Mutex<std::collections::BTreeSet<String>> =
+                std::sync::Mutex::new(std::collections::BTreeSet::new());
+            if LOGGED
+                .lock()
+                .is_ok_and(|mut logged| logged.insert(predicate.to_owned()))
+            {
+                eprintln!(
+                    "decoy serve: predicate `{predicate}` failed, treated as false (logged once): {error}"
+                );
+            }
+            false
+        }
+    }
 }
 
 #[cfg(test)]

@@ -353,11 +353,13 @@ fn match_path(pattern: &str, actual: &str) -> Option<BTreeMap<String, String>> {
     for (pattern_part, actual_part) in pattern_parts.iter().zip(actual_parts) {
         if pattern_part.starts_with('{') && pattern_part.ends_with('}') {
             let name = &pattern_part[1..pattern_part.len() - 1];
-            params.insert(name.to_owned(), actual_part.to_owned());
+            // Decoded like query values, so `/users/a%20b` gives `a b`.
+            let value = percent_encoding::percent_decode_str(actual_part).decode_utf8_lossy();
+            params.insert(name.to_owned(), value.into_owned());
             continue;
         }
 
-        if *pattern_part != actual_part {
+        if *pattern_part != percent_encoding::percent_decode_str(actual_part).decode_utf8_lossy() {
             return None;
         }
     }
