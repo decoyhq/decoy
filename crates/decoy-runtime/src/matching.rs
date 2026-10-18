@@ -18,6 +18,9 @@ pub struct MatchInput<'a> {
     pub path: &'a str,
     pub path_params: &'a BTreeMap<String, String>,
     pub envelope: &'a RequestEnvelope,
+    /// The envelope's JSON, built on first predicate and shared across candidates; when set, its
+    /// `pathParams` must be this input's.
+    pub json: &'a OnceCell<Value>,
 }
 
 const HTTP_FIELDS: [&str; 5] = ["pathParams", "query", "headers", "cookies", "body"];
@@ -126,9 +129,8 @@ pub fn case_matches(case_match: &Value, input: &MatchInput) -> bool {
 }
 
 fn case_failure<F: Failure>(case_match: &Value, input: &MatchInput) -> Option<F> {
-    let request = OnceCell::new();
     let request = || {
-        request.get_or_init(|| {
+        input.json.get_or_init(|| {
             input
                 .envelope
                 .to_json(input.method, input.path, input.path_params)
@@ -586,6 +588,7 @@ mod tests {
             path: "/orders/7",
             path_params: &params(&[("id", "7")]),
             envelope: request,
+            json: &OnceCell::new(),
         };
         let failure = case_mismatch(&pattern, &input);
         assert_eq!(

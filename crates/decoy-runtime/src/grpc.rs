@@ -207,6 +207,8 @@ impl Catalog {
         };
 
         let mut candidates = explain.then(Vec::new);
+        // Decoded once per call; only another Pipeline needs a fresh decode.
+        let mut decoded: Option<(&[PipelineStep], Value)> = None;
         for activation in activations.iter().rev() {
             let Some(route) = self.route(&activation.route) else {
                 reject(&mut candidates, activation, || Rejection::MissingRoute);
@@ -228,36 +230,43 @@ impl Catalog {
                 reject(&mut candidates, activation, || Rejection::MissingRoute);
                 continue;
             };
-            let message = match decode(&request.body, pipeline(route), &method.input()) {
-                Ok(message) => message,
-                Err(reason) => {
-                    return GrpcResolution::Failed(GrpcResponse::error(
-                        INVALID_ARGUMENT,
-                        format!(
-                            "route `{}` could not decode the request: {reason}",
-                            route.id
-                        ),
-                    ));
+            let steps = pipeline(route);
+            let envelope = match &mut decoded {
+                Some((cached, envelope)) if *cached == steps => envelope,
+                _ => {
+                    let message = match decode(&request.body, steps, &method.input()) {
+                        Ok(message) => message,
+                        Err(reason) => {
+                            return GrpcResolution::Failed(GrpcResponse::error(
+                                INVALID_ARGUMENT,
+                                format!(
+                                    "route `{}` could not decode the request: {reason}",
+                                    route.id
+                                ),
+                            ));
+                        }
+                    };
+                    let envelope = json!({
+                        "service": request.service,
+                        "method": request.method,
+                        "metadata": request.metadata,
+                        "message": message,
+                    });
+                    &mut decoded.insert((steps, envelope)).1
                 }
             };
-            let envelope = json!({
-                "service": request.service,
-                "method": request.method,
-                "metadata": request.metadata,
-                "message": message,
-            });
             let Some(case) = route.cases.get(&activation.case) else {
                 reject(&mut candidates, activation, || Rejection::MissingCase);
                 continue;
             };
             if explain {
-                if let Some(failure) = grpc_case_mismatch(&case.case_match, &envelope) {
+                if let Some(failure) = grpc_case_mismatch(&case.case_match, envelope) {
                     reject(&mut candidates, activation, || {
                         Rejection::Condition(failure)
                     });
                     continue;
                 }
-            } else if !grpc_case_matches(&case.case_match, &envelope) {
+            } else if !grpc_case_matches(&case.case_match, envelope) {
                 continue;
             }
             let Some(Behavior::Response(response)) = case.behaviors.get(&activation.behavior)
@@ -272,7 +281,7 @@ impl Catalog {
                 route,
                 method,
                 response,
-                envelope,
+                envelope: std::mem::take(envelope),
             };
         }
 
