@@ -156,6 +156,15 @@ impl Catalog {
         self.resolve_http_with_metadata(collection_id, request, &RequestMetadata::default())
     }
 
+    /// Every Route, by id.
+    pub fn routes(&self) -> impl Iterator<Item = &Route> {
+        self.routes.values()
+    }
+
+    pub fn collection_ids(&self) -> impl Iterator<Item = &str> {
+        self.collections.ids()
+    }
+
     pub fn validate_collection(&self, collection_id: &str) -> Result<(), ControlError> {
         self.collections
             .get(collection_id)
@@ -863,6 +872,11 @@ impl Controller {
             self.emit(session, SessionChange::Ended);
         }
         self.selection(session).snapshot()
+    }
+
+    /// The Routes and Collections this Controller serves, for read-only inspection.
+    pub fn catalog(&self) -> Arc<Catalog> {
+        Arc::clone(&self.catalog)
     }
 
     /// The Session's Selection; the defaults for a Session that holds none.

@@ -1,0 +1,14 @@
+---
+source: crates/decoy-tui/src/ui.rs
+expression: "styled(&render(&mut app, 80, 10))"
+---
+
+
+[DIM]╭───────────────────╮[/]
+[DIM]│[/] ada     [DIM] behavior[/] [DIM]│[/]
+[DIM]│[/][Cyan REVERSED] missing [/][DIM] behavior[/] [DIM]│[/]
+[DIM]╰───────────────────╯[/]
+[Cyan]╭──────────────────────────────────────────────────────────────────────────────╮[/]
+[Cyan]│[/][Cyan BOLD]› [/]/route users-by-id:user-1:                                                  [Cyan]│[/]
+[Cyan]╰──────────────────────────────────────────────────────────────────────────────╯[/]
+[DIM] http://127.0.0.1:4010 · session default · collection happy-path · 0 overrides  [/]

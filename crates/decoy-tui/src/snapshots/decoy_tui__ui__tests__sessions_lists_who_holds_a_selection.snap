@@ -1,0 +1,24 @@
+---
+source: crates/decoy-tui/src/ui.rs
+expression: "after(&[\"/session fresh\", \"/sessions\"], |app|\n{\n    app.handle_event(session_event(\"default\", SessionChange::UseCollection,\n    &[]));\n    app.handle_event(session_event(\"e2e-1\", SessionChange::UseRoute,\n    &[\"orders:any:ok\"],));\n})"
+---
+session default collection errors (control api)
+session e2e-1 route orders:any:ok (control api)
+› /session fresh
+new session fresh active (defaults until its first change)
+› /sessions
+  default          collection errors · 0 overrides
+  e2e-1            collection errors · 1 override
+* fresh            (defaults)
+
+
+
+
+
+
+
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│› type / for commands                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ http://127.0.0.1:4010 · session fresh · collection happy-path · 0 overrides

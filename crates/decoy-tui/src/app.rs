@@ -1,6 +1,7 @@
 //! The TUI's state, driven by [`App::handle_event`] so it can be tested without a terminal.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use crossterm::event::{
@@ -10,10 +11,18 @@ use crossterm::event::{
 use decoy_runtime::events::{
     Event as RuntimeEvent, Level, LogEvent, SessionChange, SessionEvent, SessionSource,
 };
-use decoy_runtime::{RouteOverrideSnapshot, SelectionSnapshot};
+use decoy_runtime::{Activation, Catalog, RouteOverrideSnapshot, SelectionSnapshot};
 use ratatui::layout::{Position, Rect};
 
+use crate::command::{COMMANDS, Command};
+use crate::complete::{Completion, Sources, complete};
 use crate::log::{Entry, Log, RequestLine, Theme};
+
+const KEYS: &[&str] = &[
+    "keys: ↑↓ pick · Tab/→ complete · Enter run · Esc close · ↑↓ history (no popup)",
+    "      PgUp/PgDn/Home/End or wheel scroll · drag select + copy · Shift+drag terminal selection",
+    "      Ctrl+U clear line · Ctrl+C clear, twice quits · Ctrl+D quit on empty input",
+];
 
 /// Something that happened: input from the terminal or news from the runtime.
 #[derive(Debug, Clone)]
@@ -22,6 +31,8 @@ pub enum Event {
     Runtime(RuntimeEvent),
     /// The runtime broadcast dropped this many events because the TUI fell behind.
     Lagged(u64),
+    /// An [`Effect::Control`] failed; the Controller's error, as the Control API words it.
+    ControlFailed(String),
 }
 
 /// Something [`App::handle_event`] asks the caller to do.
@@ -30,6 +41,18 @@ pub enum Effect {
     Quit,
     /// Put the text on the clipboard (OSC 52).
     Copy(String),
+    /// Call a Controller verb on `session`; report a failure back as [`Event::ControlFailed`].
+    Control {
+        session: String,
+        verb: Verb,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Verb {
+    UseCollection(String),
+    UseRoute(Activation),
+    Reset,
 }
 
 /// What the TUI starts from.
@@ -38,6 +61,8 @@ pub struct Options {
     pub listen: String,
     /// The default Session's Selection at startup.
     pub selection: SelectionSnapshot,
+    /// The Routes and Collections, for completion.
+    pub catalog: Arc<Catalog>,
     pub no_color: bool,
     /// Formats a log line's time; tests pass a fixed zone.
     pub clock: fn(SystemTime) -> String,
@@ -50,11 +75,22 @@ pub struct App {
     /// What a Session without its own Selection reads as.
     pub(crate) defaults: SelectionSnapshot,
     pub(crate) selections: BTreeMap<String, SelectionSnapshot>,
+    /// Every Session seen in a request or a Selection change, for `/session` completion.
+    seen: BTreeSet<String>,
+    catalog: Arc<Catalog>,
     pub(crate) no_color: bool,
     pub(crate) clock: fn(SystemTime) -> String,
 
     pub(crate) log: Log,
     pub(crate) input: String,
+    /// Submitted lines, oldest first, for ↑/↓.
+    history: Vec<String>,
+    /// The history entry ↑/↓ put in the input.
+    history_at: Option<usize>,
+    /// The highlighted completion.
+    pub(crate) popup: usize,
+    /// Esc closed the popup; the next edit opens it again.
+    popup_closed: bool,
     /// A Ctrl+C on empty input armed quitting; the next one quits.
     ctrl_c_armed: bool,
     /// Replaces the status bar until the next key.
@@ -81,10 +117,16 @@ impl App {
             session: decoy_runtime::DEFAULT_SESSION.to_owned(),
             defaults: options.selection,
             selections: BTreeMap::new(),
+            seen: BTreeSet::from([decoy_runtime::DEFAULT_SESSION.to_owned()]),
+            catalog: options.catalog,
             no_color: options.no_color,
             clock: options.clock,
             log: Log::default(),
             input: String::new(),
+            history: Vec::new(),
+            history_at: None,
+            popup: 0,
+            popup_closed: false,
             ctrl_c_armed: false,
             hint: None,
             scroll: 0,
@@ -108,7 +150,7 @@ impl App {
             }
             Event::Terminal(TermEvent::Mouse(mouse)) => self.on_mouse(mouse),
             Event::Terminal(TermEvent::Paste(text)) => {
-                self.input.push_str(&text.replace(['\r', '\n'], " "));
+                self.edit(|input| input.push_str(&text.replace(['\r', '\n'], " ")));
                 vec![]
             }
             Event::Terminal(_) => vec![],
@@ -120,6 +162,10 @@ impl App {
                 self.push(Entry::Warn(format!(
                     "the log fell behind; {dropped} events dropped"
                 )));
+                vec![]
+            }
+            Event::ControlFailed(error) => {
+                self.push(Entry::Error(error));
                 vec![]
             }
         }
@@ -135,6 +181,20 @@ impl App {
 
     pub(crate) fn selection(&self) -> &SelectionSnapshot {
         self.selections.get(&self.session).unwrap_or(&self.defaults)
+    }
+
+    /// What the popup offers for the current input; empty when it is closed.
+    pub(crate) fn completions(&self) -> Vec<Completion> {
+        if self.popup_closed {
+            return Vec::new();
+        }
+        let sources = Sources {
+            catalog: &self.catalog,
+            sessions: self.seen.iter().map(String::as_str).collect(),
+            session: &self.session,
+            collection: &self.selection().collection,
+        };
+        complete(&self.input, &sources)
     }
 
     fn push(&mut self, entry: Entry) {
@@ -153,6 +213,9 @@ impl App {
     fn on_runtime(&mut self, event: RuntimeEvent) {
         match event {
             RuntimeEvent::Request(request) => {
+                if !self.seen.contains(&request.session) {
+                    self.seen.insert(request.session.clone());
+                }
                 self.push(Entry::Request(RequestLine::from(&*request)));
             }
             RuntimeEvent::Session(event) => self.on_session(event),
@@ -170,6 +233,7 @@ impl App {
             source,
             selection,
         } = event;
+        self.seen.insert(session.clone());
         let before = self.selections.get(&session).unwrap_or(&self.defaults);
         let what = match change {
             SessionChange::Created => return,
@@ -229,6 +293,7 @@ impl App {
             }
         }
 
+        let items = self.completions();
         match key.code {
             KeyCode::Char('c') if ctrl => {
                 if !self.input.is_empty() {
@@ -242,38 +307,163 @@ impl App {
                 self.hint = Some("Ctrl+C again to quit".to_owned());
             }
             KeyCode::Char('d') if ctrl && self.input.is_empty() => return vec![Effect::Quit],
-            KeyCode::Char('u') if ctrl => self.input.clear(),
-            KeyCode::Char(c) if !ctrl => self.input.push(c),
-            KeyCode::Backspace => {
-                self.input.pop();
-            }
+            KeyCode::Char('u') if ctrl => self.edit(String::clear),
+            KeyCode::Char(c) if !ctrl => self.edit(|input| input.push(c)),
+            KeyCode::Backspace => self.edit(|input| {
+                input.pop();
+            }),
+            KeyCode::Esc if !items.is_empty() => self.popup_closed = true,
             KeyCode::Esc => self.follow(),
+            KeyCode::Down if !items.is_empty() => self.popup = (self.popup + 1) % items.len(),
+            KeyCode::Up | KeyCode::BackTab if !items.is_empty() => {
+                self.popup = (self.popup + items.len() - 1) % items.len();
+            }
+            KeyCode::Tab | KeyCode::Right if !items.is_empty() => {
+                self.accept(&items);
+            }
+            KeyCode::Enter if !items.is_empty() => {
+                if self.accept(&items) {
+                    return self.submit();
+                }
+            }
+            KeyCode::Up if !self.history.is_empty() => {
+                let at = self
+                    .history_at
+                    .map_or(self.history.len() - 1, |at| at.saturating_sub(1));
+                self.recall(Some(at));
+            }
+            KeyCode::Down if self.history_at.is_some() => {
+                let next = self.history_at.map(|at| at + 1);
+                self.recall(next.filter(|&at| at < self.history.len()));
+            }
             KeyCode::PageUp => self.scroll_log(true, self.page()),
             KeyCode::PageDown => self.scroll_log(false, self.page()),
             KeyCode::Home if ctrl || self.input.is_empty() => {
                 self.scroll = self.log.len().saturating_sub(1);
             }
             KeyCode::End if ctrl || self.input.is_empty() => self.follow(),
-            KeyCode::Enter => {
-                let text = std::mem::take(&mut self.input);
-                self.submit(text.trim());
-            }
+            KeyCode::Enter => return self.submit(),
             _ => {}
         }
         vec![]
     }
 
-    fn submit(&mut self, text: &str) {
+    /// Changes the input by hand, which reopens the popup and leaves the history.
+    fn edit(&mut self, change: impl FnOnce(&mut String)) {
+        change(&mut self.input);
+        self.popup = 0;
+        self.popup_closed = false;
+        self.history_at = None;
+    }
+
+    /// Puts a history entry (or, past the newest, an empty line) in the input, popup closed.
+    fn recall(&mut self, at: Option<usize>) {
+        self.input = at.map_or_else(String::new, |at| self.history[at].clone());
+        self.history_at = at;
+        self.popup_closed = true;
+    }
+
+    /// Applies the highlighted completion; true when that leaves a whole command.
+    fn accept(&mut self, items: &[Completion]) -> bool {
+        let item = &items[self.popup.min(items.len() - 1)];
+        self.input.truncate(item.from);
+        self.input.push_str(&item.insert);
+        self.popup = 0;
+        self.popup_closed = false;
+        item.done
+    }
+
+    /// Runs the input line: echoes it, then the command's result or error.
+    fn submit(&mut self) -> Vec<Effect> {
+        let text = std::mem::take(&mut self.input).trim().to_owned();
+        self.edit(|_| {});
         if text.is_empty() {
-            return;
+            return vec![];
         }
-        self.push(Entry::Command(text.to_owned()));
+        if self.history.last() != Some(&text) {
+            self.history.push(text.clone());
+        }
+        self.push(Entry::Command(text.clone()));
         self.follow();
-        match text.split_whitespace().next() {
-            Some(command) if command.starts_with('/') => {
-                self.push(Entry::Error(format!("unknown command {command}")));
+        let command = match crate::command::parse(&text) {
+            Ok(command) => command,
+            Err(error) if text.starts_with('/') => {
+                self.push(Entry::Error(error));
+                return vec![];
             }
-            _ => self.info("commands start with /"),
+            Err(hint) => {
+                self.info(hint);
+                return vec![];
+            }
+        };
+        let control = |verb| {
+            vec![Effect::Control {
+                session: self.session.clone(),
+                verb,
+            }]
+        };
+        match command {
+            Command::Collection(id) => return control(Verb::UseCollection(id)),
+            Command::Route(address) => return control(Verb::UseRoute(address)),
+            Command::Reset => return control(Verb::Reset),
+            Command::Quit => return vec![Effect::Quit],
+            Command::Session(id) => {
+                if self.seen.contains(&id) {
+                    self.info(format!("session {id} active"));
+                } else {
+                    self.info(format!(
+                        "new session {id} active (defaults until its first change)"
+                    ));
+                    self.seen.insert(id.clone());
+                }
+                self.session = id;
+            }
+            Command::Sessions => self.sessions(),
+            Command::Status => self.status(),
+            Command::Help => {
+                for spec in COMMANDS {
+                    let usage = format!("{} {}", spec.name, spec.args);
+                    self.info(format!("  {usage:<32} {}", spec.about));
+                }
+                for line in KEYS {
+                    self.info(format!("  {line}"));
+                }
+            }
+        }
+        vec![]
+    }
+
+    fn sessions(&mut self) {
+        let mut lines: Vec<String> = self
+            .selections
+            .iter()
+            .map(|(id, selection)| {
+                let mark = if *id == self.session { "*" } else { " " };
+                format!(
+                    "{mark} {id:<16} collection {} · {}",
+                    selection.collection,
+                    overrides(selection.overrides.len())
+                )
+            })
+            .collect();
+        if !self.selections.contains_key(&self.session) {
+            lines.push(format!("* {:<16} (defaults)", self.session));
+        }
+        for line in lines {
+            self.info(line);
+        }
+    }
+
+    fn status(&mut self) {
+        let selection = self.selection().clone();
+        self.info(format!(
+            "session {} · collection {} · {}",
+            self.session,
+            selection.collection,
+            overrides(selection.overrides.len())
+        ));
+        for one in &selection.overrides {
+            self.info(format!("  {}", one.address()));
         }
     }
 
@@ -308,11 +498,7 @@ impl App {
             .filter_map(|index| self.log.get(index))
             .map(|entry| crate::log::plain(&theme.line(entry, columns)))
             .collect();
-        let count = text.len();
-        self.hint = Some(format!(
-            "copied {count} line{}",
-            if count == 1 { "" } else { "s" }
-        ));
+        self.hint = Some(format!("copied {}", plural(text.len(), "line")));
         vec![Effect::Copy(text.join("\n"))]
     }
 
@@ -368,6 +554,15 @@ impl App {
     }
 }
 
+/// `1 override`, `2 overrides`.
+pub(crate) fn overrides(count: usize) -> String {
+    plural(count, "override")
+}
+
+fn plural(count: usize, noun: &str) -> String {
+    format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use std::sync::Arc;
@@ -397,6 +592,7 @@ pub(crate) mod tests {
                 collection: "happy-path".into(),
                 overrides: vec![],
             },
+            catalog: Arc::new(crate::complete::tests::catalog()),
             no_color: false,
             clock: utc_clock,
         })
@@ -559,7 +755,9 @@ pub(crate) mod tests {
         assert_eq!(app.log.get(0), Some(&Entry::Command("hello".into())));
         assert_eq!(
             app.log.get(1),
-            Some(&Entry::Info("commands start with /".into()))
+            Some(&Entry::Info(
+                "commands start with /; free text is reserved (try /help)".into()
+            ))
         );
         assert_eq!(app.input, "");
     }
@@ -701,5 +899,155 @@ pub(crate) mod tests {
         assert!(
             matches!(entries[2], Entry::Info(text) if text == "session e2e-1 overrides cleared")
         );
+    }
+    fn enter() -> Event {
+        key(KeyCode::Enter, KeyModifiers::NONE)
+    }
+
+    fn tab() -> Event {
+        key(KeyCode::Tab, KeyModifiers::NONE)
+    }
+
+    fn infos(app: &App) -> Vec<String> {
+        (0..app.log.len())
+            .filter_map(|i| match app.log.get(i) {
+                Some(Entry::Info(text) | Entry::Error(text)) => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn route_completes_segment_by_segment_and_runs_on_enter() {
+        let mut app = app();
+        typed(&mut app, "/route users");
+        app.handle_event(tab());
+        assert_eq!(app.input, "/route users-by-id:");
+        typed(&mut app, "user-1:");
+        app.handle_event(tab());
+        assert_eq!(app.input, "/route users-by-id:user-1:ada");
+        assert_eq!(
+            app.handle_event(enter()),
+            [Effect::Control {
+                session: "default".into(),
+                verb: Verb::UseRoute(Activation::parse("users-by-id:user-1:ada").unwrap()),
+            }]
+        );
+        assert_eq!(
+            app.log.get(0),
+            Some(&Entry::Command("/route users-by-id:user-1:ada".into()))
+        );
+    }
+
+    #[test]
+    fn enter_on_a_partial_argument_accepts_the_pick_and_runs() {
+        let mut app = app();
+        typed(&mut app, "/collection er");
+        assert_eq!(
+            app.handle_event(enter()),
+            [Effect::Control {
+                session: "default".into(),
+                verb: Verb::UseCollection("errors".into()),
+            }]
+        );
+    }
+
+    #[test]
+    fn enter_on_a_command_that_takes_an_argument_only_completes_it() {
+        let mut app = app();
+        typed(&mut app, "/coll");
+        assert_eq!(app.handle_event(enter()), []);
+        assert_eq!(app.input, "/collection ");
+    }
+
+    #[test]
+    fn arrows_pick_and_esc_closes_the_popup_until_the_next_edit() {
+        let mut app = app();
+        typed(&mut app, "/s");
+        app.handle_event(key(KeyCode::Down, KeyModifiers::NONE));
+        app.handle_event(key(KeyCode::Down, KeyModifiers::NONE));
+        app.handle_event(key(KeyCode::Right, KeyModifiers::NONE));
+        assert_eq!(app.input, "/status");
+        app.handle_event(key(KeyCode::Backspace, KeyModifiers::NONE));
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.completions().is_empty());
+        typed(&mut app, "s");
+        assert_eq!(app.completions().len(), 1);
+    }
+
+    #[test]
+    fn reset_and_quit_map_to_their_effects_on_the_active_session() {
+        let mut app = app();
+        typed(&mut app, "/session e2e-1");
+        app.handle_event(enter());
+        typed(&mut app, "/reset");
+        assert_eq!(
+            app.handle_event(enter()),
+            [Effect::Control {
+                session: "e2e-1".into(),
+                verb: Verb::Reset,
+            }]
+        );
+        typed(&mut app, "/quit");
+        assert_eq!(app.handle_event(enter()), [Effect::Quit]);
+    }
+
+    #[test]
+    fn switching_to_an_unknown_session_says_it_is_new() {
+        let mut app = app();
+        app.handle_event(from_session(1, "e2e-1"));
+        typed(&mut app, "/session e2e-1");
+        app.handle_event(enter());
+        typed(&mut app, "/session fresh");
+        app.handle_event(enter());
+        assert_eq!(
+            infos(&app),
+            [
+                "session e2e-1 active",
+                "new session fresh active (defaults until its first change)"
+            ]
+        );
+        assert_eq!(app.session, "fresh");
+    }
+
+    #[test]
+    fn control_failures_and_bad_input_print_errors() {
+        let mut app = app();
+        app.handle_event(Event::ControlFailed("unknown collection `nope`".into()));
+        typed(&mut app, "/route nope");
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_event(enter());
+        typed(&mut app, "hello");
+        app.handle_event(enter());
+        assert_eq!(
+            infos(&app),
+            [
+                "unknown collection `nope`",
+                "usage: /route <route:case:behavior>",
+                "commands start with /; free text is reserved (try /help)",
+            ]
+        );
+    }
+
+    #[test]
+    fn up_and_down_walk_the_history_when_the_popup_is_closed() {
+        let mut app = app();
+        for line in ["/status", "/sessions", "/sessions"] {
+            typed(&mut app, line);
+            app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+            app.handle_event(enter());
+        }
+        let up = || key(KeyCode::Up, KeyModifiers::NONE);
+        let down = || key(KeyCode::Down, KeyModifiers::NONE);
+        app.handle_event(up());
+        assert_eq!(app.input, "/sessions");
+        app.handle_event(up());
+        assert_eq!(app.input, "/status");
+        app.handle_event(up());
+        assert_eq!(app.input, "/status");
+        app.handle_event(down());
+        assert_eq!(app.input, "/sessions");
+        app.handle_event(down());
+        assert_eq!(app.input, "");
     }
 }

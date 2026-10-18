@@ -2,9 +2,12 @@
 //! log, an input box and a status bar, fullscreen in the alternate screen.
 
 mod app;
+mod command;
+mod complete;
 mod log;
 mod ui;
 
+use std::collections::VecDeque;
 use std::io::Write;
 
 use base64::Engine;
@@ -14,13 +17,14 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::supports_keyboard_enhancement;
-use decoy_runtime::{DEFAULT_SESSION, ServeError, Server};
+use decoy_runtime::{ControlError, Controller, DEFAULT_SESSION, ServeError, Server};
 use futures_util::{Stream, StreamExt};
 use ratatui::Terminal;
 use ratatui::backend::Backend;
+use tokio::sync::RwLock;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
-pub use app::{App, Effect, Event, Options};
+pub use app::{App, Effect, Event, Options, Verb};
 
 /// Runtime events handled per frame, so a burst of traffic draws once and keys stay responsive.
 const BATCH: usize = 1024;
@@ -29,11 +33,14 @@ const BATCH: usize = 1024;
 /// the terminal and waits for the server to drain. `quit` must resolve the shutdown future the
 /// server was started with.
 pub async fn run(server: Server, quit: tokio::sync::oneshot::Sender<()>) -> Result<(), ServeError> {
-    let selection = server
-        .controller
-        .read()
-        .await
-        .selection_snapshot(DEFAULT_SESSION);
+    let controller = server.controller.clone();
+    let (selection, catalog) = {
+        let controller = controller.read().await;
+        (
+            controller.selection_snapshot(DEFAULT_SESSION),
+            controller.catalog(),
+        )
+    };
     let listen = server
         .listeners
         .iter()
@@ -44,6 +51,7 @@ pub async fn run(server: Server, quit: tokio::sync::oneshot::Sender<()>) -> Resu
     let mut app = App::new(Options {
         listen,
         selection,
+        catalog,
         no_color: std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()),
         clock: log::local_clock,
     });
@@ -82,6 +90,7 @@ pub async fn run(server: Server, quit: tokio::sync::oneshot::Sender<()>) -> Resu
         &mut EventStream::new(),
         &mut std::io::stdout(),
         &mut app,
+        &controller,
         &mut events,
         &mut served,
     )
@@ -128,6 +137,7 @@ async fn event_loop(
     input: &mut (impl Stream<Item = std::io::Result<crossterm::event::Event>> + Unpin),
     out: &mut impl Write,
     app: &mut App,
+    controller: &RwLock<Controller>,
     events: &mut tokio::sync::broadcast::Receiver<decoy_runtime::events::Event>,
     served: &mut Served,
 ) -> std::io::Result<Option<Result<(), ServeError>>> {
@@ -147,21 +157,41 @@ async fn event_loop(
             },
             stopped = &mut *served => return Ok(Some(joined(stopped))),
         };
-        let mut batch = vec![first];
+        let mut batch = VecDeque::from([first]);
         while batch.len() < BATCH {
             match events.try_recv() {
-                Ok(event) => batch.push(Event::Runtime(event)),
-                Err(TryRecvError::Lagged(dropped)) => batch.push(Event::Lagged(dropped)),
+                Ok(event) => batch.push_back(Event::Runtime(event)),
+                Err(TryRecvError::Lagged(dropped)) => batch.push_back(Event::Lagged(dropped)),
                 Err(_) => break,
             }
         }
-        for event in batch {
+        while let Some(event) = batch.pop_front() {
             for effect in app.handle_event(event) {
                 match effect {
                     Effect::Quit => return Ok(None),
                     Effect::Copy(text) => copy(out, &text)?,
+                    Effect::Control { session, verb } => {
+                        if let Err(error) = control(&mut *controller.write().await, &session, verb)
+                        {
+                            batch.push_back(Event::ControlFailed(error.to_string()));
+                        }
+                    }
                 }
             }
+        }
+    }
+}
+
+/// Runs one Controller verb, with the Control API's validation and errors.
+fn control(controller: &mut Controller, session: &str, verb: Verb) -> Result<(), ControlError> {
+    match verb {
+        Verb::UseCollection(id) => controller.try_use_collection(session, id).map(drop),
+        Verb::UseRoute(address) => controller
+            .try_use_route(session, address.route, address.case, address.behavior)
+            .map(drop),
+        Verb::Reset => {
+            controller.reset(session);
+            Ok(())
         }
     }
 }
@@ -176,6 +206,7 @@ fn copy(out: &mut impl Write, text: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use crossterm::event::{Event as TermEvent, KeyCode, KeyEvent, KeyModifiers};
+    use decoy_runtime::Activation;
     use decoy_runtime::events::{Event as RuntimeEvent, Level, LogEvent};
     use ratatui::backend::TestBackend;
     use tokio::sync::{broadcast, mpsc, oneshot};
@@ -189,6 +220,7 @@ mod tests {
     struct Harness {
         terminal: Terminal<TestBackend>,
         app: App,
+        controller: RwLock<Controller>,
         out: Vec<u8>,
         keys: mpsc::UnboundedSender<Input>,
         input: std::pin::Pin<Box<dyn Stream<Item = Input>>>,
@@ -206,6 +238,7 @@ mod tests {
             Self {
                 terminal: Terminal::new(TestBackend::new(80, 8)).unwrap(),
                 app: app::tests::app(),
+                controller: RwLock::new(Controller::new(complete::tests::catalog(), "happy-path")),
                 out: Vec::new(),
                 keys,
                 input: Box::pin(futures_util::stream::poll_fn(move |cx| rx.poll_recv(cx))),
@@ -244,6 +277,7 @@ mod tests {
                 &mut self.input,
                 &mut self.out,
                 &mut self.app,
+                &self.controller,
                 &mut self.events,
                 &mut self.served,
             )
@@ -321,6 +355,24 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_command_changes_the_controllers_selection() {
+        let mut harness = Harness::new(16);
+        let mut keys: Vec<Input> = "/collection errors"
+            .chars()
+            .map(|c| key(KeyCode::Char(c), KeyModifiers::NONE))
+            .collect();
+        keys.extend([key(KeyCode::Enter, KeyModifiers::NONE), ctrl_d()]);
+        harness.then_keys(keys);
+
+        assert!(harness.run().await.unwrap().is_none());
+        let controller = harness.controller.read().await;
+        assert_eq!(
+            controller.selection_snapshot("default").collection,
+            "errors"
+        );
+    }
+
+    #[tokio::test]
     async fn a_server_that_stops_ends_the_loop_with_its_result() {
         let mut harness = Harness::new(16);
         let stop = harness.stop.take().unwrap();
@@ -342,5 +394,55 @@ mod tests {
             .send(Err(std::io::Error::other("tty gone")))
             .unwrap();
         assert_eq!(harness.run().await.unwrap_err().to_string(), "tty gone");
+    }
+
+    #[test]
+    fn verbs_fail_with_the_control_api_errors() {
+        let mut controller = Controller::new(complete::tests::catalog(), "happy-path");
+        let mut error = |verb| {
+            control(&mut controller, "default", verb)
+                .unwrap_err()
+                .to_string()
+        };
+        assert_eq!(
+            error(Verb::UseCollection("nope".into())),
+            "unknown collection `nope`"
+        );
+        assert_eq!(
+            error(Verb::UseRoute(Activation::parse("nope:any:ok").unwrap())),
+            "unknown route `nope`"
+        );
+        assert_eq!(
+            error(Verb::UseRoute(Activation::parse("orders:nope:ok").unwrap())),
+            "unknown case `orders:nope`"
+        );
+        assert_eq!(
+            error(Verb::UseRoute(
+                Activation::parse("orders:any:nope").unwrap()
+            )),
+            "unknown behavior `orders:any:nope`"
+        );
+    }
+
+    #[test]
+    fn verbs_change_the_sessions_selection() {
+        let mut controller = Controller::new(complete::tests::catalog(), "happy-path");
+        control(
+            &mut controller,
+            "e2e-1",
+            Verb::UseCollection("errors".into()),
+        )
+        .unwrap();
+        let address = Activation::parse("orders:any:ok").unwrap();
+        control(&mut controller, "e2e-1", Verb::UseRoute(address)).unwrap();
+        let selection = controller.selection_snapshot("e2e-1");
+        assert_eq!(selection.collection, "errors");
+        assert_eq!(selection.overrides[0].address(), "orders:any:ok");
+        control(&mut controller, "e2e-1", Verb::Reset).unwrap();
+        assert!(controller.selection_snapshot("e2e-1").overrides.is_empty());
+        assert_eq!(
+            controller.selection_snapshot("default").collection,
+            "happy-path"
+        );
     }
 }
