@@ -71,9 +71,9 @@ enum TlsFile {
 impl<'de> Deserialize<'de> for TlsFile {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         use serde::de::Error;
-        match serde_yaml::Value::deserialize(deserializer)? {
-            serde_yaml::Value::String(value) if value == "auto" => Ok(Self::Auto),
-            value @ serde_yaml::Value::Mapping(_) => serde_yaml::from_value(value)
+        match serde_norway::Value::deserialize(deserializer)? {
+            serde_norway::Value::String(value) if value == "auto" => Ok(Self::Auto),
+            value @ serde_norway::Value::Mapping(_) => serde_norway::from_value(value)
                 .map(Self::Files)
                 .map_err(D::Error::custom),
             _ => Err(D::Error::custom("expected `auto` or `{ cert, key }`")),
@@ -97,9 +97,10 @@ fn listener_file<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<ListenerFile, D::Error> {
     use serde::de::Error;
-    match serde_yaml::Value::deserialize(deserializer)? {
-        serde_yaml::Value::Mapping(mapping) => {
-            serde_yaml::from_value(serde_yaml::Value::Mapping(mapping)).map_err(D::Error::custom)
+    match serde_norway::Value::deserialize(deserializer)? {
+        serde_norway::Value::Mapping(mapping) => {
+            serde_norway::from_value(serde_norway::Value::Mapping(mapping))
+                .map_err(D::Error::custom)
         }
         value => u16::deserialize(value)
             .map(|port| ListenerFile {
@@ -114,8 +115,8 @@ fn listener_file<'de, D: serde::Deserializer<'de>>(
 fn optional_listener_file<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<ListenerFile>, D::Error> {
-    match serde_yaml::Value::deserialize(deserializer)? {
-        serde_yaml::Value::Null => Ok(None),
+    match serde_norway::Value::deserialize(deserializer)? {
+        serde_norway::Value::Null => Ok(None),
         value => listener_file(value)
             .map(Some)
             .map_err(serde::de::Error::custom),
@@ -316,7 +317,7 @@ fn read_config_file(path: &Path) -> Result<NativeConfigFile, ConfigError> {
         path: path.to_path_buf(),
         source,
     })?;
-    serde_yaml::from_str(&input).map_err(|source| ConfigError::ParseConfig {
+    serde_norway::from_str(&input).map_err(|source| ConfigError::ParseConfig {
         path: path.to_path_buf(),
         source,
     })
@@ -358,7 +359,7 @@ pub enum ConfigError {
     #[error("failed to parse config `{}`: {source}", path.display())]
     ParseConfig {
         path: PathBuf,
-        source: serde_yaml::Error,
+        source: serde_norway::Error,
     },
     #[error("`{second}` uses port {port}, already taken by `{first}`")]
     PortConflict {
@@ -726,6 +727,35 @@ listeners:
             Some(TlsSource::Auto {
                 dir: base.join(".decoy")
             })
+        );
+    }
+
+    /// Pins the YAML parse errors users see (message and location) across YAML library swaps.
+    #[test]
+    fn config_parse_errors_keep_their_messages_and_locations() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        let load = |yaml: &str| {
+            fs::write(base.join("decoy.yaml"), yaml).unwrap();
+            let error = load_raw(base).unwrap_err().to_string();
+            error.replace(&base.display().to_string(), "<dir>")
+        };
+
+        assert_eq!(
+            load("routes: r\ncollections: c.yaml\nport: [9000\n"),
+            "failed to parse config `<dir>/decoy.yaml`: did not find expected ',' or ']' at line 4 column 1, while parsing a flow sequence at line 3 column 7"
+        );
+        assert_eq!(
+            load("routes: r\ncollections: c.yaml\nlisteners: { a: { port: 9000, bind: x } }\n"),
+            "failed to parse config `<dir>/decoy.yaml`: listeners: unknown field `bind`, expected one of `port`, `host`, `tls` at line 3 column 12"
+        );
+        assert_eq!(
+            load("routes: r\ncollections: c.yaml\nport: { port: high }\n"),
+            "failed to parse config `<dir>/decoy.yaml`: invalid type: string \"high\", expected u16"
+        );
+        assert_eq!(
+            load("routes: r\ncollections: c.yaml\ntls: yes-please\n"),
+            "failed to parse config `<dir>/decoy.yaml`: expected `auto` or `{ cert, key }`"
         );
     }
 

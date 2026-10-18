@@ -3,7 +3,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde_yaml::Value as YamlValue;
+use serde_norway::Value as YamlValue;
 use thiserror::Error;
 
 use crate::collections::{Collection, CollectionError, CollectionsFile};
@@ -221,7 +221,7 @@ fn normalize_for_sort(routes_dir: &Path, path: &Path) -> String {
 
 fn decode_route(path: &Path, input: &str) -> Result<Route, StartupError> {
     let yaml = parse_yaml(path, input)?;
-    let route = serde_yaml::from_value::<Route>(yaml).map_err(|error| {
+    let route = serde_norway::from_value::<Route>(yaml).map_err(|error| {
         StartupError::with_source(
             StartupDiagnosticKind::Schema,
             source_from_yaml_error(path, &error),
@@ -234,7 +234,7 @@ fn decode_route(path: &Path, input: &str) -> Result<Route, StartupError> {
 
 fn decode_collections(path: &Path, input: &str) -> Result<Vec<Collection>, StartupError> {
     let yaml = parse_yaml(path, input)?;
-    serde_yaml::from_value::<Vec<Collection>>(yaml).map_err(|error| {
+    serde_norway::from_value::<Vec<Collection>>(yaml).map_err(|error| {
         StartupError::with_source(
             StartupDiagnosticKind::Schema,
             source_from_yaml_error(path, &error),
@@ -244,7 +244,7 @@ fn decode_collections(path: &Path, input: &str) -> Result<Vec<Collection>, Start
 }
 
 fn parse_yaml(path: &Path, input: &str) -> Result<YamlValue, StartupError> {
-    serde_yaml::from_str::<YamlValue>(input).map_err(|error| {
+    serde_norway::from_str::<YamlValue>(input).map_err(|error| {
         StartupError::with_source(
             StartupDiagnosticKind::Parse,
             source_from_yaml_error(path, &error),
@@ -277,7 +277,7 @@ fn source_from_validation_error(path: &Path, error: &ValidationError) -> SourceL
     }
 }
 
-fn source_from_yaml_error(path: &Path, error: &serde_yaml::Error) -> SourceLocation {
+fn source_from_yaml_error(path: &Path, error: &serde_norway::Error) -> SourceLocation {
     let mut source = SourceLocation::path(path);
     source.line = error.location().map(|location| location.line());
     source
@@ -384,6 +384,46 @@ cases:
     - {address}
 "#
         )
+    }
+
+    /// Pins the YAML diagnostics users see (message and line) across YAML library swaps.
+    #[test]
+    fn startup_yaml_diagnostics_keep_their_messages_and_lines() {
+        let diagnose = |route: &str, collections: &str| {
+            let temp = tempfile::tempdir().unwrap();
+            write(&temp.path().join("routes/r.yaml"), route);
+            write(&temp.path().join("collections.yaml"), collections);
+            let error = load_catalog_from_files(
+                temp.path().join("routes"),
+                temp.path().join("collections.yaml"),
+                RuntimeConfig::default(),
+                None,
+            )
+            .unwrap_err();
+            (error.diagnostic.source.line, error.diagnostic.message)
+        };
+        let collections = collections_yaml("get-user:user-123:success");
+
+        assert_eq!(
+            diagnose("id: get-user\nmatch: [unterminated\n", &collections),
+            (Some(3), "did not find expected ',' or ']' at line 3 column 1, while parsing a flow sequence at line 2 column 8".to_owned())
+        );
+        assert_eq!(
+            diagnose("id: get-user\ntransport: http\ncases: 7\n", &collections),
+            (
+                None,
+                "failed to decode route schema: invalid type: integer `7`, expected a map"
+                    .to_owned()
+            )
+        );
+        assert_eq!(
+            diagnose(&route_yaml("get-user"), "- id: local\n  routes: oops\n"),
+            (None, "failed to decode collections schema: invalid type: string \"oops\", expected a sequence".to_owned())
+        );
+        assert_eq!(
+            diagnose(&route_yaml("get-user"), "- id: local\n  routes:\n    - a\n\t- b\n"),
+            (Some(4), "found a tab character that violates indentation at line 4 column 1, while scanning a plain scalar at line 3 column 7".to_owned())
+        );
     }
 
     #[test]
