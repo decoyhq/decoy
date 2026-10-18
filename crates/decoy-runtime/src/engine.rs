@@ -1840,6 +1840,28 @@ cases:
     }
 
     #[tokio::test]
+    async fn a_template_builds_the_envelope_when_no_condition_did() {
+        let route = Route::from_yaml(
+            "id: echo\ntransport: http\nmatch: { method: GET, path: '/users/{id}' }\ncases:\n  any:\n    behaviors:\n      ok: { status: 200, body: { id: '${ pathParams.id }' } }\n",
+        )
+        .unwrap();
+        let catalog = Catalog::new(
+            vec![route],
+            CollectionsFile::from_yaml("- id: local\n  routes: [echo:any:ok]\n").unwrap(),
+            RuntimeConfig::default(),
+        )
+        .unwrap();
+
+        let HttpExecutionOutcome::Response { response, .. } = catalog
+            .execute_http("local", execution_request("/users/42", "/users/42"))
+            .await
+        else {
+            panic!("expected a response")
+        };
+        assert_eq!(response.body, br#"{"id":"42"}"#);
+    }
+
+    #[tokio::test]
     async fn predicates_and_templates_see_each_candidates_own_path_params() {
         let by_id = Route::from_yaml(
             "id: by-id\ntransport: http\nmatch: { method: GET, path: '/users/{id}' }\ncases:\n  eight:\n    match: \"${ pathParams.id == '8' }\"\n    behaviors:\n      ok: { status: 200 }\n",
