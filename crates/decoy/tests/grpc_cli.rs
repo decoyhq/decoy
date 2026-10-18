@@ -186,7 +186,8 @@ impl Server {
 
     async fn start_with(route: &str, collections: &str, tls: bool) -> Self {
         let temp = TempDir::new().unwrap();
-        let protos = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proto");
+        let protos =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../decoy-runtime/tests/fixtures/proto");
         fs::create_dir_all(temp.path().join("routes")).unwrap();
         fs::write(temp.path().join("routes/approvals.yaml"), route).unwrap();
         fs::write(temp.path().join("collections.yaml"), collections).unwrap();

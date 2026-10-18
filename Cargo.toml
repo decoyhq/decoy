@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/decoy-runtime"]
+members = ["crates/decoy", "crates/decoy-runtime", "crates/decoy-tui"]
 resolver = "3"
 
 [workspace.package]

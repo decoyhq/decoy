@@ -21,7 +21,7 @@ if (await healthy()) {
 }
 const decoy = spawn(
   'cargo',
-  ['run', '--quiet', '-p', 'decoy-runtime', '--', 'serve', '--config', 'mocks/decoy.yaml'],
+  ['run', '--quiet', '-p', 'decoy', '--', 'serve', '--config', 'mocks/decoy.yaml'],
   { cwd: exampleDir, stdio: ['ignore', 'ignore', 'inherit'] },
 )
 const stopDecoy = (): void => {

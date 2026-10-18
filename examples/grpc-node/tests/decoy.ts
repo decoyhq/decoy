@@ -13,7 +13,7 @@ export async function startDecoy(): Promise<() => void> {
   }
   const child: ChildProcess = spawn(
     'cargo',
-    ['run', '--quiet', '-p', 'decoy-runtime', '--', 'serve', '--config', 'mocks/decoy.yaml'],
+    ['run', '--quiet', '-p', 'decoy', '--', 'serve', '--config', 'mocks/decoy.yaml'],
     { cwd: exampleDir, stdio: ['ignore', 'ignore', 'inherit'] },
   )
   // The first run compiles the decoy binary.

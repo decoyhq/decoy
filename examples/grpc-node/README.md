@@ -8,7 +8,7 @@ pnpm --filter ./examples/grpc-node test:e2e
 pnpm --filter ./examples/grpc-node dev    # serve the mocks on 127.0.0.1:8091 by hand
 ```
 
-The test starts Decoy with `cargo run -p decoy-runtime -- serve --config mocks/decoy.yaml` (port
+The test starts Decoy with `cargo run -p decoy -- serve --config mocks/decoy.yaml` (port
 8091), or reuses one already serving there.
 
 | Test (`tests/approvals.test.ts`) | Proves                                                                                                                                       |

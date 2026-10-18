@@ -1,0 +1,24 @@
+[package]
+name = "decoy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+decoy-runtime = { path = "../decoy-runtime" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+
+[dev-dependencies]
+bytes = "1"
+prost = "0.14"
+rcgen = "0.14"
+prost-reflect = { version = "0.16.5", features = ["serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["http2", "json", "rustls-tls"] }
+serde_json = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "time"] }
+tonic = { version = "0.14", features = ["tls-ring"] }

@@ -43,7 +43,7 @@ Every release has archives for the same platforms plus `SHA256SUMS`:
 ## From source
 
 ```sh
-cargo build --release -p decoy-runtime
+cargo build --release -p decoy
 ./target/release/decoy --version
 ```
 

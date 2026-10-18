@@ -1,102 +1,57 @@
+//! The runtime server: binds the configured listeners and serves every transport.
+
 use std::collections::BTreeMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
 
+use crate::config::{ServeConfig, TlsSource};
+use crate::control_api::{
+    ControlApiRequest, ControlApiResponse, HEALTH_PATH, handle_control_request, is_control_path,
+    session_id,
+};
+use crate::engine::{Controller, HttpExecutionOutcome, HttpExecutionRequest};
+use crate::grpc::{GrpcRequest, GrpcResponse, RESOURCE_EXHAUSTED, UNIMPLEMENTED};
+use crate::http::{BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig};
+use crate::http_forward::{ForwardResponse, ForwardingError};
+use crate::protos::load_descriptor_pool;
+use crate::schema::{HttpMethod, PassthroughTarget};
+use crate::startup::load_catalog_from_files;
+use crate::tls;
 use axum::body::{Body, to_bytes};
 use axum::extract::{OriginalUri, State};
 use axum::http::{HeaderName, HeaderValue, Request, Response, StatusCode};
 use axum::routing::any;
 use axum::{Extension, Router};
 use bytes::Bytes;
-use clap::{Parser, Subcommand};
-use decoy_runtime::config::{ServeCliOptions, ServeConfig, TlsSource};
-use decoy_runtime::control_api::{
-    ControlApiRequest, ControlApiResponse, HEALTH_PATH, handle_control_request, is_control_path,
-    session_id,
-};
-use decoy_runtime::engine::{Controller, HttpExecutionOutcome, HttpExecutionRequest};
-use decoy_runtime::grpc::{GrpcRequest, GrpcResponse, RESOURCE_EXHAUSTED, UNIMPLEMENTED};
-use decoy_runtime::http::{
-    BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig,
-};
-use decoy_runtime::http_forward::{ForwardResponse, ForwardingError};
-use decoy_runtime::protos::load_descriptor_pool;
-use decoy_runtime::schema::{HttpMethod, PassthroughTarget};
-use decoy_runtime::startup::load_catalog_from_files;
-use decoy_runtime::tls;
 use http_body::Frame;
 use http_body_util::StreamBody;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
-#[derive(Debug, Parser)]
-#[command(name = "decoy", version)]
-#[command(about = "Decoy native runtime")]
-struct Cli {
-    #[command(subcommand)]
-    command: Command,
+/// One bound socket: the config key it serves (`port` or `listeners.<name>`), TLS, address.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoundListener {
+    pub name: String,
+    pub tls: bool,
+    pub addr: SocketAddr,
 }
 
-#[derive(Debug, Subcommand)]
-enum Command {
-    Serve(ServeArgs),
-    /// Replace this binary with the newest (or given) release
-    Upgrade {
-        /// Version to install, e.g. 0.1.0-alpha.6 (default: newest release)
-        version: Option<String>,
-    },
+/// A started runtime: every listener is bound and serving until the shutdown signal fires.
+pub struct Server {
+    pub listeners: Vec<BoundListener>,
+    pub controller: Arc<RwLock<Controller>>,
+    shutdown: Pin<Box<dyn Future<Output = ()> + Send>>,
+    stop_all: tokio::sync::watch::Sender<()>,
+    servers: tokio::task::JoinSet<std::io::Result<()>>,
 }
 
-#[derive(Debug, Parser)]
-struct ServeArgs {
-    #[arg(long)]
-    config: Option<PathBuf>,
-    #[arg(long)]
-    routes: Option<PathBuf>,
-    #[arg(long)]
-    collections: Option<PathBuf>,
-    #[arg(long)]
-    port: Option<u16>,
-    #[arg(long)]
-    host: Option<String>,
-    #[arg(long)]
-    collection: Option<String>,
-    #[arg(long, value_name = "URL")]
-    passthrough_base_url: Option<String>,
-}
-
-#[tokio::main]
-async fn main() {
-    if let Err(error) = run().await {
-        eprintln!("error: {error}");
-        std::process::exit(1);
-    }
-}
-
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    match Cli::parse().command {
-        Command::Serve(args) => serve(args).await?,
-        Command::Upgrade { version } => decoy_runtime::upgrade::run(version.as_deref())?,
-    }
-
-    Ok(())
-}
-
-async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let cwd = std::env::current_dir()?;
-    let config = ServeConfig::from_options(
-        ServeCliOptions {
-            config_file: args.config,
-            routes: args.routes,
-            collections: args.collections,
-            port: args.port,
-            host: args.host,
-            collection: args.collection,
-            passthrough_base_url: args.passthrough_base_url,
-        },
-        &cwd,
-    )?;
+/// Loads `config`, binds every listener and starts serving. `shutdown` is awaited by
+/// [`Server::wait`]; when it resolves, open requests get [`DRAIN_TIMEOUT`] to finish.
+pub async fn serve(
+    config: ServeConfig,
+    shutdown: impl Future<Output = ()> + Send + 'static,
+) -> Result<Server, Box<dyn std::error::Error>> {
     let protos = load_descriptor_pool(&config.protos)?;
     let startup = load_catalog_from_files(
         &config.routes,
@@ -116,7 +71,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     )));
     let app = Router::new()
         .fallback(any(handle_request))
-        .with_state(controller)
+        .with_state(controller.clone())
         .layer(Extension(MaxBodyBytes(config.max_body_bytes)));
     let tls_config = match &config.tls {
         None => None,
@@ -144,17 +99,23 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let (shutdown, _) = tokio::sync::watch::channel(());
+    let (stop_all, _) = tokio::sync::watch::channel(());
+    let mut bound = Vec::new();
     let mut servers = tokio::task::JoinSet::new();
     for (name, secure, listener) in listeners {
         let addr = listener.local_addr()?;
+        bound.push(BoundListener {
+            name: name.clone(),
+            tls: secure,
+            addr,
+        });
         let scheme = if secure { "https" } else { "http" };
         if name == "port" {
             eprintln!("decoy serve listening on {scheme}://{addr}");
         } else {
             eprintln!("decoy serve listening on {scheme}://{addr} ({name})");
         }
-        let mut stop = shutdown.subscribe();
+        let mut stop = stop_all.subscribe();
         match tls_config.clone().filter(|_| secure) {
             Some(tls_config) => {
                 let app = app.clone().layer(Extension(Secure));
@@ -171,53 +132,57 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    tokio::select! {
-        _ = shutdown_signal() => {}
-        Some(result) = servers.join_next() => result??,
-    }
-    drop(shutdown);
-    // Let open requests finish, but never wait on a long `delay` or a hung upstream forever.
-    let drained = tokio::time::timeout(DRAIN_TIMEOUT, async {
-        while let Some(result) = servers.join_next().await {
-            result??;
-        }
-        Ok::<_, Box<dyn std::error::Error>>(())
+    Ok(Server {
+        listeners: bound,
+        controller,
+        shutdown: Box::pin(shutdown),
+        stop_all,
+        servers,
     })
-    .await;
-    match drained {
-        Ok(result) => result?,
-        Err(_) => {
-            eprintln!(
-                "decoy serve: closed connections still open after {}s",
-                DRAIN_TIMEOUT.as_secs()
-            );
-            servers.abort_all();
-        }
-    }
-
-    Ok(())
 }
 
-const DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+impl Server {
+    /// Serves until the shutdown signal fires or a listener fails, then drains.
+    pub async fn wait(self) -> Result<(), Box<dyn std::error::Error>> {
+        let Self {
+            shutdown,
+            stop_all,
+            mut servers,
+            ..
+        } = self;
+        tokio::select! {
+            _ = shutdown => {}
+            Some(result) = servers.join_next() => result??,
+        }
+        drop(stop_all);
+        // Let open requests finish, but never wait on a long `delay` or a hung upstream forever.
+        let drained = tokio::time::timeout(DRAIN_TIMEOUT, async {
+            while let Some(result) = servers.join_next().await {
+                result??;
+            }
+            Ok::<_, Box<dyn std::error::Error>>(())
+        })
+        .await;
+        match drained {
+            Ok(result) => result?,
+            Err(_) => {
+                eprintln!(
+                    "decoy serve: closed connections still open after {}s",
+                    DRAIN_TIMEOUT.as_secs()
+                );
+                servers.abort_all();
+            }
+        }
+
+        Ok(())
+    }
+}
+
+pub const DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// `maxBodyBytes`: larger requests get `413` (or gRPC `RESOURCE_EXHAUSTED`) instead of buffering.
 #[derive(Debug, Clone, Copy)]
 struct MaxBodyBytes(usize);
-
-/// Ctrl-C, or SIGTERM (what `kill`, Docker and CI runners send).
-async fn shutdown_signal() {
-    #[cfg(unix)]
-    {
-        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("SIGTERM handler installs");
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = term.recv() => {}
-        }
-    }
-    #[cfg(not(unix))]
-    let _ = tokio::signal::ctrl_c().await;
-}
 
 /// Marks requests that arrived on a TLS listener.
 #[derive(Debug, Clone, Copy)]
@@ -290,7 +255,7 @@ async fn handle_request(
     let max_body_bytes = request
         .extensions()
         .get::<MaxBodyBytes>()
-        .map_or(decoy_runtime::config::DEFAULT_MAX_BODY_BYTES, |max| max.0);
+        .map_or(crate::config::DEFAULT_MAX_BODY_BYTES, |max| max.0);
     let body = match to_bytes(request.into_body(), max_body_bytes).await {
         Ok(body) => body.to_vec(),
         Err(error)
