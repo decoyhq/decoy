@@ -54,6 +54,8 @@ struct ServeArgs {
     #[arg(long)]
     port: Option<u16>,
     #[arg(long)]
+    host: Option<String>,
+    #[arg(long)]
     collection: Option<String>,
     #[arg(long, value_name = "URL")]
     passthrough_base_url: Option<String>,
@@ -83,6 +85,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             routes: args.routes,
             collections: args.collections,
             port: args.port,
+            host: args.host,
             collection: args.collection,
             passthrough_base_url: args.passthrough_base_url,
         },
@@ -121,15 +124,17 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         }
     };
     // Bind every listener before serving any, so a taken port fails startup cleanly (Q1).
-    let mut listeners = vec![(
-        "port".to_owned(),
-        config.port.tls,
-        bind("port", config.port.port).await?,
-    )];
-    for (name, listener) in &config.ports {
-        let name = format!("ports.{name}");
-        let bound = bind(&name, listener.port).await?;
-        listeners.push((name, listener.tls, bound));
+    let mut listeners = Vec::new();
+    let named = std::iter::once(("port".to_owned(), &config.port)).chain(
+        config
+            .listeners
+            .iter()
+            .map(|(name, listener)| (format!("listeners.{name}"), listener)),
+    );
+    for (name, listener) in named {
+        for bound in bind(&name, &listener.host, listener.port).await? {
+            listeners.push((name.clone(), listener.tls, bound));
+        }
     }
 
     let (shutdown, _) = tokio::sync::watch::channel(());
@@ -175,11 +180,52 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
 #[derive(Debug, Clone, Copy)]
 struct Secure;
 
-async fn bind(name: &str, port: u16) -> Result<TcpListener, String> {
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    TcpListener::bind(addr)
-        .await
-        .map_err(|error| format!("cannot listen on `{name}` ({addr}): {error}"))
+/// Binds every address `host` resolves to on one port. `localhost` is both loopbacks (`127.0.0.1`,
+/// `::1`) without asking the resolver, which often maps it to `127.0.0.1` only. An address the
+/// machine can't bind (e.g. `::1` with IPv6 off) is skipped while another one binds; a taken port
+/// always fails.
+async fn bind(name: &str, host: &str, port: u16) -> Result<Vec<TcpListener>, String> {
+    let mut addrs: Vec<SocketAddr> = if host.eq_ignore_ascii_case("localhost") {
+        vec![
+            SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port)),
+            SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, port)),
+        ]
+    } else {
+        tokio::net::lookup_host((host, port))
+            .await
+            .map_err(|error| format!("cannot resolve `{name}` host `{host}`: {error}"))?
+            .collect()
+    };
+    addrs.sort();
+    addrs.dedup();
+    let mut bound = Vec::new();
+    let mut skipped = None;
+    for mut addr in addrs {
+        // Port 0: the first address picks a free port; the others share it.
+        if let Some(first) = bound
+            .first()
+            .and_then(|first: &TcpListener| first.local_addr().ok())
+        {
+            addr.set_port(first.port());
+        }
+        match TcpListener::bind(addr).await {
+            Ok(listener) => bound.push(listener),
+            Err(error)
+                if !matches!(
+                    error.kind(),
+                    std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied
+                ) =>
+            {
+                eprintln!("decoy serve: skipped `{name}` on {addr}: {error}");
+                skipped = Some(format!("cannot listen on `{name}` ({addr}): {error}"));
+            }
+            Err(error) => return Err(format!("cannot listen on `{name}` ({addr}): {error}")),
+        }
+    }
+    if bound.is_empty() {
+        return Err(skipped.unwrap_or_else(|| format!("`{name}` host `{host}` has no addresses")));
+    }
+    Ok(bound)
 }
 
 async fn handle_request(
@@ -441,5 +487,21 @@ fn http_method(method: &axum::http::Method) -> Option<HttpMethod> {
         axum::http::Method::HEAD => Some(HttpMethod::Head),
         axum::http::Method::OPTIONS => Some(HttpMethod::Options),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn port_zero_picks_one_port_for_every_address_of_a_host() {
+        let bound = bind("t", "localhost", 0).await.unwrap();
+        assert!(!bound.is_empty());
+        let ports: Vec<u16> = bound
+            .iter()
+            .map(|listener| listener.local_addr().unwrap().port())
+            .collect();
+        assert!(ports.iter().all(|port| *port == ports[0]), "{ports:?}");
     }
 }

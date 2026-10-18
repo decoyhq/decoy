@@ -23,7 +23,7 @@ async fn tls_and_plain_listeners_serve_the_same_routes() {
     let cert = fixture.write_cert();
     let (secure, extra, plain) = (unused_port(), unused_port(), unused_port());
     fixture.write_config(&format!(
-        "tls: {{ cert: certs/dev.pem, key: certs/dev-key.pem }}\nport: {secure}\nports:\n  payments: {extra}\n  legacy: {{ port: {plain}, tls: false }}\n"
+        "tls: {{ cert: certs/dev.pem, key: certs/dev-key.pem }}\nport: {secure}\nlisteners:\n  payments: {extra}\n  legacy: {{ port: {plain}, tls: false }}\n"
     ));
     let _server = fixture.spawn();
     let client = trusting_client(&cert);
@@ -325,10 +325,13 @@ async fn wait_until_up(client: &reqwest::Client, base: &str) {
     }
 }
 
+/// A port free on both loopbacks, since Decoy binds `127.0.0.1` and `::1` by default.
 fn unused_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    loop {
+        let v4 = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = v4.local_addr().unwrap().port();
+        if TcpListener::bind(("::1", port)).is_ok() || TcpListener::bind("[::1]:0").is_err() {
+            return port;
+        }
+    }
 }

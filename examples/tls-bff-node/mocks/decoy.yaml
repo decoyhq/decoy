@@ -2,7 +2,7 @@ routes: routes
 collections: collections.yaml
 tls: auto # signs a localhost cert with the CA in mocks/.decoy/ca.pem
 port: 8443 # https: the payments API and the Inventory gRPC service
-ports:
+listeners:
   crm: { port: 8092, tls: false } # http: the legacy CRM
 protos:
   roots: [../proto]
