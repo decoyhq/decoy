@@ -213,9 +213,7 @@ impl App {
     fn on_runtime(&mut self, event: RuntimeEvent) {
         match event {
             RuntimeEvent::Request(request) => {
-                if !self.seen.contains(&request.session) {
-                    self.seen.insert(request.session.clone());
-                }
+                self.seen.insert(request.session.clone());
                 self.push(Entry::Request(RequestLine::from(&*request)));
             }
             RuntimeEvent::Session(event) => self.on_session(event),
@@ -297,7 +295,7 @@ impl App {
         match key.code {
             KeyCode::Char('c') if ctrl => {
                 if !self.input.is_empty() {
-                    self.input.clear();
+                    self.edit(String::clear);
                     self.ctrl_c_armed = true;
                 } else if self.ctrl_c_armed {
                     return vec![Effect::Quit];
@@ -990,6 +988,16 @@ pub(crate) mod tests {
         );
         typed(&mut app, "/quit");
         assert_eq!(app.handle_event(enter()), [Effect::Quit]);
+    }
+
+    #[test]
+    fn enter_on_a_whole_id_runs_it_even_when_a_longer_id_shares_its_prefix() {
+        let mut app = app();
+        app.handle_event(from_session(1, "e2e-1"));
+        app.handle_event(from_session(2, "e2e"));
+        typed(&mut app, "/session e2e");
+        app.handle_event(enter());
+        assert_eq!(app.session, "e2e");
     }
 
     #[test]

@@ -7,7 +7,6 @@ mod complete;
 mod log;
 mod ui;
 
-use std::collections::VecDeque;
 use std::io::Write;
 
 use base64::Engine;
@@ -157,15 +156,15 @@ async fn event_loop(
             },
             stopped = &mut *served => return Ok(Some(joined(stopped))),
         };
-        let mut batch = VecDeque::from([first]);
+        let mut batch = vec![first];
         while batch.len() < BATCH {
             match events.try_recv() {
-                Ok(event) => batch.push_back(Event::Runtime(event)),
-                Err(TryRecvError::Lagged(dropped)) => batch.push_back(Event::Lagged(dropped)),
+                Ok(event) => batch.push(Event::Runtime(event)),
+                Err(TryRecvError::Lagged(dropped)) => batch.push(Event::Lagged(dropped)),
                 Err(_) => break,
             }
         }
-        while let Some(event) = batch.pop_front() {
+        for event in batch {
             for effect in app.handle_event(event) {
                 match effect {
                     Effect::Quit => return Ok(None),
@@ -173,7 +172,7 @@ async fn event_loop(
                     Effect::Control { session, verb } => {
                         if let Err(error) = control(&mut *controller.write().await, &session, verb)
                         {
-                            batch.push_back(Event::ControlFailed(error.to_string()));
+                            app.handle_event(Event::ControlFailed(error.to_string()));
                         }
                     }
                 }

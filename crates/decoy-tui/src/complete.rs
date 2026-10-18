@@ -47,9 +47,9 @@ pub fn complete(input: &str, sources: &Sources) -> Vec<Completion> {
             .collect();
     };
     let from = name.len() + 1;
-    let marked = |ids: Vec<&str>, active: &str| -> Vec<Completion> {
-        ids.into_iter()
-            .filter(|id| id.starts_with(arg) && *id != arg)
+    let ids = |ids: Vec<&str>, active: &str| -> Vec<Completion> {
+        candidates(ids, arg, true)
+            .into_iter()
             .map(|id| Completion {
                 from,
                 insert: id.to_owned(),
@@ -60,11 +60,11 @@ pub fn complete(input: &str, sources: &Sources) -> Vec<Completion> {
             .collect()
     };
     match name {
-        "/collection" => marked(
+        "/collection" => ids(
             sources.catalog.collection_ids().collect(),
             sources.collection,
         ),
-        "/session" => marked(sources.sessions.clone(), sources.session),
+        "/session" => ids(sources.sessions.clone(), sources.session),
         "/route" => route(arg, from, sources.catalog),
         _ => Vec::new(),
     }
@@ -99,8 +99,8 @@ fn route(arg: &str, from: usize, catalog: &Catalog) -> Vec<Completion> {
         },
         _ => return Vec::new(),
     };
-    ids.into_iter()
-        .filter(|id| id.starts_with(partial) && !(last && *id == partial))
+    candidates(ids, partial, last)
+        .into_iter()
         .map(|id| Completion {
             from,
             insert: if last {
@@ -113,6 +113,16 @@ fn route(arg: &str, from: usize, catalog: &Catalog) -> Vec<Completion> {
             done: last,
         })
         .collect()
+}
+
+/// The sorted `ids` that start with `typed`, so an exact match comes first and Enter keeps it.
+/// When `typed` is already the only match of a `whole` argument there is nothing to offer.
+fn candidates<'a>(ids: Vec<&'a str>, typed: &str, whole: bool) -> Vec<&'a str> {
+    let matching: Vec<&str> = ids.into_iter().filter(|id| id.starts_with(typed)).collect();
+    if whole && matching == [typed] {
+        return Vec::new();
+    }
+    matching
 }
 
 #[cfg(test)]
@@ -197,6 +207,21 @@ pub(crate) mod tests {
         assert!(texts("/route users-by-id:user-1:missing").is_empty());
         assert!(texts("/route nope:").is_empty());
         assert!(texts("/route users-by-id:nope:").is_empty());
+    }
+
+    #[test]
+    fn an_exact_id_stays_first_when_a_longer_one_shares_its_prefix() {
+        let catalog = catalog();
+        let sources = Sources {
+            catalog: &catalog,
+            sessions: vec!["e2e", "e2e-1"],
+            session: "default",
+            collection: "happy-path",
+        };
+        let first = |input: &str| complete(input, &sources).remove(0).insert;
+        assert_eq!(first("/session e2e"), "e2e");
+        assert_eq!(first("/session e2"), "e2e");
+        assert!(complete("/session e2e-1", &sources).is_empty());
     }
 
     #[test]

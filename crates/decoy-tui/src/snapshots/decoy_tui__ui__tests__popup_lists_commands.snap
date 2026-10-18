@@ -2,16 +2,16 @@
 source: crates/decoy-tui/src/ui.rs
 expression: "popup(\"/\")"
 ---
-╭────────────────────────────────────────────────────────────────────────╮
-│ /collection  switch the active Session's Collection                    │
-│ /route       override one Route's Case in the active Session           │
-│ /reset       clear the active Session's overrides, keep its Collection │
-│ /session     switch the Session commands target                        │
-│ /sessions    list the Sessions that hold a Selection                   │
-│ /status      show the active Session's Collection and overrides        │
-│ /help        list commands and keys                                    │
-│ /quit        stop the server and exit                                  │
-╰────────────────────────────────────────────────────────────────────────╯
+╭─────────────────────────────────────────────────────────────────────────╮
+│ /collection  switch the active Session's Collection                     │
+│ /route       pick the Behavior for a Route's Case in the active Session │
+│ /reset       clear the active Session's overrides, keep its Collection  │
+│ /session     switch the Session commands target                         │
+│ /sessions    list the Sessions that hold a Selection                    │
+│ /status      show the active Session's Collection and overrides         │
+│ /help        list commands and keys                                     │
+│ /quit        stop the server and exit                                   │
+╰─────────────────────────────────────────────────────────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │› /                                                                           │
 ╰──────────────────────────────────────────────────────────────────────────────╯

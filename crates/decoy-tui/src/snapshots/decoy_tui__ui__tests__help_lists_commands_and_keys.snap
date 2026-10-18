@@ -4,7 +4,7 @@ expression: "after(&[\"/help\"], |_| {})"
 ---
 › /help
   /collection <id>                 switch the active Session's Collection
-  /route <route:case:behavior>     override one Route's Case in the active Session
+  /route <route:case:behavior>     pick the Behavior for a Route's Case in the active Session
   /reset                           clear the active Session's overrides, keep its Collection
   /session <id>                    switch the Session commands target
   /sessions                        list the Sessions that hold a Selection

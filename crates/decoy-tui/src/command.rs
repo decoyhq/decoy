@@ -12,7 +12,7 @@ pub const COMMANDS: &[Spec] = &[
     Spec {
         name: "/route",
         args: "<route:case:behavior>",
-        about: "override one Route's Case in the active Session",
+        about: "pick the Behavior for a Route's Case in the active Session",
     },
     Spec {
         name: "/reset",
