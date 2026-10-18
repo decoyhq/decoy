@@ -41,11 +41,6 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Serve(ServeArgs),
-    /// Replace this binary with the newest (or given) release
-    Upgrade {
-        /// Version to install, e.g. 0.1.0-alpha.6 (default: newest release)
-        version: Option<String>,
-    },
 }
 
 #[derive(Debug, Parser)]
@@ -77,7 +72,6 @@ async fn main() {
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().command {
         Command::Serve(args) => serve(args).await?,
-        Command::Upgrade { version } => decoy_runtime::upgrade::run(version.as_deref())?,
     }
 
     Ok(())
