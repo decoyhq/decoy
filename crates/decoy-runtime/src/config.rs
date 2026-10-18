@@ -69,7 +69,12 @@ fn listener_file<'de, D: serde::Deserializer<'de>>(
 fn optional_listener_file<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<ListenerFile>, D::Error> {
-    listener_file(deserializer).map(Some)
+    match serde_yaml::Value::deserialize(deserializer)? {
+        serde_yaml::Value::Null => Ok(None),
+        value => listener_file(value)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
 }
 
 fn listener_files<'de, D: serde::Deserializer<'de>>(
@@ -620,6 +625,7 @@ ports:
                 tls: false
             }
         );
+        assert_eq!(load("port: ~").unwrap().port.port, DEFAULT_PORT);
         let error = load("ports: { a: { port: 9000, host: x } }")
             .unwrap_err()
             .to_string();

@@ -69,6 +69,36 @@ async fn tls_and_plain_listeners_serve_the_same_routes() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn ctrl_c_stops_a_tls_listener_with_a_client_stuck_before_its_handshake() {
+    let fixture = Fixture::new();
+    let cert = fixture.write_cert();
+    let port = unused_port();
+    fixture.write_config(&format!(
+        "tls: {{ cert: certs/dev.pem, key: certs/dev-key.pem }}\nport: {port}\n"
+    ));
+    let mut server = fixture.spawn();
+    wait_until_up(
+        &trusting_client(&cert),
+        &format!("https://localhost:{port}"),
+    )
+    .await;
+    let _stuck = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+
+    let status = Command::new("kill")
+        .args(["-INT", &server.0.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while server.0.try_wait().unwrap().is_none() {
+        assert!(Instant::now() < deadline, "decoy did not stop");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
 #[test]
 fn unreadable_or_mismatched_cert_fails_startup() {
     let fixture = Fixture::new();

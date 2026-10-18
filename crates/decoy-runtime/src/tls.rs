@@ -1,5 +1,7 @@
+use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
 use hyper_util::rt::{TokioExecutor, TokioIo};
@@ -58,6 +60,8 @@ pub fn server_config(files: &TlsFiles) -> Result<Arc<ServerConfig>, StartupError
     Ok(Arc::new(config))
 }
 
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Serves `app` over TLS until `stop` fires, then drains open connections.
 pub async fn serve(
     listener: TcpListener,
@@ -71,17 +75,37 @@ pub async fn serve(
         let stream = tokio::select! {
             accepted = listener.accept() => match accepted {
                 Ok((stream, _)) => stream,
-                Err(_) => continue,
+                Err(error) => {
+                    // Like `axum::serve`: skip per-connection failures, back off on the rest (e.g. EMFILE).
+                    if !matches!(
+                        error.kind(),
+                        ErrorKind::ConnectionRefused
+                            | ErrorKind::ConnectionAborted
+                            | ErrorKind::ConnectionReset
+                    ) {
+                        eprintln!("decoy serve: accept failed: {error}");
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                    continue;
+                }
             },
             _ = stop.changed() => break,
         };
         let acceptor = acceptor.clone();
         let service = TowerToHyperService::new(app.clone());
         let watcher = graceful.watcher();
+        let mut handshake_stop = stop.clone();
         tokio::spawn(async move {
-            // A failed handshake only affects that client.
-            let Ok(stream) = acceptor.accept(stream).await else {
-                return;
+            // A failed, slow, or silent handshake only affects that client and never holds up
+            // shutdown.
+            let stream = tokio::select! {
+                accepted = tokio::time::timeout(HANDSHAKE_TIMEOUT, acceptor.accept(stream)) => {
+                    match accepted {
+                        Ok(Ok(stream)) => stream,
+                        _ => return,
+                    }
+                }
+                _ = handshake_stop.changed() => return,
             };
             let connection = auto::Builder::new(TokioExecutor::new())
                 .serve_connection_with_upgrades(TokioIo::new(stream), service)
