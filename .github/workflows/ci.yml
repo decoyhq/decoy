@@ -188,6 +188,7 @@ jobs:
   required:
     if: always()
     needs: [ci, cargo-deny, rust, discover-examples, example-e2e, example-e2e-browser]
+    permissions: {}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
