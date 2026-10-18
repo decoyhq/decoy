@@ -11,7 +11,7 @@ use decoy_runtime::events::{
 };
 use decoy_runtime::{Candidate, HttpExecutionRequest, HttpMethod, Rejection, Server};
 use tokio::sync::broadcast::Receiver;
-use tokio::sync::broadcast::error::RecvError;
+use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
 const USERS: &str = r#"
 id: get-user
@@ -429,17 +429,17 @@ async fn a_lagging_subscriber_loses_the_oldest_events_without_blocking_requests(
 }
 
 #[tokio::test]
-async fn runtime_warnings_reach_subscribers_as_log_events() {
+async fn runtime_warnings_reach_only_the_subscribers_of_their_server() {
     // `abs` of a string fails at request time; the Case reads as not matching and the runtime warns.
+    // The predicate text is unique to this test: each one is logged once per process.
     let route = "id: bad-predicate\ntransport: http\nmatch: { method: GET, path: /bad-predicate }\ncases:\n  any:\n    match: '${ abs(path) }'\n    behaviors:\n      ok: { status: 200 }\n";
-    let running = start(
-        &[route],
-        "- id: default\n  routes: [bad-predicate:any:ok]\n",
-    )
-    .await;
-    let mut events = running.server.subscribe();
+    let collections = "- id: default\n  routes: [bad-predicate:any:ok]\n";
+    let served = start(&[route], collections).await;
+    let other = start(&[route], collections).await;
+    let mut events = served.server.subscribe();
+    let mut other_events = other.server.subscribe();
 
-    reqwest::get(format!("{}/bad-predicate", running.base))
+    reqwest::get(format!("{}/bad-predicate", served.base))
         .await
         .unwrap();
 
@@ -454,4 +454,5 @@ async fn runtime_warnings_reach_subscribers_as_log_events() {
         "{}",
         log.message
     );
+    assert_eq!(other_events.try_recv().unwrap_err(), TryRecvError::Empty);
 }
