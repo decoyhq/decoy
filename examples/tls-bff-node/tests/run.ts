@@ -15,7 +15,10 @@ async function healthy(): Promise<boolean> {
 }
 
 // Always start our own Decoy: its cert is signed by this checkout's `.decoy/` CA, which a Decoy
-// started elsewhere wouldn't use. A taken port fails fast with "Address already in use".
+// started elsewhere wouldn't use.
+if (await healthy()) {
+  throw new Error(`something already serves ${CRM_URL}; stop it first`)
+}
 const decoy = spawn(
   'cargo',
   ['run', '--quiet', '-p', 'decoy-runtime', '--', 'serve', '--config', 'mocks/decoy.yaml'],
