@@ -5,12 +5,11 @@ use std::path::Path;
 use std::time::Duration;
 
 use decoy_runtime::config::{ServeCliOptions, ServeConfig};
-use decoy_runtime::watch::{DEBOUNCE, WatchedPaths, watch};
-use tokio::sync::mpsc::Receiver;
+use decoy_runtime::watch::{ConfigWatcher, DEBOUNCE, WatchedPaths};
 
 const ROUTE: &str = "id: users\ntransport: http\nmatch: { method: GET, path: /users }\ncases:\n  any:\n    behaviors:\n      ok: { status: 200 }\n";
 
-fn fixture() -> (tempfile::TempDir, WatchedPaths) {
+fn fixture() -> tempfile::TempDir {
     let temp = tempfile::TempDir::new().unwrap();
     fs::create_dir(temp.path().join("routes")).unwrap();
     fs::write(temp.path().join("routes/users.yaml"), ROUTE).unwrap();
@@ -21,27 +20,37 @@ fn fixture() -> (tempfile::TempDir, WatchedPaths) {
     .unwrap();
     fs::write(
         temp.path().join("decoy.yaml"),
-        "routes: routes\ncollections: collections.yaml\n",
+        "routes: routes\ncollections: collections.yaml\nprotos: { descriptorSets: [api.binpb] }\n",
     )
     .unwrap();
-    let config_file = temp.path().join("decoy.yaml");
+    fs::write(temp.path().join("api.binpb"), b"").unwrap();
+    temp
+}
+
+/// What the config in `dir` says to watch right now.
+fn paths(dir: &Path) -> Option<WatchedPaths> {
+    let config_file = dir.join("decoy.yaml");
     let config = ServeConfig::from_options(
         ServeCliOptions {
             config_file: Some(config_file.clone()),
             ..Default::default()
         },
-        temp.path(),
+        dir,
     )
-    .unwrap();
-    let paths = WatchedPaths::of(&config, Some(&config_file));
-    (temp, paths)
+    .ok()?;
+    Some(WatchedPaths::of(&config, Some(&config_file)))
+}
+
+fn watcher(dir: &Path, poll: bool) -> ConfigWatcher {
+    let owned = dir.to_path_buf();
+    ConfigWatcher::new(paths(dir).unwrap(), Box::new(move || paths(&owned)), poll).unwrap()
 }
 
 /// Signals that arrive within `wait`.
-async fn signals(changes: &mut Receiver<()>, wait: Duration) -> usize {
+async fn signals(watcher: &mut ConfigWatcher, wait: Duration) -> usize {
     let mut count = 0;
     let deadline = tokio::time::Instant::now() + wait;
-    while let Ok(Some(())) = tokio::time::timeout_at(deadline, changes.recv()).await {
+    while let Ok(Some(())) = tokio::time::timeout_at(deadline, watcher.changed()).await {
         count += 1;
     }
     count
@@ -58,8 +67,8 @@ fn write(dir: &Path, file: &str, contents: &str) {
 
 #[tokio::test]
 async fn saving_a_routes_file_signals_once_within_a_second() {
-    let (temp, paths) = fixture();
-    let (_watcher, mut changes) = watch(paths, false).unwrap();
+    let temp = fixture();
+    let mut changes = watcher(temp.path(), false);
     settle().await;
 
     write(
@@ -69,7 +78,7 @@ async fn saving_a_routes_file_signals_once_within_a_second() {
     );
 
     let started = std::time::Instant::now();
-    assert_eq!(changes.recv().await, Some(()));
+    assert_eq!(changes.changed().await, Some(()));
     assert!(
         started.elapsed() < Duration::from_secs(1),
         "{:?}",
@@ -80,8 +89,8 @@ async fn saving_a_routes_file_signals_once_within_a_second() {
 
 #[tokio::test]
 async fn an_atomic_save_signals_exactly_once() {
-    let (temp, paths) = fixture();
-    let (_watcher, mut changes) = watch(paths, false).unwrap();
+    let temp = fixture();
+    let mut changes = watcher(temp.path(), false);
     settle().await;
 
     // How editors save: write a temp file next to it, then rename it over the original.
@@ -101,8 +110,8 @@ async fn an_atomic_save_signals_exactly_once() {
 
 #[tokio::test]
 async fn a_burst_of_saves_signals_once_after_the_debounce() {
-    let (temp, paths) = fixture();
-    let (_watcher, mut changes) = watch(paths, false).unwrap();
+    let temp = fixture();
+    let mut changes = watcher(temp.path(), false);
     settle().await;
 
     for status in 201..206 {
@@ -119,8 +128,8 @@ async fn a_burst_of_saves_signals_once_after_the_debounce() {
 
 #[tokio::test]
 async fn unrelated_files_next_to_the_config_are_ignored() {
-    let (temp, paths) = fixture();
-    let (_watcher, mut changes) = watch(paths, false).unwrap();
+    let temp = fixture();
+    let mut changes = watcher(temp.path(), false);
     settle().await;
 
     write(temp.path(), "notes.md", "not config");
@@ -130,9 +139,9 @@ async fn unrelated_files_next_to_the_config_are_ignored() {
 
 #[tokio::test]
 async fn polling_picks_up_a_change_where_events_do_not_arrive() {
-    let (temp, paths) = fixture();
-    let (watcher, mut changes) = watch(paths, true).unwrap();
-    assert!(watcher.polling);
+    let temp = fixture();
+    let mut changes = watcher(temp.path(), true);
+    assert_eq!(changes.describe(), "watching the config files (polling)");
     settle().await;
 
     write(
@@ -142,4 +151,65 @@ async fn polling_picks_up_a_change_where_events_do_not_arrive() {
     );
 
     assert_eq!(signals(&mut changes, Duration::from_secs(3)).await, 1);
+}
+
+#[tokio::test]
+async fn a_rebuilt_descriptor_set_signals() {
+    let temp = fixture();
+    let mut changes = watcher(temp.path(), false);
+    settle().await;
+
+    fs::write(temp.path().join("api.binpb"), b"\x0a\x00").unwrap();
+
+    assert_eq!(signals(&mut changes, Duration::from_secs(2)).await, 1);
+}
+
+#[tokio::test]
+async fn editor_swap_files_in_the_routes_folder_are_ignored() {
+    let temp = fixture();
+    let mut changes = watcher(temp.path(), false);
+    settle().await;
+
+    write(temp.path(), "routes/.users.yaml.swp", "vim swap");
+    write(temp.path(), "routes/users.yaml~", "backup");
+
+    assert_eq!(signals(&mut changes, DEBOUNCE * 3).await, 0);
+}
+
+#[tokio::test]
+async fn a_recreated_routes_folder_keeps_being_watched() {
+    let temp = fixture();
+    let mut changes = watcher(temp.path(), false);
+    settle().await;
+
+    fs::remove_dir_all(temp.path().join("routes")).unwrap();
+    fs::create_dir(temp.path().join("routes")).unwrap();
+    write(temp.path(), "routes/users.yaml", ROUTE);
+    assert_eq!(signals(&mut changes, Duration::from_secs(1)).await, 1);
+
+    write(
+        temp.path(),
+        "routes/users.yaml",
+        &ROUTE.replace("200", "201"),
+    );
+    assert_eq!(signals(&mut changes, Duration::from_secs(2)).await, 1);
+}
+
+#[tokio::test]
+async fn a_config_pointing_at_another_routes_folder_is_followed() {
+    let temp = fixture();
+    let mut changes = watcher(temp.path(), false);
+    settle().await;
+
+    fs::create_dir(temp.path().join("v2")).unwrap();
+    write(temp.path(), "v2/users.yaml", ROUTE);
+    write(
+        temp.path(),
+        "decoy.yaml",
+        "routes: v2\ncollections: collections.yaml\nprotos: { descriptorSets: [api.binpb] }\n",
+    );
+    assert_eq!(signals(&mut changes, Duration::from_secs(2)).await, 1);
+
+    write(temp.path(), "v2/users.yaml", &ROUTE.replace("200", "201"));
+    assert_eq!(signals(&mut changes, Duration::from_secs(2)).await, 1);
 }

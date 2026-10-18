@@ -14,54 +14,75 @@ pub const DEBOUNCE: Duration = Duration::from_millis(300);
 /// How often the polling fallback looks at the files.
 pub const POLL_INTERVAL: Duration = Duration::from_millis(500);
 
-/// Watches until dropped.
-pub struct ConfigWatcher {
-    _watcher: Box<dyn notify::Watcher + Send>,
-    /// The polling fallback is on, forced or detected.
-    pub polling: bool,
-}
+/// Reads the config again and says what to watch now; `None` keeps the current paths (e.g. the
+/// config doesn't parse right now).
+pub type ReadPaths = Box<dyn Fn() -> Option<WatchedPaths> + Send + Sync>;
 
-/// What `--watch` looks at: the config file, routes, collections and proto roots.
+/// What `--watch` looks at: the config file, routes, collections, proto roots and descriptor sets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchedPaths {
     /// Files whose own changes count.
     files: Vec<PathBuf>,
-    /// Directories whose whole tree counts.
-    trees: Vec<PathBuf>,
+    /// Directories whose files with these extensions count (and the directories themselves).
+    trees: Vec<(PathBuf, &'static [&'static str])>,
 }
 
 impl WatchedPaths {
     pub fn of(config: &ServeConfig, config_file: Option<&Path>) -> Self {
         let mut files: Vec<PathBuf> = config_file.into_iter().map(canonical).collect();
         files.push(canonical(&config.collections));
-        let mut trees = Vec::new();
+        files.extend(
+            config
+                .protos
+                .descriptor_sets
+                .iter()
+                .map(|set| canonical(set)),
+        );
+        let mut trees: Vec<(PathBuf, &[&str])> = Vec::new();
         if config.routes.is_dir() {
-            trees.push(canonical(&config.routes));
+            trees.push((canonical(&config.routes), &["yaml", "yml"]));
         } else {
             files.push(canonical(&config.routes));
         }
-        trees.extend(config.protos.roots.iter().map(|root| canonical(root)));
+        trees.extend(
+            config
+                .protos
+                .roots
+                .iter()
+                .map(|root| (canonical(root), &["proto"][..])),
+        );
         Self { files, trees }
     }
 
+    /// Editor swap and backup files (`.users.yaml.swp`, `users.yaml~`) don't count, so editing a
+    /// broken file doesn't print its error again on every autosave.
     fn matches(&self, path: &Path) -> bool {
         self.files.iter().any(|file| file == path)
-            || self.trees.iter().any(|tree| path.starts_with(tree))
+            || self.trees.iter().any(|(tree, extensions)| {
+                path.starts_with(tree)
+                    && path.extension().is_none_or(|extension| {
+                        extensions.iter().any(|wanted| extension == *wanted)
+                    })
+            })
     }
 
-    /// Each file's parent directory (editors replace files by renaming over them, which a watch
-    /// on the file itself misses) and each tree.
-    fn watches(&self) -> Vec<(PathBuf, RecursiveMode)> {
+    /// Natively, each file's parent directory (editors save by renaming a temp file over the
+    /// original, which a watch on the file misses) and each tree. Polling sees a renamed-over
+    /// file anyway, and must not hash the rest of the config's directory, so it takes the file.
+    fn watches(&self, polling: bool) -> Vec<(PathBuf, RecursiveMode)> {
         let mut watches: Vec<(PathBuf, RecursiveMode)> = self
             .files
             .iter()
-            .filter_map(|file| file.parent())
-            .map(|dir| (dir.to_path_buf(), RecursiveMode::NonRecursive))
+            .filter_map(|file| match file.parent() {
+                Some(_) if polling && file.exists() => Some(file.clone()),
+                parent => parent.map(Path::to_path_buf),
+            })
+            .map(|path| (path, RecursiveMode::NonRecursive))
             .collect();
         watches.extend(
             self.trees
                 .iter()
-                .map(|tree| (tree.clone(), RecursiveMode::Recursive)),
+                .map(|(tree, _)| (tree.clone(), RecursiveMode::Recursive)),
         );
         watches.sort_by(|a, b| a.0.cmp(&b.0));
         watches.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
@@ -81,59 +102,121 @@ fn canonical(path: &Path) -> PathBuf {
         })
 }
 
-/// Starts watching `paths`; the receiver gets one `()` per burst of relevant changes, after
-/// [`DEBOUNCE`]. `poll` forces the polling fallback, which is also used where native events
-/// don't arrive (see [`needs_polling`]). Call within a Tokio runtime.
-pub fn watch(
+/// Watches the config files until dropped. [`ConfigWatcher::changed`] resolves once per burst of
+/// relevant changes, after [`DEBOUNCE`].
+pub struct ConfigWatcher {
+    watcher: Box<dyn notify::Watcher + Send>,
     paths: WatchedPaths,
-    poll: bool,
-) -> Result<(ConfigWatcher, mpsc::Receiver<()>), notify::Error> {
-    let watches = paths.watches();
-    let polling = poll || watches.iter().any(|(dir, _)| needs_polling(dir));
-    let (raw_tx, mut raw_rx) = mpsc::unbounded_channel::<()>();
-    let handler = move |event: notify::Result<notify::Event>| {
-        let Ok(event) = event else { return };
-        if matches!(event.kind, EventKind::Access(_)) {
-            return;
-        }
-        if event.paths.iter().any(|path| paths.matches(path)) {
-            let _ = raw_tx.send(());
-        }
-    };
-    let mut watcher: Box<dyn notify::Watcher + Send> = if polling {
-        Box::new(notify::PollWatcher::new(
-            handler,
-            // Polling compares mtimes in whole seconds; hashing the (small) config files also
-            // catches a save in the same second as the previous look.
-            notify::Config::default()
-                .with_poll_interval(POLL_INTERVAL)
-                .with_compare_contents(true),
-        )?)
-    } else {
-        Box::new(notify::recommended_watcher(handler)?)
-    };
-    for (dir, mode) in &watches {
-        watcher.watch(dir, *mode)?;
+    read_paths: ReadPaths,
+    force_poll: bool,
+    polling: bool,
+    events: mpsc::UnboundedSender<()>,
+    changes: mpsc::Receiver<()>,
+}
+
+impl ConfigWatcher {
+    /// Starts watching `paths`. `poll` forces the polling fallback, which is also used where
+    /// native events don't arrive (see [`needs_polling`]) or can't be set up. Call within a
+    /// Tokio runtime.
+    pub fn new(
+        paths: WatchedPaths,
+        read_paths: ReadPaths,
+        poll: bool,
+    ) -> Result<Self, notify::Error> {
+        let (events, mut raw) = mpsc::unbounded_channel::<()>();
+        let (tx, changes) = mpsc::channel(1);
+        tokio::spawn(async move {
+            while raw.recv().await.is_some() {
+                // Wait until the files have been quiet for DEBOUNCE.
+                while let Ok(Some(())) = tokio::time::timeout(DEBOUNCE, raw.recv()).await {}
+                // A signal already waiting covers this change: its reload re-reads the files.
+                if let Err(mpsc::error::TrySendError::Closed(())) = tx.try_send(()) {
+                    return;
+                }
+            }
+        });
+        let (watcher, polling) = arm(&paths, poll, &events)?;
+        Ok(Self {
+            watcher,
+            paths,
+            read_paths,
+            force_poll: poll,
+            polling,
+            events,
+            changes,
+        })
     }
 
-    let (tx, rx) = mpsc::channel(1);
-    tokio::spawn(async move {
-        while raw_rx.recv().await.is_some() {
-            // Wait until the files have been quiet for DEBOUNCE.
-            while let Ok(Some(())) = tokio::time::timeout(DEBOUNCE, raw_rx.recv()).await {}
-            // A reload still running already covers this change once it re-reads the files.
-            if let Err(mpsc::error::TrySendError::Closed(())) = tx.try_send(()) {
+    /// `watching the config files`, plus how.
+    pub fn describe(&self) -> String {
+        let polling = if self.polling { " (polling)" } else { "" };
+        format!("watching the config files{polling}")
+    }
+
+    /// The next burst of changes. Before it returns, the watches are set up again from the
+    /// config as it is now, so a recreated directory or a config that points elsewhere keeps
+    /// being watched.
+    pub async fn changed(&mut self) -> Option<()> {
+        let changed = self.changes.recv().await;
+        if let Some(paths) = (self.read_paths)() {
+            self.paths = paths;
+        }
+        if let Ok((watcher, polling)) = arm(&self.paths, self.force_poll, &self.events) {
+            self.watcher = watcher;
+            self.polling = polling;
+        }
+        changed
+    }
+}
+
+/// A watcher on `paths` that sends `()` to `events` per relevant file event; polling when forced,
+/// needed, or when native watching fails (e.g. the inotify watch limit).
+fn arm(
+    paths: &WatchedPaths,
+    force_poll: bool,
+    events: &mpsc::UnboundedSender<()>,
+) -> Result<(Box<dyn notify::Watcher + Send>, bool), notify::Error> {
+    let handler = {
+        let paths = paths.clone();
+        let events = events.clone();
+        move |event: notify::Result<notify::Event>| {
+            let Ok(event) = event else { return };
+            if matches!(event.kind, EventKind::Access(_)) {
                 return;
             }
+            if event.paths.iter().any(|path| paths.matches(path)) {
+                let _ = events.send(());
+            }
         }
-    });
-    Ok((
-        ConfigWatcher {
-            _watcher: watcher,
-            polling,
-        },
-        rx,
-    ))
+    };
+    let poll = force_poll
+        || paths
+            .watches(false)
+            .iter()
+            .any(|(path, _)| needs_polling(path));
+    if !poll {
+        let native = notify::recommended_watcher(handler.clone()).and_then(|mut watcher| {
+            for (path, mode) in paths.watches(false) {
+                notify::Watcher::watch(&mut watcher, &path, mode)?;
+            }
+            Ok(watcher)
+        });
+        if let Ok(watcher) = native {
+            return Ok((Box::new(watcher), false));
+        }
+    }
+    let mut watcher = notify::PollWatcher::new(
+        handler,
+        // Polling compares mtimes in whole seconds; hashing the (small) config files also
+        // catches a save in the same second as the previous look.
+        notify::Config::default()
+            .with_poll_interval(POLL_INTERVAL)
+            .with_compare_contents(true),
+    )?;
+    for (path, mode) in paths.watches(true) {
+        notify::Watcher::watch(&mut watcher, &path, mode)?;
+    }
+    Ok((Box::new(watcher), true))
 }
 
 /// True where native file events don't arrive: network filesystems, and Windows drives seen

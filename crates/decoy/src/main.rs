@@ -4,8 +4,6 @@ use clap::{Parser, Subcommand};
 use decoy_runtime::config::{ServeCliOptions, ServeConfig};
 use decoy_runtime::watch::{ConfigWatcher, WatchedPaths};
 
-type Watching = (ConfigWatcher, tokio::sync::mpsc::Receiver<()>);
-
 mod upgrade;
 
 #[derive(Debug, Parser)]
@@ -50,8 +48,8 @@ struct ServeArgs {
     /// Reload when a config, routes, collections or proto file changes
     #[arg(long)]
     watch: bool,
-    /// --watch, polling the files instead of waiting for change events (e.g. for network drives;
-    /// WSL2 `/mnt/*` paths and network filesystems poll on their own)
+    /// --watch, polling the files instead of waiting for change events (implies --watch; WSL2
+    /// `/mnt/*` paths and network filesystems poll on their own)
     #[arg(long)]
     watch_poll: bool,
 }
@@ -107,7 +105,7 @@ fn config_reader(args: ServeArgs) -> decoy_tui::LoadConfig {
 fn watch(
     args: &ServeArgs,
     config: &ServeConfig,
-) -> Result<Option<Watching>, Box<dyn std::error::Error>> {
+) -> Result<Option<ConfigWatcher>, Box<dyn std::error::Error>> {
     if !args.watch && !args.watch_poll {
         return Ok(None);
     }
@@ -116,7 +114,13 @@ fn watch(
         None => None,
     };
     let paths = WatchedPaths::of(config, config_file.as_deref());
-    Ok(Some(decoy_runtime::watch::watch(paths, args.watch_poll)?))
+    let poll = args.watch_poll;
+    let args = args.clone();
+    let read_paths = Box::new(move || {
+        let config = serve_config(args.clone()).ok()?;
+        Some(WatchedPaths::of(&config, config_file.as_deref()))
+    });
+    Ok(Some(ConfigWatcher::new(paths, read_paths, poll)?))
 }
 
 async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
@@ -131,14 +135,12 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     for listener in &server.listeners {
         eprintln!("decoy serve listening on {}", listener.label());
     }
-    if let Some((watcher, mut changes)) = watching {
-        let polling = if watcher.polling { " (polling)" } else { "" };
-        eprintln!("decoy serve: watching the config files{polling}");
+    if let Some(mut watcher) = watching {
+        eprintln!("decoy serve: {}", watcher.describe());
         let reloader = server.reloader();
         let read_config = config_reader(args);
         tokio::spawn(async move {
-            let _watcher = watcher;
-            while changes.recv().await.is_some() {
+            while watcher.changed().await.is_some() {
                 match reloader.reload(&read_config).await {
                     Ok(reloaded) => {
                         eprintln!("decoy serve: reloaded: {}", reloaded.summary());

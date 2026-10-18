@@ -23,8 +23,8 @@ use decoy_runtime::{ControlError, Controller, DEFAULT_SESSION, ServeError, Serve
 use futures_util::{Stream, StreamExt};
 use ratatui::Terminal;
 use ratatui::backend::Backend;
+use tokio::sync::RwLock;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
-use tokio::sync::{RwLock, mpsc};
 
 pub use app::{App, Effect, Event, Options, Verb};
 
@@ -41,7 +41,7 @@ pub async fn run(
     server: Server,
     quit: tokio::sync::oneshot::Sender<()>,
     load_config: LoadConfig,
-    watching: Option<(ConfigWatcher, mpsc::Receiver<()>)>,
+    mut watching: Option<ConfigWatcher>,
 ) -> Result<(), ServeError> {
     let reloader = Reloader {
         reloader: server.reloader(),
@@ -76,11 +76,8 @@ pub async fn run(
     for listener in &server.listeners {
         app.info(format!("listening on {}", listener.label()));
     }
-    // The watcher stops when dropped, at the end of `run`.
-    let (_watcher, mut changes) = watching.unzip();
-    if let Some(watcher) = &_watcher {
-        let polling = if watcher.polling { " (polling)" } else { "" };
-        app.info(format!("watching the config files{polling}"));
+    if let Some(watcher) = &watching {
+        app.info(watcher.describe());
     }
 
     let mut events = server.subscribe();
@@ -112,7 +109,7 @@ pub async fn run(
         &mut app,
         &controller,
         &reloader,
-        &mut changes,
+        &mut watching,
         &mut events,
         &mut served,
     )
@@ -165,7 +162,7 @@ async fn event_loop(
     app: &mut App,
     controller: &RwLock<Controller>,
     reloader: &Reloader,
-    changes: &mut Option<mpsc::Receiver<()>>,
+    watching: &mut Option<ConfigWatcher>,
     events: &mut tokio::sync::broadcast::Receiver<decoy_runtime::events::Event>,
     served: &mut Served,
 ) -> std::io::Result<Option<Result<(), ServeError>>> {
@@ -185,7 +182,7 @@ async fn event_loop(
             },
             stopped = &mut *served => return Ok(Some(joined(stopped))),
             // `--watch`: a config file changed.
-            Some(()) = changed(changes) => Event::Reloaded(reloader.reload().await),
+            Some(()) = changed(watching) => Event::Reloaded(reloader.reload().await),
         };
         let mut batch = vec![first];
         while batch.len() < BATCH {
@@ -216,9 +213,9 @@ async fn event_loop(
 }
 
 /// The next `--watch` signal; never without `--watch`.
-async fn changed(changes: &mut Option<mpsc::Receiver<()>>) -> Option<()> {
-    match changes {
-        Some(changes) => changes.recv().await,
+async fn changed(watching: &mut Option<ConfigWatcher>) -> Option<()> {
+    match watching {
+        Some(watcher) => watcher.changed().await,
         None => std::future::pending().await,
     }
 }
@@ -287,7 +284,7 @@ mod tests {
         dir: tempfile::TempDir,
         controller: std::sync::Arc<RwLock<Controller>>,
         reloader: Reloader,
-        watching: Option<mpsc::Receiver<()>>,
+        watching: Option<ConfigWatcher>,
         out: Vec<u8>,
         keys: mpsc::UnboundedSender<Input>,
         input: std::pin::Pin<Box<dyn Stream<Item = Input>>>,

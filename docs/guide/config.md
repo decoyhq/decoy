@@ -93,8 +93,9 @@ startup Collection all fail at startup with a diagnostic.
 
 ## Reloading
 
-`--watch` (on `decoy serve` and on bare `decoy`) reloads when the config file, a Route file, the
-collections file or a proto file changes. In the terminal UI, `/reload` does the same on demand.
+`--watch` (on `decoy serve` and on bare `decoy`) reloads when the config file, the collections file,
+a Route file, a `.proto` file under a proto root or a descriptor set changes. In the terminal UI
+that bare `decoy` opens, `/reload` does the same on demand.
 
 ```sh
 decoy serve --config mocks/decoy.yaml --watch
@@ -106,11 +107,12 @@ Behavior is gone is dropped with a warning, a Session whose Collection is gone f
 default `collection`, and Sessions that never picked a Collection follow a new default. If a file
 doesn't parse or validate, the old config stays live and the error is printed once per save.
 `port`, `host`, `listeners` and `tls` need a restart; changing them prints
-`listener changes need restart` and applies everything else.
+`listener changes need restart` and applies everything else. When the config points `routes`,
+`collections` or `protos` somewhere else, the watch follows it.
 
-Changes are picked up about 300ms after the last write. On network filesystems and on Windows
-drives seen from WSL2 (`/mnt/c/...`) file events don't arrive, so Decoy polls the files there
-instead; `--watch-poll` forces polling anywhere.
+Changes are picked up within about a second of the last write. On network filesystems and on
+Windows drives seen from WSL2 (`/mnt/c/...`) file events don't arrive, so Decoy polls the files
+there instead; `--watch-poll` forces polling anywhere (and implies `--watch`).
 
 ## Limits and shutdown
 
