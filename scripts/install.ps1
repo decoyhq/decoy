@@ -1,12 +1,12 @@
 # Install the decoy binary from GitHub Releases (Windows).
 #
-#   irm https://raw.githubusercontent.com/what3verCODE/decoy/main/scripts/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/decoyhq/decoy/main/scripts/install.ps1 | iex
 #   $env:DECOY_VERSION = '0.1.0-alpha.6'; irm ... | iex      # a specific version
 #
 # Env: DECOY_VERSION, DECOY_INSTALL_DIR (default ~\.decoy\bin), GITHUB_TOKEN (optional).
 $ErrorActionPreference = 'Stop'
 
-$repo = 'what3verCODE/decoy'
+$repo = 'decoyhq/decoy'
 $version = if ($env:DECOY_VERSION) { $env:DECOY_VERSION } else { 'latest' }
 $installDir = if ($env:DECOY_INSTALL_DIR) { $env:DECOY_INSTALL_DIR } else { Join-Path $HOME '.decoy\bin' }
 

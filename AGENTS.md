@@ -15,7 +15,7 @@ Operating manual for agents working in the **decoy** monorepo.
 
 ### Issue tracker
 
-Issues and specs are tracked in GitHub Issues for `what3verCODE/decoy`. See `docs/agents/issue-tracker.md`.
+Issues and specs are tracked in GitHub Issues for `decoyhq/decoy`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

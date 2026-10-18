@@ -5,10 +5,8 @@ use std::path::Path;
 use std::process::Command;
 
 // The release copies default to that release's version; DECOY_VERSION overrides it.
-const INSTALL_SH: &str =
-    "https://github.com/what3verCODE/decoy/releases/latest/download/install.sh";
-const INSTALL_PS1: &str =
-    "https://github.com/what3verCODE/decoy/releases/latest/download/install.ps1";
+const INSTALL_SH: &str = "https://github.com/decoyhq/decoy/releases/latest/download/install.sh";
+const INSTALL_PS1: &str = "https://github.com/decoyhq/decoy/releases/latest/download/install.ps1";
 
 /// Why `exe` must not upgrade itself, if it is owned by a package manager.
 pub fn refusal(exe: &Path) -> Option<&'static str> {

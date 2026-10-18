@@ -10,7 +10,7 @@ diagnostic miss, never the real upstream.
 
 Alpha. The native Rust runtime (`crates/decoy-runtime`) serves HTTP today. Install with
 `npm i -D @decoyhq/cli` or `curl -fsSL
-https://github.com/what3verCODE/decoy/releases/latest/download/install.sh | sh`; see
+https://github.com/decoyhq/decoy/releases/latest/download/install.sh | sh`; see
 [Install](docs/guide/install.md).
 
 Full docs: **[the guide](docs/guide/README.md)**: install, Routes, Collections, Sessions, config,
