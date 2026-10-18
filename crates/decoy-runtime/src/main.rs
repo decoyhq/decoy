@@ -472,11 +472,14 @@ fn response_from_forward_response(plan: ForwardResponse) -> Response<Body> {
     *response.status_mut() = StatusCode::from_u16(plan.status).unwrap_or(StatusCode::OK);
 
     for (name, value) in plan.headers {
-        if let (Ok(name), Ok(value)) = (
+        match (
             HeaderName::from_bytes(name.as_bytes()),
             HeaderValue::from_str(&value),
         ) {
-            response.headers_mut().append(name, value);
+            (Ok(name), Ok(value)) => {
+                response.headers_mut().append(name, value);
+            }
+            _ => eprintln!("decoy serve: dropped response header `{name}`: invalid name or value"),
         }
     }
 
@@ -505,11 +508,14 @@ fn http_response(plan: HttpResponsePlan) -> Response<Body> {
     *response.status_mut() = StatusCode::from_u16(plan.status).unwrap_or(StatusCode::OK);
 
     for (name, value) in plan.headers {
-        if let (Ok(name), Ok(value)) = (
+        match (
             HeaderName::from_bytes(name.as_bytes()),
             HeaderValue::from_str(&value),
         ) {
-            response.headers_mut().insert(name, value);
+            (Ok(name), Ok(value)) => {
+                response.headers_mut().insert(name, value);
+            }
+            _ => eprintln!("decoy serve: dropped response header `{name}`: invalid name or value"),
         }
     }
 
@@ -520,9 +526,8 @@ fn http_response(plan: HttpResponsePlan) -> Response<Body> {
 fn request_headers(headers: &axum::http::HeaderMap) -> BTreeMap<String, String> {
     let mut joined: BTreeMap<String, String> = BTreeMap::new();
     for (name, value) in headers {
-        let Ok(value) = value.to_str() else {
-            continue;
-        };
+        // Non-UTF-8 bytes become U+FFFD instead of dropping the whole header.
+        let value = &*String::from_utf8_lossy(value.as_bytes());
         // HTTP/2 splits `cookie` into one field per pair; they rejoin with `; ` (RFC 9113 §8.2.3).
         let separator = if name == axum::http::header::COOKIE {
             "; "
@@ -573,8 +578,11 @@ mod tests {
         headers.append("accept", HeaderValue::from_static("text/html"));
         headers.append("accept", HeaderValue::from_static("*/*"));
 
+        headers.append("x-latin1", HeaderValue::from_bytes(b"caf\xe9").unwrap());
+
         let joined = request_headers(&headers);
         assert_eq!(joined["cookie"], "a=1; b=2");
+        assert_eq!(joined["x-latin1"], "caf\u{fffd}");
         assert_eq!(joined["accept"], "text/html, */*");
     }
 

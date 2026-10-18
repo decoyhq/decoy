@@ -45,7 +45,14 @@ pub fn validate_response(response: &ResponseBehavior) -> Result<(), String> {
             ));
         }
     }
-    for value in response.headers.values() {
+    for (name, value) in &response.headers {
+        axum::http::HeaderName::from_bytes(name.as_bytes())
+            .map_err(|_| format!("`{name}` is not a valid HTTP header name"))?;
+        // A templated value is checked once rendered, when the request comes in.
+        if !value.contains("${") {
+            axum::http::HeaderValue::from_str(value)
+                .map_err(|_| format!("header `{name}` has a value HTTP doesn't allow"))?;
+        }
         validate_string(value)?;
     }
     response.body.iter().try_for_each(validate_value)
@@ -308,6 +315,18 @@ mod tests {
                 .contains("invalid JMESPath")
         );
         assert!(validate_response(&response(None, &[("x", "${ body.name")], json!(null))).is_err());
+        // Headers that would be dropped at response time fail at startup instead.
+        assert_eq!(
+            validate_response(&response(None, &[("bad name", "v")], json!(null))).unwrap_err(),
+            "`bad name` is not a valid HTTP header name"
+        );
+        assert_eq!(
+            validate_response(&response(None, &[("x-a", "line\nbreak")], json!(null))).unwrap_err(),
+            "header `x-a` has a value HTTP doesn't allow"
+        );
+        assert!(
+            validate_response(&response(None, &[("x-a", "${ body.name }")], json!(null))).is_ok()
+        );
     }
 
     #[test]

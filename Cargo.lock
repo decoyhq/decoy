@@ -329,6 +329,7 @@ dependencies = [
  "humantime",
  "hyper-util",
  "jmespath",
+ "percent-encoding",
  "pretty_assertions",
  "prost",
  "prost-reflect",
