@@ -117,6 +117,82 @@ mod tests {
         assert!(pool.get_message_by_name("approvals.v1.Approval").is_some());
     }
 
+    fn write_versioned_layout(proto: &Path, import: impl Fn(&str, &str) -> String) {
+        let files = [
+            ("v1/keyboards", "keyboards", "keyboards.v1", "Keyboard"),
+            ("v1/monitors", "monitors", "monitors.v1", "Monitor"),
+            ("v2/my-entity", "my-entity", "my_entity.v2", "MyEntity"),
+        ];
+        fs::write(
+            proto.join("common.proto"),
+            "syntax = \"proto3\";\npackage common;\nmessage Money { int64 units = 1; }\n",
+        )
+        .unwrap();
+        for (dir, file, package, message) in files {
+            fs::create_dir_all(proto.join(dir)).unwrap();
+            fs::write(
+                proto.join(dir).join(format!("{file}.proto")),
+                format!(
+                    "syntax = \"proto3\";\npackage {package};\nimport \"common.proto\";\n\
+                     message {message} {{ string id = 1; common.Money price = 2; }}\n"
+                ),
+            )
+            .unwrap();
+            fs::write(
+                proto.join(dir).join(format!("{file}_service.proto")),
+                format!(
+                    "syntax = \"proto3\";\npackage {package};\nimport \"{}\";\n\
+                     message Get{message}Request {{ string id = 1; }}\n\
+                     service {message}Service {{ rpc Get{message}(Get{message}Request) returns ({message}); }}\n",
+                    import(dir, file)
+                ),
+            )
+            .unwrap();
+        }
+    }
+
+    const VERSIONED_SERVICES: [&str; 3] = [
+        "keyboards.v1.KeyboardService",
+        "monitors.v1.MonitorService",
+        "my_entity.v2.MyEntityService",
+    ];
+
+    #[test]
+    fn one_root_resolves_imports_written_from_it() {
+        let dir = tempdir().unwrap();
+        write_versioned_layout(dir.path(), |dir, file| format!("{dir}/{file}.proto"));
+
+        let pool = load_descriptor_pool(&ProtoSources {
+            roots: vec![dir.path().to_path_buf()],
+            descriptor_sets: vec![],
+        })
+        .unwrap();
+
+        for service in VERSIONED_SERVICES {
+            assert!(pool.get_service_by_name(service).is_some(), "{service}");
+        }
+    }
+
+    #[test]
+    fn root_per_folder_resolves_bare_imports() {
+        let dir = tempdir().unwrap();
+        write_versioned_layout(dir.path(), |_, file| format!("{file}.proto"));
+
+        let mut roots = vec![dir.path().to_path_buf()];
+        roots.extend(
+            ["v1/keyboards", "v1/monitors", "v2/my-entity"].map(|folder| dir.path().join(folder)),
+        );
+        let pool = load_descriptor_pool(&ProtoSources {
+            roots,
+            descriptor_sets: vec![],
+        })
+        .unwrap();
+
+        for service in VERSIONED_SERVICES {
+            assert!(pool.get_service_by_name(service).is_some(), "{service}");
+        }
+    }
+
     #[test]
     fn nested_roots_load_each_file_once_in_any_order() {
         let dir = tempdir().unwrap();
