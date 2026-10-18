@@ -117,7 +117,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [version, build]
+    needs: [version, build, npm-smoke]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
@@ -152,7 +152,13 @@ jobs:
           # A pre-release never becomes Latest here; promote one with `task release:latest`.
           prerelease=()
           case "$VERSION" in *-*) prerelease=(--prerelease) ;; esac
-          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/install.* dist/SHA256SUMS \
+          assets=(dist/*.tar.gz dist/*.zip dist/install.* dist/SHA256SUMS)
+          # A rerun replaces the assets of the release an earlier attempt created.
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+            exit 0
+          fi
+          gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
@@ -179,28 +185,56 @@ jobs:
       - name: Build npm packages
         run: |
           pnpm install --frozen-lockfile
-          pnpm --filter @decoyhq/cli build
+          pnpm build
           node scripts/npm-platform-packages.mjs archives npm
 
-      - name: Install the packed CLI into an empty project
+      # These exact tarballs are what publish-npm publishes, so what was tested is what ships.
+      - name: Pack every npm package
         env:
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           which -a npm && npm --version # publish-npm relies on proto's npm (trusted publishing)
+          mkdir -p npm-tarballs
+          for dir in npm/*/; do
+            (cd "$dir" && npm pack --pack-destination "$GITHUB_WORKSPACE/npm-tarballs")
+          done
           # pnpm pack rewrites `catalog:`/`workspace:` ranges; npm pack would ship them verbatim.
-          (cd packages/cli && pnpm pack --pack-destination "$RUNNER_TEMP")
-          (cd npm/cli-linux-x64 && npm pack --pack-destination "$RUNNER_TEMP")
-          if tar -xOzf "$RUNNER_TEMP/decoyhq-cli-$VERSION.tgz" package/package.json | grep -E '"(catalog|workspace):'; then
-            echo "packed manifest still has catalog:/workspace: ranges" >&2
-            exit 1
-          fi
+          (cd packages/cli && pnpm pack --pack-destination "$GITHUB_WORKSPACE/npm-tarballs")
+          (cd packages/playwright && pnpm pack --pack-destination "$GITHUB_WORKSPACE/npm-tarballs")
+          ls -l npm-tarballs
+          for pkg in cli playwright; do
+            if tar -xOzf "npm-tarballs/decoyhq-$pkg-$VERSION.tgz" package/package.json | grep -E '"(catalog|workspace):'; then
+              echo "packed @decoyhq/$pkg manifest still has catalog:/workspace: ranges" >&2
+              exit 1
+            fi
+          done
+          # Platform packages that can't run here must at least carry their binary.
+          for tarball in npm-tarballs/decoyhq-cli-*-*-"$VERSION".tgz; do
+            tar -tzf "$tarball" | grep -xE 'package/bin/decoy(\.exe)?' > /dev/null || { echo "$tarball has no binary" >&2; exit 1; }
+          done
+
+      - name: Install the packed packages into an empty project
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          tarballs="$GITHUB_WORKSPACE/npm-tarballs"
           mkdir "$RUNNER_TEMP/project" && cd "$RUNNER_TEMP/project"
           npm init -y > /dev/null
           npm install --no-audit --no-fund \
-            "$RUNNER_TEMP/decoyhq-cli-linux-x64-$VERSION.tgz" "$RUNNER_TEMP/decoyhq-cli-$VERSION.tgz"
+            "$tarballs/decoyhq-cli-linux-x64-$VERSION.tgz" "$tarballs/decoyhq-cli-$VERSION.tgz" \
+            "$tarballs/decoyhq-playwright-$VERSION.tgz"
           out="$(node_modules/.bin/decoy --version)"
           echo "$out"
           [ "$out" = "decoy $VERSION" ]
+          # npm installs the @playwright/test peer; both module formats must load.
+          node --input-type=module -e "await import('@decoyhq/playwright')"
+          node -e "require('@decoyhq/playwright')"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-tarballs
+          path: npm-tarballs/*.tgz
+          if-no-files-found: error
 
   publish-npm:
     needs: [version, release, npm-smoke]
@@ -221,14 +255,8 @@ jobs:
 
       - uses: actions/download-artifact@v8
         with:
-          path: archives
-          merge-multiple: true
-
-      - name: Build
-        run: |
-          pnpm install --frozen-lockfile
-          pnpm build
-          node scripts/npm-platform-packages.mjs archives npm
+          name: npm-tarballs
+          path: npm-tarballs
 
       - name: Publish (platform packages first, then @decoyhq/cli and @decoyhq/playwright)
         env:
@@ -239,13 +267,13 @@ jobs:
           npm --version
           tag=latest
           case "$VERSION" in *-*) tag=next ;; esac
-          for dir in npm/*/; do
-            (cd "$dir" && npm publish --access public --tag "$tag")
-          done
-          # Workspace packages go through pnpm pack, which resolves `catalog:`/`workspace:` ranges.
-          packed="$RUNNER_TEMP/packed" && mkdir -p "$packed"
-          (cd packages/cli && pnpm pack --pack-destination "$packed")
-          (cd packages/playwright && pnpm pack --pack-destination "$packed")
-          for tarball in "$packed"/decoyhq-cli-*.tgz "$packed"/decoyhq-playwright-*.tgz; do
+          cd npm-tarballs
+          for tarball in decoyhq-cli-*-*-"$VERSION".tgz "decoyhq-cli-$VERSION.tgz" "decoyhq-playwright-$VERSION.tgz"; do
+            name="$(tar -xOzf "$tarball" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0)).name')"
+            # A rerun after a partial publish skips what already made it to the registry.
+            if npm view "$name@$VERSION" version > /dev/null 2>&1; then
+              echo "$name@$VERSION already published, skipping"
+              continue
+            fi
             npm publish "$tarball" --access public --tag "$tag"
           done
