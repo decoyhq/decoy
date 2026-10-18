@@ -47,7 +47,45 @@ describe('decoy fixture', () => {
       await decoy.close()
     }
     expect(router?.sessionId).toMatch(/^users-spec-ts-shows-a-user-[0-9a-f-]{36}$/)
-    expect(decoy.calls).toEqual([])
+    // The Session is freed in Decoy when the test ends.
+    expect(decoy.calls).toEqual([
+      { path: '/__decoy__/control/endSession', session: router?.sessionId, body: '' },
+    ])
+  })
+})
+
+describe('context fixture', () => {
+  test('routes the context under the test Session and ends that Session afterwards', async () => {
+    const decoy = await startFakeDecoy()
+    const patterns: unknown[] = []
+    const context = {
+      route: (pattern: unknown) => {
+        patterns.push(pattern)
+        return Promise.resolve()
+      },
+      request: { fetch: () => Promise.reject(new Error('not routed in this test')) },
+    }
+    const info = { titlePath: ['context'] }
+    const { context: contextFixture } = createDecoyFixtures() as unknown as {
+      context: (
+        args: { context: typeof context; decoyOptions: object },
+        use: (value: unknown) => Promise<void>,
+        testInfo: typeof info,
+      ) => Promise<void>
+    }
+    try {
+      await contextFixture(
+        { context, decoyOptions: { url: decoy.url, urls: '**/api/**' } },
+        () => Promise.resolve(),
+        info,
+      )
+    } finally {
+      await decoy.close()
+    }
+    expect(patterns).toEqual(['**/api/**'])
+    expect(decoy.calls).toEqual([
+      { path: '/__decoy__/control/endSession', session: sessionIdFor(info), body: '' },
+    ])
   })
 })
 

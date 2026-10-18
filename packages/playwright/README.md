@@ -40,8 +40,8 @@ test('empty state', async ({ page, decoy }) => {
 - Fixtures never start Decoy. Each test gets its own Session: Decoy's health is checked and
   `collection` applied once, before routed requests or test code run.
 - The `decoy` fixture is this Session's Router: `sessionId`, `useCollection`, `useRoute`,
-  `reset`. Each call hits the Control API immediately and rejects with Decoy's error. It fails if
-  `decoyOptions` is unset.
+  `reset`, `endSession`. Each call hits the Control API immediately and rejects with Decoy's error.
+  It fails if `decoyOptions` is unset. When the test ends, the fixtures end its Session in Decoy.
 - Decoy is off unless `decoyOptions` is set.
 - With `urls`, every test's browser context sends matching requests to Decoy, with no need to
   request the `decoy` fixture. Method, path/query, headers, and body are kept; `x-mock-session` is
