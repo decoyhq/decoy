@@ -1,0 +1,165 @@
+//! The in-process event broadcast (design: `docs/design/tui.md`): one [`RequestEvent`] per
+//! finished HTTP request or unary gRPC call, and a [`SessionEvent`] per Selection change. Sending
+//! never blocks; a subscriber that falls more than [`CAPACITY`] events behind gets
+//! `RecvError::Lagged` and loses the oldest ones. With no subscriber nothing is captured.
+
+use std::collections::BTreeMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime};
+
+use serde_json::Value;
+
+use crate::collections::Activation;
+use crate::engine::{Candidate, MissDiagnostic, SelectionSnapshot};
+use crate::schema::Transport;
+
+/// Events a subscriber can fall behind by before it starts losing them.
+pub const CAPACITY: usize = 1024;
+/// Each captured body keeps at most this many bytes; [`CapturedBody::size`] has the full size.
+pub const BODY_CAP: usize = 64 * 1024;
+
+pub type Sender = tokio::sync::broadcast::Sender<Event>;
+
+#[derive(Debug, Clone)]
+pub enum Event {
+    Request(Arc<RequestEvent>),
+    Session(SessionEvent),
+}
+
+/// One finished HTTP request or unary gRPC call.
+#[derive(Debug, Clone)]
+pub struct RequestEvent {
+    /// Increases by one per event, process-wide.
+    pub id: u64,
+    pub at: SystemTime,
+    pub transport: Transport,
+    pub session: String,
+    /// The HTTP method; `POST` for gRPC.
+    pub method: String,
+    /// Path and query; `/package.Service/Method` for gRPC.
+    pub url: String,
+    /// Lowercased; gRPC metadata for a gRPC call.
+    pub headers: BTreeMap<String, String>,
+    pub body: CapturedBody,
+    pub outcome: Outcome,
+    pub response: CapturedResponse,
+    pub duration: Duration,
+}
+
+/// What the engine did with a request, and why.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Outcome {
+    Hit(Match),
+    Passthrough {
+        matched: Match,
+        /// `None` when no upstream target was resolved.
+        upstream_url: Option<String>,
+        /// `None` when forwarding failed.
+        upstream_status: Option<u16>,
+    },
+    Miss(MissDiagnostic),
+}
+
+/// The winning active route entry and the explanation of how it won.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Match {
+    pub activation: Activation,
+    /// Candidates rejected before the winner, in evaluation order.
+    pub skipped: Vec<Candidate>,
+    /// The winning Case's `match`; every condition in it passed.
+    pub conditions: Value,
+    /// Empty for gRPC.
+    pub path_params: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedResponse {
+    /// The HTTP status, or the gRPC status code for a gRPC call.
+    pub status: u16,
+    /// In order, repeats kept; gRPC trailers (with `grpc-message`) for a gRPC call.
+    pub headers: Vec<(String, String)>,
+    pub body: CapturedBody,
+}
+
+/// A body in its most-decoded form, cut to [`BODY_CAP`] bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapturedBody {
+    /// JSON text when `decoded`, otherwise the raw body.
+    pub bytes: Vec<u8>,
+    /// The Pipeline decoded the body (protobuf → JSON).
+    pub decoded: bool,
+    /// Size of the full body (the full JSON text when `decoded`) before the cap.
+    pub size: usize,
+}
+
+impl CapturedBody {
+    pub fn raw(body: &[u8]) -> Self {
+        Self {
+            bytes: body[..body.len().min(BODY_CAP)].to_vec(),
+            decoded: false,
+            size: body.len(),
+        }
+    }
+
+    pub fn decoded(value: &Value) -> Self {
+        let text = serde_json::to_vec(value).expect("JSON value serializes");
+        Self {
+            decoded: true,
+            ..Self::raw(&text)
+        }
+    }
+}
+
+/// A Selection created, changed, or ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionEvent {
+    pub session: String,
+    pub change: SessionChange,
+    pub source: SessionSource,
+    /// The Selection after the change; the defaults once ended.
+    pub selection: SelectionSnapshot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionChange {
+    /// The Session's first mutation created its Selection; the verb's own event follows.
+    Created,
+    UseCollection,
+    UseRoute,
+    Reset,
+    Ended,
+}
+
+/// Who changed the Selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SessionSource {
+    /// A direct `Controller` call in this process, e.g. the TUI.
+    #[default]
+    InProcess,
+    ControlApi,
+}
+
+pub(crate) fn channel() -> Sender {
+    tokio::sync::broadcast::channel(CAPACITY).0
+}
+
+pub(crate) fn next_id() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bodies_keep_the_first_64kb_and_the_full_size() {
+        let body = CapturedBody::raw(&vec![b'a'; BODY_CAP + 10]);
+        assert_eq!((body.bytes.len(), body.size), (BODY_CAP, BODY_CAP + 10));
+
+        let body = CapturedBody::decoded(&serde_json::json!({ "id": "a-1" }));
+        assert_eq!(body.bytes, br#"{"id":"a-1"}"#);
+        assert_eq!((body.decoded, body.size), (true, 12));
+    }
+}

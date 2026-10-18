@@ -126,6 +126,10 @@ with stable labels and no box-drawing, readable by a human or by an agent in a n
   pass its own quit signal.
 - The TUI talks to the in-process `Controller` and subscribes to an in-process event broadcast
   (`RequestEvent`, `SessionEvent`). The Control API does not change.
+- `Server::subscribe()` (or `Controller::subscribe()`) returns a `tokio::sync::broadcast` receiver
+  of `decoy_runtime::events::Event`. With no receiver nothing is captured; a receiver more than
+  `events::CAPACITY` events behind gets `Lagged` and loses the oldest. WS/SSE connection events
+  arrive with those transports.
 
 ## Testing
 

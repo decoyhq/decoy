@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 
 use crate::collections::Activation;
 use crate::engine::{Candidate, Catalog, MissDiagnostic, Rejection, reject};
+use crate::events::{Match, Outcome};
 use crate::grpc_schema::{STATUS_CODES, find_method, request_json_options};
 use crate::matching::{grpc_case_matches, grpc_case_mismatch};
 use crate::schema::{Behavior, PipelineStep, ResponseBehavior, Route, RouteMatch};
@@ -95,34 +96,75 @@ pub enum GrpcResolution<'a> {
     Failed(GrpcResponse),
 }
 
+/// A served unary call and what an event needs to explain it.
+pub(crate) struct GrpcCall {
+    pub response: GrpcResponse,
+    pub outcome: Outcome,
+    /// The Pipeline-decoded request message, when a Route decoded it.
+    pub request: Option<Value>,
+    /// The response message before encoding; only when `capture` was asked for.
+    pub message: Option<Value>,
+}
+
 impl Catalog {
     pub(crate) async fn execute_grpc(
         &self,
         collection_id: &str,
         overrides: &BTreeMap<(String, String), String>,
         request: GrpcRequest,
-    ) -> GrpcResponse {
-        match self.resolve_grpc_with(collection_id, overrides, &request, false) {
+        capture: bool,
+    ) -> GrpcCall {
+        match self.resolve_grpc_with(collection_id, overrides, &request, capture) {
             GrpcResolution::Matched {
                 activation,
+                skipped,
+                conditions,
                 route,
                 method,
                 response,
-                envelope,
-                ..
+                mut envelope,
             } => {
                 if let Some(delay) = response.delay {
                     tokio::time::sleep(delay).await;
                 }
-                respond(route, &method, response, &envelope).unwrap_or_else(|reason| {
-                    GrpcResponse::error(
-                        INTERNAL,
-                        format!("behavior `{}` failed: {reason}", activation.address()),
-                    )
-                })
+                let response =
+                    respond(route, &method, response, &envelope).unwrap_or_else(|reason| {
+                        GrpcResponse::error(
+                            INTERNAL,
+                            format!("behavior `{}` failed: {reason}", activation.address()),
+                        )
+                    });
+                let message = (capture && !response.body.is_empty())
+                    .then(|| decode(&response.body, pipeline(route), &method.output()).ok())
+                    .flatten();
+                GrpcCall {
+                    response,
+                    outcome: Outcome::Hit(Match {
+                        activation,
+                        skipped,
+                        conditions: conditions.clone(),
+                        path_params: BTreeMap::new(),
+                    }),
+                    request: Some(envelope["message"].take()),
+                    message,
+                }
             }
-            GrpcResolution::Miss(miss) => GrpcResponse::miss(miss.reason),
-            GrpcResolution::Failed(response) => response,
+            GrpcResolution::Miss(miss) => GrpcCall {
+                response: GrpcResponse::miss(miss.reason.clone()),
+                outcome: Outcome::Miss(miss),
+                request: None,
+                message: None,
+            },
+            GrpcResolution::Failed(response) => GrpcCall {
+                outcome: Outcome::Miss(MissDiagnostic {
+                    collection: collection_id.to_owned(),
+                    reason: response.status_message.clone(),
+                    candidates: Vec::new(),
+                }),
+                response,
+                request: None,
+                message: None,
+            },
         }
     }
 
@@ -466,8 +508,10 @@ mod tests {
                 "default",
                 &BTreeMap::new(),
                 request(&catalog, json!({ "id": "a-1" })),
+                false,
             )
-            .await;
+            .await
+            .response;
         assert_eq!(response.status, OK, "{response:?}");
         assert_eq!(
             decoded(&catalog, &response),
@@ -493,8 +537,10 @@ mod tests {
                 "default",
                 &BTreeMap::new(),
                 request(&catalog, json!({ "id": "a-9" })),
+                false,
             )
-            .await;
+            .await
+            .response;
         assert_eq!(
             response,
             GrpcResponse {
@@ -517,8 +563,10 @@ mod tests {
                 "default",
                 &BTreeMap::new(),
                 request(&catalog, json!({ "id": "a-2" })),
+                false,
             )
-            .await;
+            .await
+            .response;
         assert_eq!(
             response,
             GrpcResponse::miss("no active route case matched request")
@@ -698,8 +746,14 @@ cases:
             "get:empty:ok",
         );
         let response = catalog
-            .execute_grpc("default", &BTreeMap::new(), request(&catalog, json!({})))
-            .await;
+            .execute_grpc(
+                "default",
+                &BTreeMap::new(),
+                request(&catalog, json!({})),
+                false,
+            )
+            .await
+            .response;
         assert_eq!(decoded(&catalog, &response), json!({ "id": "empty" }));
     }
 
@@ -720,8 +774,10 @@ cases:
                 "default",
                 &BTreeMap::new(),
                 request(&catalog, json!({ "id": "PERMISSION_DENIED" })),
+                false,
             )
-            .await;
+            .await
+            .response;
         assert_eq!(response.status, 7);
         assert_eq!(response.status_message, "picked");
 
@@ -730,8 +786,10 @@ cases:
                 "default",
                 &BTreeMap::new(),
                 request(&catalog, json!({ "id": "NOPE" })),
+                false,
             )
-            .await;
+            .await
+            .response;
         assert_eq!(response.status, INTERNAL);
         assert!(
             response.status_message.contains("not a gRPC status name"),
@@ -748,8 +806,9 @@ cases:
         let mut call = request(&catalog, json!({ "id": "a-1" }));
         call.body.truncate(3);
         let response = catalog
-            .execute_grpc("default", &BTreeMap::new(), call)
-            .await;
+            .execute_grpc("default", &BTreeMap::new(), call, false)
+            .await
+            .response;
         assert_eq!(response.status, INVALID_ARGUMENT);
         assert!(
             response.status_message.contains("5-byte header"),
@@ -769,8 +828,10 @@ cases:
                 "default",
                 &BTreeMap::new(),
                 request(&catalog, json!({ "id": "x" })),
+                false,
             )
-            .await;
+            .await
+            .response;
         assert_eq!(response.status, OK, "{response:?}");
         assert_eq!(decoded(&catalog, &response), json!({ "id": "a-1" }));
     }
