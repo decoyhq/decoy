@@ -35,18 +35,19 @@ Dev dependencies used by several workspaces take their version from the `catalog
 
 Prefer [`task`](https://taskfile.dev) (`Taskfile.yml`); each task wraps the plain command shown.
 
-| task                        | runs                                                          |
-| --------------------------- | ------------------------------------------------------------- |
-| `task check`                | `lint` + `typecheck` + `test` — what CI gates on              |
-| `task lint`                 | `cargo fmt --check`, `cargo clippy -D warnings`, `pnpm check` |
-| `task fmt`                  | `cargo fmt`, `pnpm fix`                                       |
-| `task typecheck`            | `pnpm typecheck` (TS 7 `tsc`)                                 |
-| `task test`                 | `cargo test --workspace`, `pnpm test`                         |
-| `task build`                | `cargo build --workspace`, `pnpm build`                       |
-| `task e2e`                  | `build`, then every example's `test:e2e`                      |
-| `task release -- <ver>`     | open a release PR setting one version everywhere              |
-| `task release:tag -- <ver>` | after it merges, tag `origin/main` and push the tag           |
-| `task serve -- <args>`      | `cargo run -p decoy-runtime -- serve <args>`                  |
+| task                           | runs                                                          |
+| ------------------------------ | ------------------------------------------------------------- |
+| `task check`                   | `lint` + `typecheck` + `test` — what CI gates on              |
+| `task lint`                    | `cargo fmt --check`, `cargo clippy -D warnings`, `pnpm check` |
+| `task fmt`                     | `cargo fmt`, `pnpm fix`                                       |
+| `task typecheck`               | `pnpm typecheck` (TS 7 `tsc`)                                 |
+| `task test`                    | `cargo test --workspace`, `pnpm test`                         |
+| `task build`                   | `cargo build --workspace`, `pnpm build`                       |
+| `task e2e`                     | `build`, then every example's `test:e2e`                      |
+| `task release -- <ver>`        | open a release PR setting one version everywhere              |
+| `task release:tag -- <ver>`    | after it merges, tag `origin/main` and push the tag           |
+| `task release:latest -- <ver>` | mark that release Latest (install script, `decoy upgrade`)    |
+| `task serve -- <args>`         | `cargo run -p decoy-runtime -- serve <args>`                  |
 
 Examples (`examples/*`) are the e2e tier and run their own `test:e2e` per workspace.
 

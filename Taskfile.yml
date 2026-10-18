@@ -101,3 +101,8 @@ tasks:
     cmds:
       - git tag --annotate v{{.CLI_ARGS}} --message v{{.CLI_ARGS}} origin/main
       - git push origin v{{.CLI_ARGS}}
+
+  release:latest:
+    desc: 'Mark a published release as Latest (what install.sh and decoy upgrade pick): task release:latest -- 0.1.0'
+    cmds:
+      - gh release edit v{{.CLI_ARGS}} --prerelease=false --latest

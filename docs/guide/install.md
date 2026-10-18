@@ -14,11 +14,12 @@ curl -fsSL https://github.com/what3verCODE/decoy/releases/latest/download/instal
 irm https://github.com/what3verCODE/decoy/releases/latest/download/install.ps1 | iex
 ```
 
-Installs the latest release to `~/.decoy/bin`, after checking it against the release's
-`SHA256SUMS`. Every release carries its own copy of the scripts, so pin a version (e.g. in CI) by
-taking them from that release: `…/releases/download/v0.1.0-alpha.6/install.sh`. `DECOY_VERSION` or
-`sh -s -- <version>` also picks one; `DECOY_INSTALL_DIR` changes the directory. The Windows script
-adds the directory to your user `PATH`; on macOS/Linux add it yourself.
+Installs the release marked Latest to `~/.decoy/bin`, after checking it against the release's
+`SHA256SUMS`. Pre-releases are not Latest until promoted. Every release carries its own copy of the
+scripts, so pin a version (e.g. in CI) by taking them from that release:
+`…/releases/download/v0.1.0-alpha.6/install.sh`. `DECOY_VERSION` or `sh -s -- <version>` also picks
+one; `DECOY_INSTALL_DIR` changes the directory. The Windows script adds the directory to your user
+`PATH`; on macOS/Linux add it yourself.
 
 Upgrade in place with `decoy upgrade` (or `decoy upgrade <version>`). It re-runs the install script
 into the directory of the running binary. npm installs refuse and point you to npm instead.
