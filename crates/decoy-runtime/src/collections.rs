@@ -106,7 +106,7 @@ pub struct CollectionsFile {
 
 impl CollectionsFile {
     pub fn from_yaml(input: &str) -> Result<Self, CollectionError> {
-        let collections = serde_yaml::from_str::<Vec<Collection>>(input)?;
+        let collections = serde_norway::from_str::<Vec<Collection>>(input)?;
         Self::new(collections)
     }
 
@@ -179,7 +179,7 @@ impl CollectionsFile {
 #[derive(Debug, Error)]
 pub enum CollectionError {
     #[error("failed to parse collections yaml: {0}")]
-    Yaml(#[from] serde_yaml::Error),
+    Yaml(#[from] serde_norway::Error),
     #[error(transparent)]
     Validation(#[from] ValidationError),
     #[error("collection route address `{address}` must use route:case:behavior")]

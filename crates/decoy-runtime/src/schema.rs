@@ -75,7 +75,7 @@ impl TryFrom<RawRoute> for Route {
 
 impl Route {
     pub fn from_yaml(input: &str) -> Result<Self, ValidationError> {
-        let route: Self = serde_yaml::from_str(input)?;
+        let route: Self = serde_norway::from_str(input)?;
         route.validate()?;
         Ok(route)
     }
@@ -363,7 +363,7 @@ impl From<Behavior> for RawBehavior {
 #[derive(Debug, Error)]
 pub enum ValidationError {
     #[error("failed to parse route yaml: {0}")]
-    Yaml(#[from] serde_yaml::Error),
+    Yaml(#[from] serde_norway::Error),
     #[error("{kind} id `{id}` cannot be empty")]
     EmptyId { kind: &'static str, id: String },
     #[error(
