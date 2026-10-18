@@ -19,33 +19,27 @@ pub fn lines(record: &RequestEvent, theme: &Theme) -> Vec<Line<'static>> {
         lines: Vec::new(),
         theme,
     };
-    let grpc = record.transport == Transport::Grpc;
 
     out.heading("Request");
+    out.field("transport", transport(&record.transport));
     out.field("method", &record.method);
-    out.field(if grpc { "call" } else { "url" }, &record.url);
+    out.field("url", &record.url);
     out.field("session", &record.session);
-    out.headers(
-        if grpc { "metadata" } else { "headers" },
-        record.headers.iter(),
-    );
+    out.headers(record.headers.iter());
     out.body(&record.body);
 
     out.blank();
     out.heading("Match");
     match &record.outcome {
-        Outcome::Hit(hit) => out.matched("hit", hit, record),
-        Outcome::Passthrough { matched, .. } => out.matched("passthrough", matched, record),
+        Outcome::Hit(hit) => out.matched("hit", Color::Green, hit, record),
+        Outcome::Passthrough { matched, .. } => {
+            out.matched("passthrough", Color::Yellow, matched, record);
+        }
         Outcome::Miss(miss) => {
             out.push(vec![
                 Span::raw("  "),
-                Span::styled("MISS", out.verdict(Color::Red)),
-                Span::raw(format!(
-                    "{:width$}{}",
-                    "",
-                    miss.reason,
-                    width = LABEL - 4 + 1
-                )),
+                Span::styled(format!("{:<LABEL$}", "MISS"), out.verdict(Color::Red)),
+                Span::raw(format!(" {}", miss.reason)),
             ]);
             out.field("collection", &miss.collection);
             out.candidates(&miss.candidates, record);
@@ -57,10 +51,8 @@ pub fn lines(record: &RequestEvent, theme: &Theme) -> Vec<Line<'static>> {
 
     out.blank();
     out.heading("Response");
-    out.field(
-        if grpc { "grpc-status" } else { "status" },
-        &record.response.status.to_string(),
-    );
+    // The gRPC status code for a gRPC call, whose headers are its trailers.
+    out.field("status", &record.response.status.to_string());
     if let Outcome::Passthrough {
         upstream_url,
         upstream_status,
@@ -71,13 +63,12 @@ pub fn lines(record: &RequestEvent, theme: &Theme) -> Vec<Line<'static>> {
             "upstream",
             &format!(
                 "{} → {}",
-                upstream_url.as_deref().unwrap_or("<no target resolved>"),
+                upstream_url.as_deref().unwrap_or("<no target>"),
                 upstream_status.map_or("failed".to_owned(), |status| status.to_string())
             ),
         );
     }
     out.headers(
-        if grpc { "trailers" } else { "headers" },
         record
             .response
             .headers
@@ -91,6 +82,13 @@ pub fn lines(record: &RequestEvent, theme: &Theme) -> Vec<Line<'static>> {
     out.field("at", &(theme.clock)(record.at));
     out.field("duration", &format!("{:?}", record.duration));
     out.lines
+}
+
+fn transport(transport: &Transport) -> &'static str {
+    match transport {
+        Transport::Http => "http",
+        Transport::Grpc => "grpc",
+    }
 }
 
 struct Out<'a> {
@@ -130,12 +128,8 @@ impl Out<'_> {
         self.text(format!("  {label:<LABEL$} {}", printable(value)));
     }
 
-    fn headers<'h>(
-        &mut self,
-        label: &str,
-        headers: impl Iterator<Item = (&'h String, &'h String)>,
-    ) {
-        self.text(format!("  {label}"));
+    fn headers<'h>(&mut self, headers: impl Iterator<Item = (&'h String, &'h String)>) {
+        self.text("  headers".to_owned());
         let mut any = false;
         for (name, value) in headers {
             self.text(format!("    {name}: {}", printable(value)));
@@ -157,12 +151,7 @@ impl Out<'_> {
         }
     }
 
-    fn matched(&mut self, verdict: &str, hit: &Match, record: &RequestEvent) {
-        let color = if verdict == "hit" {
-            Color::Green
-        } else {
-            Color::Yellow
-        };
+    fn matched(&mut self, verdict: &str, color: Color, hit: &Match, record: &RequestEvent) {
         self.push(vec![
             Span::raw("  "),
             Span::styled(format!("{verdict:<LABEL$}"), self.verdict(color)),
@@ -238,6 +227,10 @@ pub fn body_lines(body: &CapturedBody) -> Vec<String> {
     let mut text = match serde_json::from_slice::<serde_json::Value>(&body.bytes) {
         Ok(json) => serde_json::to_string_pretty(&json).expect("JSON value serializes"),
         Err(_) => match std::str::from_utf8(&body.bytes) {
+            // NUL never shows up in text a person would read.
+            Ok(text) if text.contains('\0') => {
+                return vec![format!("<binary, {} bytes>", body.size)];
+            }
             Ok(text) => text.to_owned(),
             // A capture cut inside a multi-byte character is still text.
             Err(error) if error.error_len().is_none() => {
@@ -265,13 +258,15 @@ pub fn body_lines(body: &CapturedBody) -> Vec<String> {
 /// `text` with tabs expanded and other control characters replaced, so a body can't send
 /// escape sequences to the terminal.
 fn printable(text: &str) -> String {
-    text.chars()
-        .map(|c| match c {
-            '\t' => "    ".to_owned(),
-            c if c.is_control() => char::REPLACEMENT_CHARACTER.to_string(),
-            c => c.to_string(),
-        })
-        .collect()
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\t' => out.push_str("    "),
+            c if c.is_control() => out.push(char::REPLACEMENT_CHARACTER),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -300,6 +295,28 @@ mod tests {
     #[test]
     fn control_characters_are_not_sent_to_the_terminal() {
         assert_eq!(body_lines(&body(b"a\x1b[2Jb\tc")), ["a\u{fffd}[2Jb    c"]);
+    }
+
+    #[test]
+    fn text_with_nul_bytes_is_binary() {
+        assert_eq!(body_lines(&body(b"a\x00b")), ["<binary, 3 bytes>"]);
+    }
+
+    #[test]
+    fn pretty_printing_past_the_cap_is_cut_too() {
+        // 40KB of JSON grows past 64KB once each number gets its own indented line.
+        let json = format!("[{}]", vec!["1"; 20_000].join(","));
+        let pretty = serde_json::to_string_pretty(
+            &serde_json::from_str::<serde_json::Value>(&json).unwrap(),
+        )
+        .unwrap();
+        let lines = body_lines(&body(json.as_bytes()));
+        let shown: usize = lines[..lines.len() - 1].iter().map(|l| l.len() + 1).sum();
+        assert!(shown <= BODY_CAP + 1, "{shown}");
+        assert_eq!(
+            lines.last().unwrap(),
+            &format!("…truncated {} bytes", pretty.len() - BODY_CAP)
+        );
     }
 
     #[test]

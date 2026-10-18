@@ -112,10 +112,8 @@ pub struct App {
 
     /// The last [`RETAIN`] requests, oldest first.
     pub(crate) records: VecDeque<Arc<RequestEvent>>,
-    /// The request the detail panel shows.
-    pub(crate) detail: Option<u64>,
-    /// Detail rows scrolled off the top.
-    pub(crate) detail_scroll: u16,
+    /// The open detail panel.
+    pub(crate) detail: Option<Detail>,
     /// The open request picker's highlighted row, 0 being the newest request.
     pub(crate) picker: Option<usize>,
 
@@ -150,7 +148,6 @@ impl App {
             drag: None,
             records: VecDeque::new(),
             detail: None,
-            detail_scroll: 0,
             picker: None,
             rows: Vec::new(),
             log_area: Rect::default(),
@@ -203,11 +200,11 @@ impl App {
         self.selections.get(&self.session).unwrap_or(&self.defaults)
     }
 
-    /// What the popup offers for the current input; empty when it is closed.
     pub(crate) fn record(&self, id: u64) -> Option<&Arc<RequestEvent>> {
         self.records.iter().find(|record| record.id == id)
     }
 
+    /// What the popup offers for the current input; empty when it is closed.
     pub(crate) fn completions(&self) -> Vec<Completion> {
         if self.popup_closed || self.picker.is_some() {
             return Vec::new();
@@ -575,26 +572,40 @@ impl App {
             .map(|&(_, index)| index)
     }
 
-    /// Opens request `id` in the detail panel, or says it is gone.
+    /// Opens request `id` in the detail panel, or says it is gone or never was.
     fn open(&mut self, id: u64) {
-        if self.record(id).is_some() {
-            self.detail = Some(id);
-            self.detail_scroll = 0;
-        } else {
-            self.info(format!("#{id} expired"));
-        }
+        let Some(record) = self.record(id).cloned() else {
+            let newest = self.records.back().map_or(0, |record| record.id);
+            self.info(if id > newest {
+                format!("#{id}: no such request")
+            } else {
+                format!("#{id} expired")
+            });
+            return;
+        };
+        self.detail = Some(Detail {
+            title: format!(" #{id} {} {} ", record.method, record.url),
+            lines: crate::detail::lines(&record, &self.theme()),
+            scroll: 0,
+        });
     }
 
     fn scroll_detail(&mut self, up: bool, by: u16) {
-        self.detail_scroll = if up {
-            self.detail_scroll.saturating_sub(by)
-        } else {
-            // The next frame clamps it to the panel's last page.
-            self.detail_scroll.saturating_add(by)
-        };
+        if let Some(detail) = self.detail.as_mut() {
+            detail.scroll = if up {
+                detail.scroll.saturating_sub(by)
+            } else {
+                // The next frame clamps it to the panel's last page.
+                detail.scroll.saturating_add(by)
+            };
+        }
     }
 
     fn on_mouse(&mut self, mouse: MouseEvent) -> Vec<Effect> {
+        // The picker covers the log; a click there must not open the line beneath it.
+        if self.picker.is_some() {
+            return vec![];
+        }
         let over_detail = self
             .detail_area
             .is_some_and(|area| area.contains(Position::new(mouse.column, mouse.row)));
@@ -652,6 +663,15 @@ impl App {
         }
         vec![]
     }
+}
+
+/// The open request detail, rendered once: it stays readable after the record is evicted, and
+/// frames don't re-render its bodies.
+pub(crate) struct Detail {
+    pub title: String,
+    pub lines: Vec<ratatui::text::Line<'static>>,
+    /// Rows scrolled off the top.
+    pub scroll: u16,
 }
 
 /// `1 override`, `2 overrides`.

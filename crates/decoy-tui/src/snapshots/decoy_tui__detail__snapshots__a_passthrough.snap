@@ -3,6 +3,7 @@ source: crates/decoy-tui/src/detail.rs
 expression: text(&record)
 ---
 Request
+  transport   http
   method      GET
   url         /avatars/ada.png
   session     default

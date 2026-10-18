@@ -3,6 +3,7 @@ source: crates/decoy-tui/src/detail.rs
 expression: "short.join(\"\\n\")"
 ---
 Request
+  transport   http
   method      PUT
   url         /upload
   session     default

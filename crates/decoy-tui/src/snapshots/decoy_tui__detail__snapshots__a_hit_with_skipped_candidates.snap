@@ -3,6 +3,7 @@ source: crates/decoy-tui/src/detail.rs
 expression: text(&record)
 ---
 Request
+  transport   http
   method      GET
   url         /users/123?expand=1
   session     default

@@ -26,7 +26,7 @@ impl App {
         .areas(frame.area());
         let main = log_area;
         // The detail panel sits beside the log on wide terminals and over it on narrow ones.
-        let (log_area, detail_area) = match self.detail.filter(|&id| self.record(id).is_some()) {
+        let (log_area, detail_area) = match self.detail {
             Some(_) if main.width >= DETAIL_BESIDE => {
                 let [log, detail] =
                     Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
@@ -51,28 +51,30 @@ impl App {
     }
 
     fn draw_detail(&mut self, frame: &mut Frame, area: Rect) {
-        let Some(record) = self.detail.and_then(|id| self.record(id)).cloned() else {
+        let theme = self.theme();
+        let Some(detail) = self.detail.as_ref() else {
             return;
         };
-        let theme = self.theme();
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(theme.dim())
             .title(Line::styled(
-                format!(" #{} {} {} ", record.id, record.method, record.url),
+                detail.title.clone(),
                 Style::default().add_modifier(Modifier::BOLD),
             ))
             .title_bottom(Line::styled(
                 " Esc close · PgUp/PgDn or wheel scroll ",
                 theme.dim(),
             ));
-        let paragraph =
-            Paragraph::new(crate::detail::lines(&record, &theme)).wrap(Wrap { trim: false });
+        let paragraph = Paragraph::new(detail.lines.clone()).wrap(Wrap { trim: false });
         let last_page = (paragraph.line_count(area.width.saturating_sub(2)) as u16)
             .saturating_sub(area.height.saturating_sub(2));
-        self.detail_scroll = self.detail_scroll.min(last_page);
+        let scroll = detail.scroll.min(last_page);
         frame.render_widget(Clear, area);
-        frame.render_widget(paragraph.block(block).scroll((self.detail_scroll, 0)), area);
+        frame.render_widget(paragraph.block(block).scroll((scroll, 0)), area);
+        if let Some(detail) = self.detail.as_mut() {
+            detail.scroll = scroll;
+        }
     }
 
     /// Recent requests over the bottom of the log, the newest last, just above the input.
@@ -617,6 +619,18 @@ mod tests {
         insta::assert_snapshot!(after(&["/help"], |_| {}));
     }
 
+    /// The id of the request the detail panel shows.
+    fn open_id(app: &App) -> Option<u64> {
+        let title = &app.detail.as_ref()?.title;
+        title
+            .trim_start()
+            .strip_prefix('#')?
+            .split(' ')
+            .next()?
+            .parse()
+            .ok()
+    }
+
     fn three_requests() -> App {
         let mut app = app();
         app.handle_event(hit(1));
@@ -631,24 +645,24 @@ mod tests {
         typed(&mut app, "/show 2");
         app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
         app.handle_event(key(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(app.detail, Some(2));
+        assert_eq!(open_id(&app), Some(2));
         let shown = plain(&render(&mut app, 100, 30));
         app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!(app.detail, None);
+        assert!(app.detail.is_none());
 
         render(&mut app, 100, 30);
         // Row 0 shows `› /show 2`; the requests are rows 0-2 before it was echoed.
         let row = app.rows.iter().find(|(_, index)| *index == 1).unwrap().0.y;
         app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 5, row));
         app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 5, row));
-        assert_eq!(app.detail, Some(2));
+        assert_eq!(open_id(&app), Some(2));
         assert_eq!(plain(&render(&mut app, 100, 30)), shown);
         app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
 
         app.handle_event(ctrl('o'));
         app.handle_event(key(KeyCode::Up, KeyModifiers::NONE));
         app.handle_event(key(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!((app.picker, app.detail), (None, Some(2)));
+        assert_eq!((app.picker, open_id(&app)), (None, Some(2)));
         assert_eq!(plain(&render(&mut app, 100, 30)), shown);
         insta::assert_snapshot!(shown);
     }
@@ -660,7 +674,7 @@ mod tests {
         app.handle_event(key(KeyCode::Up, KeyModifiers::NONE));
         let screen = styled(&render(&mut app, 100, 12));
         app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
-        assert_eq!((app.picker, app.detail), (None, None));
+        assert!(app.picker.is_none() && app.detail.is_none());
         insta::assert_snapshot!(screen);
     }
 
@@ -694,13 +708,51 @@ mod tests {
         }
         let screen = plain(&render(&mut app, 80, 16));
         assert!(screen.contains("duration"), "{screen}");
-        assert!(app.detail_scroll > 0);
+        assert!(app.detail.as_ref().unwrap().scroll > 0);
         app.handle_event(mouse(MouseEventKind::ScrollUp, 10, 3));
-        assert!(app.detail_scroll > 0);
+        assert!(app.detail.as_ref().unwrap().scroll > 0);
         assert_eq!(
             app.scroll, 0,
             "the wheel over the panel leaves the log alone"
         );
+    }
+
+    #[test]
+    fn an_open_detail_outlives_its_record() {
+        let mut app = three_requests();
+        typed(&mut app, "/show 1");
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_event(key(KeyCode::Enter, KeyModifiers::NONE));
+        for id in 4..=crate::app::RETAIN as u64 + 4 {
+            app.handle_event(hit(id));
+        }
+        assert!(app.record(1).is_none());
+        let screen = plain(&render(&mut app, 100, 20));
+        assert!(screen.contains("╭ #1 GET /users/123"), "{screen}");
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.detail.is_none());
+    }
+
+    #[test]
+    fn clicks_do_nothing_while_the_picker_is_open() {
+        let mut app = three_requests();
+        render(&mut app, 100, 12);
+        app.handle_event(ctrl('o'));
+        render(&mut app, 100, 12);
+        app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 5, 1));
+        app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 5, 1));
+        assert!(app.detail.is_none());
+        assert_eq!(app.picker, Some(0));
+    }
+
+    #[test]
+    fn show_tells_an_unissued_id_from_an_expired_one() {
+        let mut app = three_requests();
+        typed(&mut app, "/show 99");
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_event(key(KeyCode::Enter, KeyModifiers::NONE));
+        let screen = plain(&render(&mut app, 100, 12));
+        assert!(screen.contains("#99: no such request"), "{screen}");
     }
 
     #[test]
@@ -712,7 +764,7 @@ mod tests {
         typed(&mut app, "/show #1");
         app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
         app.handle_event(key(KeyCode::Enter, KeyModifiers::NONE));
-        assert_eq!(app.detail, None);
+        assert!(app.detail.is_none());
         let screen = plain(&render(&mut app, 100, 8));
         assert!(screen.contains("#1 expired"), "{screen}");
         insta::assert_snapshot!(screen);

@@ -4,6 +4,7 @@ expression: shown
 ---
 ╭ #2 POST /orders?page=2&limit=50&sort=created_at&filter=open ─────────────────────────────────────╮
 │Request                                                                                           │
+│  transport   http                                                                                │
 │  method      POST                                                                                │
 │  url         /orders?page=2&limit=50&sort=created_at&filter=open                                 │
 │  session     default                                                                             │
@@ -26,7 +27,6 @@ expression: shown
 │    (empty)                                                                                       │
 │                                                                                                  │
 │Timing                                                                                            │
-│  at          12:01:03                                                                            │
 ╰ Esc close · PgUp/PgDn or wheel scroll ───────────────────────────────────────────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› type / for commands · Ctrl+O recent requests                                                    │

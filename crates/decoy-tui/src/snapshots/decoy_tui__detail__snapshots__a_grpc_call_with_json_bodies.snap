@@ -3,10 +3,11 @@ source: crates/decoy-tui/src/detail.rs
 expression: text(&record)
 ---
 Request
+  transport   grpc
   method      POST
-  call        /approvals.v1.Approvals/Get
+  url         /approvals.v1.Approvals/Get
   session     default
-  metadata
+  headers
     content-type: application/grpc
   body (protobuf as JSON)
     {
@@ -20,8 +21,8 @@ Match
   passed      (none)
 
 Response
-  grpc-status 0
-  trailers
+  status      0
+  headers
     (none)
   body (protobuf as JSON)
     {
