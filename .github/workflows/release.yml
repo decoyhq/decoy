@@ -60,6 +60,7 @@ jobs:
           auto-install: true
 
       - name: Add target
+        shell: bash # so "$TARGET" is the env var on Windows too (PowerShell reads it as $env:TARGET)
         env:
           TARGET: ${{ matrix.target }}
         run: rustup target add "$TARGET"
@@ -69,6 +70,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y musl-tools
 
       - name: Build
+        shell: bash # so "$TARGET" is the env var on Windows too (PowerShell reads it as $env:TARGET)
         env:
           TARGET: ${{ matrix.target }}
         run: cargo build --release --locked -p decoy-runtime --target "$TARGET"
