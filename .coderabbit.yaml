@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# AI review on every PR, including ones opened by hand.
+language: en-US
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - '!pnpm-lock.yaml'
+    - '!Cargo.lock'
+  path_instructions:
+    - path: 'crates/**/*.rs'
+      instructions: >-
+        Decoy is fail-closed: a request no active Case matches must never reach the real network.
+        Check that behavior changes have tests and that docs/guide reflects user-visible changes.
+    - path: '**/*.md'
+      instructions: >-
+        Decoy terms (Route, Case, Behavior, Collection, Session, Selection, Controller) must follow
+        the CONTEXT.md glossary.
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - AGENTS.md
+      - CONTEXT.md
+      - docs/adr/**
+chat:
+  auto_reply: true

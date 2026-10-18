@@ -1,0 +1,30 @@
+# Formats PRs and pushes the fix as a commit (autofix.ci app). The name must stay `autofix.ci`.
+name: autofix.ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  autofix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup toolchain (proto reads .prototools)
+        uses: moonrepo/setup-toolchain@v0
+        with:
+          auto-install: true
+
+      - run: pnpm install --frozen-lockfile
+      - run: cargo fmt --all
+      - run: pnpm fix
+
+      - uses: autofix-ci/action@v1.3.4

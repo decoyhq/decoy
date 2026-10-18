@@ -1,0 +1,53 @@
+# Rust and JS coverage, uploaded to Codecov with OIDC (no token secret).
+name: Coverage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup toolchain (proto reads .prototools)
+        uses: moonrepo/setup-toolchain@v0
+        with:
+          auto-install: true
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Rust coverage
+        run: |
+          rustup component add llvm-tools-preview
+          cargo llvm-cov --workspace --lcov --output-path rust.lcov
+
+      - name: JS coverage
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm -r --filter './packages/*' exec rstest run --coverage
+
+      - uses: codecov/codecov-action@v7.1.1
+        with:
+          use_oidc: true
+          files: rust.lcov
+          flags: rust
+
+      - uses: codecov/codecov-action@v7.1.1
+        with:
+          use_oidc: true
+          files: packages/cli/coverage/lcov.info,packages/playwright/coverage/lcov.info
+          flags: js
