@@ -11,7 +11,7 @@ use crate::control_api::{
     ControlApiRequest, ControlApiResponse, HEALTH_PATH, handle_control_request, is_control_path,
     session_id,
 };
-use crate::engine::{Controller, HttpExecutionOutcome, HttpExecutionRequest};
+use crate::engine::{Catalog, Controller, HttpExecutionOutcome, HttpExecutionRequest};
 use crate::grpc::{GrpcRequest, GrpcResponse, RESOURCE_EXHAUSTED, UNIMPLEMENTED};
 use crate::http::{BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig};
 use crate::http_forward::ForwardResponse;
@@ -147,6 +147,7 @@ pub async fn serve(
         controller: controller.clone(),
         max_body_bytes,
         listeners: Arc::new(ListenerFields::of(&config)),
+        running: Arc::default(),
     };
     Ok(Server {
         listeners: bound,
@@ -184,13 +185,17 @@ pub struct Reloader {
     controller: Arc<RwLock<Controller>>,
     max_body_bytes: Arc<AtomicUsize>,
     listeners: Arc<ListenerFields>,
+    /// One reload at a time, so a slower, older one can't land last (`/reload` and `--watch`).
+    running: Arc<tokio::sync::Mutex<()>>,
 }
 
 /// What a successful reload applied.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Reloaded {
-    pub routes: usize,
-    pub collections: usize,
+    /// The Catalog now served.
+    pub catalog: Arc<Catalog>,
+    /// What a Session that never picked a Collection now uses.
+    pub default_collection: String,
     /// `listener changes need restart`, then one line per Selection fallback or dropped override.
     pub warnings: Vec<String>,
 }
@@ -217,24 +222,19 @@ impl Reloader {
     /// Builds the new Catalog from `config` before taking the Controller's lock, then swaps it in.
     /// On an error nothing changes. Requests already running finish against the old Catalog.
     pub async fn reload(&self, config: ServeConfig) -> Result<Reloaded, ServeError> {
+        let _running = self.running.lock().await;
         let startup = load(&config)?;
         let mut warnings = Vec::new();
         if ListenerFields::of(&config) != *self.listeners {
             warnings.push("listener changes need restart".to_owned());
         }
-        let routes = startup.catalog.routes().count();
-        let collections = startup.catalog.collection_ids().count();
-        warnings.extend(
-            self.controller
-                .write()
-                .await
-                .reload(startup.catalog, startup.default_collection),
-        );
+        let mut controller = self.controller.write().await;
+        warnings.extend(controller.reload(startup.catalog, startup.default_collection));
         self.max_body_bytes
             .store(config.max_body_bytes, Ordering::Relaxed);
         Ok(Reloaded {
-            routes,
-            collections,
+            catalog: controller.catalog(),
+            default_collection: controller.default_collection().to_owned(),
             warnings,
         })
     }

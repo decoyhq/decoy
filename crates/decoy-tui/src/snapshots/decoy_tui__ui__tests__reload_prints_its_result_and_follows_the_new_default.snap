@@ -3,7 +3,7 @@ source: crates/decoy-tui/src/ui.rs
 expression: "styled(&render(&mut app, 120, 10))"
 ---
 [Cyan]› [/]/reload
-[DIM]reloaded: 2 routes, 1 collection[/]
+[DIM]reloaded: 2 routes, 2 collections[/]
 [Yellow]warning: listener changes need restart[/]
 [Yellow]warning: session e2e-1: override `users-by-id:user-1:missing` dropped, it no longer exists[/]
 [Red]error: reload failed, the old config stays live: routes/users.yaml:2: expected a mapping[/]

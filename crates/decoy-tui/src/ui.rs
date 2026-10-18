@@ -10,7 +10,7 @@ use crate::app::{App, overrides};
 use crate::log::{Entry, RequestLine};
 
 /// Completion rows shown at once; the popup scrolls past that.
-const POPUP_ROWS: usize = 8;
+const POPUP_ROWS: usize = 12;
 /// Request rows the picker shows at once.
 const PICKER_ROWS: usize = 12;
 /// The narrowest terminal that fits the detail panel beside the log.
@@ -789,8 +789,7 @@ mod tests {
 
     #[test]
     fn reload_prints_its_result_and_follows_the_new_default() {
-        use crate::app::Reload;
-        use decoy_runtime::{Reloaded, SelectionSnapshot};
+        use decoy_runtime::Reloaded;
 
         let mut app = app();
         typed(&mut app, "/reload");
@@ -800,20 +799,14 @@ mod tests {
             [Effect::Reload]
         );
         app.handle_event(session_event("e2e-1", SessionChange::Reload, &[]));
-        app.handle_event(Event::Reloaded(Ok(Reload {
-            reloaded: Reloaded {
-                routes: 2,
-                collections: 1,
-                warnings: vec![
-                    "listener changes need restart".into(),
-                    "session e2e-1: override `users-by-id:user-1:missing` dropped, it no longer exists".into(),
-                ],
-            },
+        app.handle_event(Event::Reloaded(Ok(Reloaded {
             catalog: std::sync::Arc::new(crate::complete::tests::catalog()),
-            defaults: SelectionSnapshot {
-                collection: "calm".into(),
-                overrides: vec![],
-            },
+            default_collection: "calm".into(),
+            warnings: vec![
+                "listener changes need restart".into(),
+                "session e2e-1: override `users-by-id:user-1:missing` dropped, it no longer exists"
+                    .into(),
+            ],
         })));
         app.handle_event(Event::Reloaded(Err(
             "routes/users.yaml:2: expected a mapping".into(),

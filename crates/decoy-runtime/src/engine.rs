@@ -570,7 +570,7 @@ pub enum CatalogError {
 pub struct Selection {
     collection: String,
     /// `useCollection` picked `collection`; otherwise it follows the default across reloads.
-    chosen: bool,
+    collection_picked: bool,
     route_overrides: BTreeMap<(String, String), String>,
 }
 
@@ -578,7 +578,7 @@ impl Selection {
     fn new(collection: impl Into<String>) -> Self {
         Self {
             collection: collection.into(),
-            chosen: false,
+            collection_picked: false,
             route_overrides: BTreeMap::new(),
         }
     }
@@ -817,7 +817,7 @@ impl Controller {
     pub fn use_collection(&mut self, session: &str, collection: impl Into<String>) {
         let selection = self.selection_mut(session);
         selection.collection = collection.into();
-        selection.chosen = true;
+        selection.collection_picked = true;
         self.emit(session, SessionChange::UseCollection);
     }
 
@@ -830,7 +830,7 @@ impl Controller {
         self.catalog.validate_collection(&collection)?;
         let selection = self.selection_mut(session);
         selection.collection = collection;
-        selection.chosen = true;
+        selection.collection_picked = true;
         self.emit(session, SessionChange::UseCollection);
         Ok(self.selection(session).snapshot())
     }
@@ -896,7 +896,7 @@ impl Controller {
         let mut changed = Vec::new();
         for (session, selection) in &mut self.sessions {
             let before = selection.clone();
-            if !selection.chosen {
+            if !selection.collection_picked {
                 selection.collection.clone_from(&self.default_collection);
             } else if self
                 .catalog
@@ -908,7 +908,7 @@ impl Controller {
                     selection.collection, self.default_collection
                 ));
                 selection.collection.clone_from(&self.default_collection);
-                selection.chosen = false;
+                selection.collection_picked = false;
             }
             selection.route_overrides.retain(|(route, case), behavior| {
                 let exists = self

@@ -39,7 +39,7 @@ pub enum Event {
     /// An [`Effect::Control`] failed; the Controller's error, as the Control API words it.
     ControlFailed(String),
     /// An [`Effect::Reload`] finished.
-    Reloaded(Result<Reload, String>),
+    Reloaded(Result<decoy_runtime::Reloaded, String>),
 }
 
 /// Something [`App::handle_event`] asks the caller to do.
@@ -55,15 +55,6 @@ pub enum Effect {
     },
     /// Re-read the config into the server; report back as [`Event::Reloaded`].
     Reload,
-}
-
-/// A config reload that went through, and what the TUI needs to follow it.
-#[derive(Debug, Clone)]
-pub struct Reload {
-    pub reloaded: decoy_runtime::Reloaded,
-    pub catalog: Arc<Catalog>,
-    /// What a Session without its own Selection reads as now.
-    pub defaults: SelectionSnapshot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -198,19 +189,17 @@ impl App {
                 self.push(Entry::Error(error));
                 vec![]
             }
-            Event::Reloaded(Ok(reload)) => {
-                let Reload {
-                    reloaded,
-                    catalog,
-                    defaults,
-                } = reload;
-                self.catalog = catalog;
-                self.defaults = defaults;
+            Event::Reloaded(Ok(reloaded)) => {
                 self.info(format!(
                     "reloaded: {}, {}",
-                    plural(reloaded.routes, "route"),
-                    plural(reloaded.collections, "collection")
+                    plural(reloaded.catalog.routes().count(), "route"),
+                    plural(reloaded.catalog.collection_ids().count(), "collection")
                 ));
+                self.catalog = reloaded.catalog;
+                self.defaults = SelectionSnapshot {
+                    collection: reloaded.default_collection,
+                    overrides: Vec::new(),
+                };
                 for warning in reloaded.warnings {
                     self.push(Entry::Warn(warning));
                 }

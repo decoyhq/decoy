@@ -18,16 +18,14 @@ use crossterm::event::{
 use crossterm::execute;
 use crossterm::terminal::supports_keyboard_enhancement;
 use decoy_runtime::config::ServeConfig;
-use decoy_runtime::{
-    ControlError, Controller, DEFAULT_SESSION, SelectionSnapshot, ServeError, Server,
-};
+use decoy_runtime::{ControlError, Controller, DEFAULT_SESSION, ServeError, Server};
 use futures_util::{Stream, StreamExt};
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 use tokio::sync::RwLock;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
-pub use app::{App, Effect, Event, Options, Reload, Verb};
+pub use app::{App, Effect, Event, Options, Verb};
 
 /// Runtime events handled per frame, so a burst of traffic draws once and keys stay responsive.
 const BATCH: usize = 1024;
@@ -45,7 +43,6 @@ pub async fn run(
 ) -> Result<(), ServeError> {
     let reloader = Reloader {
         reloader: server.reloader(),
-        controller: server.controller.clone(),
         load_config,
     };
     let controller = server.controller.clone();
@@ -205,27 +202,16 @@ async fn event_loop(
 /// What `/reload` needs: the config loader and the server to apply it to.
 struct Reloader {
     reloader: decoy_runtime::Reloader,
-    controller: std::sync::Arc<RwLock<Controller>>,
     load_config: LoadConfig,
 }
 
 impl Reloader {
-    async fn reload(&self) -> Result<Reload, String> {
+    async fn reload(&self) -> Result<decoy_runtime::Reloaded, String> {
         let config = (self.load_config)().map_err(|error| error.to_string())?;
-        let reloaded = self
-            .reloader
+        self.reloader
             .reload(config)
             .await
-            .map_err(|error| error.to_string())?;
-        let controller = self.controller.read().await;
-        Ok(Reload {
-            reloaded,
-            catalog: controller.catalog(),
-            defaults: SelectionSnapshot {
-                collection: controller.default_collection().to_owned(),
-                overrides: Vec::new(),
-            },
-        })
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -310,7 +296,6 @@ mod tests {
             let controller = server.controller.clone();
             let reloader = Reloader {
                 reloader: server.reloader(),
-                controller: controller.clone(),
                 load_config,
             };
 
