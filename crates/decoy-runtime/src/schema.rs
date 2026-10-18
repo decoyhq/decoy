@@ -190,6 +190,20 @@ pub enum HttpMethod {
     Options,
 }
 
+impl HttpMethod {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Get => "GET",
+            Self::Post => "POST",
+            Self::Put => "PUT",
+            Self::Patch => "PATCH",
+            Self::Delete => "DELETE",
+            Self::Head => "HEAD",
+            Self::Options => "OPTIONS",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Case {
     #[serde(default, rename = "match")]
@@ -397,6 +411,14 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn http_methods_print_as_written_in_routes() {
+        for name in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
+            let method: HttpMethod = serde_json::from_value(serde_json::json!(name)).unwrap();
+            assert_eq!(method.as_str(), name);
+        }
+    }
 
     #[test]
     fn parses_http_route_case_behavior_schema() {

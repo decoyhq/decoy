@@ -61,6 +61,19 @@ impl ResponsePlan {
         Self::fail_closed_miss_with_status(message, DEFAULT_MISS_STATUS)
     }
 
+    /// A resolve miss: the fail-closed body plus every evaluated candidate and its reason.
+    pub fn explained_miss(miss: &crate::engine::MissDiagnostic) -> Self {
+        let mut plan = Self::fail_closed_miss(miss.reason.clone());
+        if let Self::Response(HttpResponsePlan {
+            body: Some(BodyPlan::Json(body)),
+            ..
+        }) = &mut plan
+        {
+            body["candidates"] = serde_json::json!(miss.candidates);
+        }
+        plan
+    }
+
     pub fn fail_closed_miss_with_status(message: impl Into<String>, status: u16) -> Self {
         Self::Response(HttpResponsePlan {
             status,
