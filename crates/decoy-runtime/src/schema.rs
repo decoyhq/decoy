@@ -413,6 +413,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn http_methods_print_as_written_in_routes() {
+        for name in ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] {
+            let method: HttpMethod = serde_json::from_value(serde_json::json!(name)).unwrap();
+            assert_eq!(method.as_str(), name);
+        }
+    }
+
+    #[test]
     fn parses_http_route_case_behavior_schema() {
         let route = Route::from_yaml(
             r#"

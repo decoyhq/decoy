@@ -1485,6 +1485,18 @@ cases:
         );
     }
 
+    #[test]
+    fn an_unknown_collection_misses_with_no_candidates() {
+        assert_eq!(
+            explain_catalog().resolve_http("nope", &get("/users/456")),
+            ResolveOutcome::Miss(MissDiagnostic {
+                collection: "nope".to_owned(),
+                reason: "unknown collection `nope`".to_owned(),
+                candidates: Vec::new(),
+            })
+        );
+    }
+
     #[tokio::test]
     async fn a_miss_lists_every_candidate_in_the_fail_closed_body() {
         let catalog = catalog(

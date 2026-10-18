@@ -613,6 +613,34 @@ mod tests {
     }
 
     #[test]
+    fn a_malformed_match_fails_naming_the_unusable_part() {
+        let request = envelope("/", &[], Value::Null);
+        assert_eq!(
+            mismatch(json!(7), &request),
+            failure("match", json!(7), Value::Null)
+        );
+        assert_eq!(
+            mismatch(json!({ "method": "GET" }), &request),
+            failure("method", json!("GET"), Value::Null)
+        );
+        assert_eq!(
+            mismatch(json!({ "query": "page" }), &request),
+            failure("query", json!("page"), Value::Null)
+        );
+
+        let envelope = json!({ "message": {}, "metadata": {} });
+        let mismatch = |case_match: Value| grpc_case_mismatch(&case_match, &envelope);
+        assert_eq!(
+            mismatch(json!([1])),
+            failure("match", json!([1]), Value::Null)
+        );
+        assert_eq!(
+            mismatch(json!({ "service": "x" })),
+            failure("service", json!("x"), Value::Null)
+        );
+    }
+
+    #[test]
     fn repeated_query_keys_are_arrays_for_predicates() {
         let request = envelope("/?tag=a&tag=b", &[], Value::Null);
         assert!(matches(json!("${ contains(query.tag, 'b') }"), &request));

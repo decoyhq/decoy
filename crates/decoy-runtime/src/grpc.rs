@@ -611,6 +611,71 @@ cases:
         );
     }
 
+    #[test]
+    fn an_unknown_collection_misses_with_no_candidates() {
+        let catalog = explain_catalog();
+        let call = request(&catalog, json!({ "id": "a-1" }));
+        let GrpcResolution::Miss(miss) = catalog.resolve_grpc("nope", &BTreeMap::new(), &call)
+        else {
+            panic!("expected miss")
+        };
+        assert_eq!(
+            miss,
+            MissDiagnostic {
+                collection: "nope".to_owned(),
+                reason: "unknown collection `nope`".to_owned(),
+                candidates: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn http_resolution_rejects_grpc_candidates_by_transport() {
+        let request = crate::engine::HttpRequest {
+            path: "/y".to_owned(),
+            ..Default::default()
+        };
+        let crate::engine::ResolveOutcome::Miss(miss) =
+            explain_catalog().resolve_http("default", &request)
+        else {
+            panic!("expected miss")
+        };
+        assert_eq!(
+            miss.candidates,
+            vec![
+                candidate("ghost:any:ok", Rejection::MissingRoute),
+                candidate(
+                    "http:any:ok",
+                    Rejection::Path {
+                        expected: "/x".to_owned()
+                    }
+                ),
+                candidate("get:ghost:ok", Rejection::Transport),
+                candidate("get:one:ok", Rejection::Transport),
+                candidate("get:any:ghost", Rejection::Transport),
+                candidate("get:any:ok", Rejection::Transport),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_delayed_behavior_answers_after_its_delay() {
+        let catalog = catalog(
+            "  any:\n    behaviors:\n      slow: { delay: 20ms, message: { id: late } }\n",
+            "get:any:slow",
+        );
+        let started = std::time::Instant::now();
+        let response = catalog
+            .execute_grpc(
+                "default",
+                &BTreeMap::new(),
+                request(&catalog, json!({ "id": "a-1" })),
+            )
+            .await;
+        assert!(started.elapsed() >= std::time::Duration::from_millis(20));
+        assert_eq!(decoded(&catalog, &response), json!({ "id": "late" }));
+    }
+
     #[tokio::test]
     async fn default_fields_are_matchable() {
         let catalog = catalog(
