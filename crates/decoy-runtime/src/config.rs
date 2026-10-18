@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -21,6 +22,8 @@ pub struct ServeConfig {
     pub routes: PathBuf,
     pub collections: PathBuf,
     pub port: u16,
+    /// Extra named listeners (e.g. `grpc: 50051`) serving the same Routes and Sessions as `port`.
+    pub ports: BTreeMap<String, u16>,
     pub collection: Option<String>,
     pub passthrough_base_url: Option<String>,
     pub protos: ProtoSources,
@@ -44,6 +47,8 @@ struct NativeConfigFile {
     #[serde(alias = "collectionsFile")]
     collections: Option<PathBuf>,
     port: Option<u16>,
+    #[serde(default)]
+    ports: BTreeMap<String, u16>,
     #[serde(alias = "startupCollection")]
     collection: Option<String>,
     #[serde(alias = "passthroughBaseUrl")]
@@ -86,6 +91,26 @@ impl ServeConfig {
             .port
             .or_else(|| file_config.as_ref().and_then(|config| config.port))
             .unwrap_or(DEFAULT_PORT);
+        let ports = file_config
+            .as_ref()
+            .map(|config| config.ports.clone())
+            .unwrap_or_default();
+        let main = if options.port.is_some() {
+            "--port"
+        } else {
+            "port"
+        };
+        let mut taken = BTreeMap::from([(port, main.to_owned())]);
+        // Port 0 asks the OS for a free port, so several 0s never collide.
+        for (name, extra) in ports.iter().filter(|(_, extra)| **extra != 0) {
+            if let Some(first) = taken.insert(*extra, format!("ports.{name}")) {
+                return Err(ConfigError::PortConflict {
+                    port: *extra,
+                    first,
+                    second: format!("ports.{name}"),
+                });
+            }
+        }
         let collection = options.collection.or_else(|| {
             file_config
                 .as_ref()
@@ -116,6 +141,7 @@ impl ServeConfig {
             routes,
             collections,
             port,
+            ports,
             collection,
             passthrough_base_url,
             protos,
@@ -171,6 +197,12 @@ pub enum ConfigError {
     ParseConfig {
         path: PathBuf,
         source: serde_yaml::Error,
+    },
+    #[error("`{second}` uses port {port}, already taken by `{first}`")]
+    PortConflict {
+        port: u16,
+        first: String,
+        second: String,
     },
     #[error("missing required serve {name}; pass --{name} or set it in --config")]
     MissingValue { name: &'static str },
@@ -315,6 +347,59 @@ collection: config-collection
             config.passthrough_base_url.as_deref(),
             Some("http://flag.example")
         );
+    }
+
+    fn load_raw(base: &Path) -> Result<ServeConfig, ConfigError> {
+        ServeConfig::from_options(
+            ServeCliOptions {
+                config_file: Some(base.join("decoy.yaml")),
+                ..ServeCliOptions::default()
+            },
+            base,
+        )
+    }
+
+    #[test]
+    fn extra_ports_are_named_and_must_not_collide() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        let load = |ports: &str, port: Option<u16>| {
+            fs::write(
+                base.join("decoy.yaml"),
+                format!("routes: r\ncollections: c.yaml\nport: 4100\nports: {ports}\n"),
+            )
+            .unwrap();
+            ServeConfig::from_options(
+                ServeCliOptions {
+                    config_file: Some(base.join("decoy.yaml")),
+                    port,
+                    ..ServeCliOptions::default()
+                },
+                base,
+            )
+        };
+
+        let config = load("{ grpc: 50051 }", None).unwrap();
+        assert_eq!(config.ports, BTreeMap::from([("grpc".to_owned(), 50051)]));
+
+        assert_eq!(
+            load("{ grpc: 4100 }", None).unwrap_err().to_string(),
+            "`ports.grpc` uses port 4100, already taken by `port`"
+        );
+        assert_eq!(
+            load("{ a: 5000, b: 5000 }", None).unwrap_err().to_string(),
+            "`ports.b` uses port 5000, already taken by `ports.a`"
+        );
+        assert_eq!(
+            load("{ grpc: 4200 }", Some(4200)).unwrap_err().to_string(),
+            "`ports.grpc` uses port 4200, already taken by `--port`"
+        );
+        fs::write(
+            base.join("decoy.yaml"),
+            "routes: r\ncollections: c.yaml\nport: 0\nports: { a: 0, b: 0 }\n",
+        )
+        .unwrap();
+        assert!(load_raw(base).is_ok());
     }
 
     #[test]

@@ -107,17 +107,49 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .fallback(any(handle_request))
         .with_state(controller);
-    let addr = SocketAddr::from(([127, 0, 0, 1], config.port));
-    let listener = TcpListener::bind(addr).await?;
-    eprintln!("decoy serve listening on http://{}", listener.local_addr()?);
+    // Bind every listener before serving any, so a taken port fails startup cleanly (Q1).
+    let mut listeners = vec![("port".to_owned(), bind("port", config.port).await?)];
+    for (name, port) in &config.ports {
+        let name = format!("ports.{name}");
+        let listener = bind(&name, *port).await?;
+        listeners.push((name, listener));
+    }
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
-        .await?;
+    let (shutdown, _) = tokio::sync::watch::channel(());
+    let mut servers = tokio::task::JoinSet::new();
+    for (name, listener) in listeners {
+        let addr = listener.local_addr()?;
+        if name == "port" {
+            eprintln!("decoy serve listening on http://{addr}");
+        } else {
+            eprintln!("decoy serve listening on http://{addr} ({name})");
+        }
+        let mut stop = shutdown.subscribe();
+        servers.spawn(
+            axum::serve(listener, app.clone())
+                .with_graceful_shutdown(async move {
+                    let _ = stop.changed().await;
+                })
+                .into_future(),
+        );
+    }
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        Some(result) = servers.join_next() => result??,
+    }
+    drop(shutdown);
+    while let Some(result) = servers.join_next().await {
+        result??;
+    }
 
     Ok(())
+}
+
+async fn bind(name: &str, port: u16) -> Result<TcpListener, String> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpListener::bind(addr)
+        .await
+        .map_err(|error| format!("cannot listen on `{name}` ({addr}): {error}"))
 }
 
 async fn handle_request(

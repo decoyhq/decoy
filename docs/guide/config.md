@@ -18,9 +18,18 @@ decoy serve --config mocks/decoy.yaml
 | `routes`             | `--routes <dir>`         | required                            |
 | `collections`        | `--collections <file>`   | required                            |
 | `port`               | `--port <port>`          | `8080` (binds `127.0.0.1`)          |
+| `ports`              | none                     | none                                |
 | `collection`         | `--collection <id>`      | first Collection in the file        |
 | `passthroughBaseUrl` | `--passthrough-base-url` | none (see [Passthrough](routes.md)) |
 | `protos`             | none                     | none                                |
+
+`ports` opens extra named listeners. Each serves the same Routes, Sessions, and Control API as
+`port`, so a gRPC client and an HTTP client can use different ports but share one Session:
+
+```yaml
+port: 8080
+ports: { grpc: 50051 }
+```
 
 `protos` loads protobuf schemas for gRPC:
 
@@ -41,4 +50,5 @@ protos:
 
 Paths in the file resolve relative to the file; flag paths resolve relative to the working
 directory. Unknown keys, unreadable files, invalid Routes or Collections, duplicate Route ids,
-missing proto roots, protos that don't compile, and an unknown startup Collection all fail at startup with a diagnostic.
+a port used twice or already taken, missing proto roots, protos that don't compile, and an unknown
+startup Collection all fail at startup with a diagnostic.
