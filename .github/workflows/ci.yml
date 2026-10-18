@@ -23,6 +23,7 @@ jobs:
       pull-requests: read
     outputs:
       js: ${{ github.event_name == 'push' || steps.filter.outputs.js == 'true' }}
+      docs: ${{ github.event_name == 'push' || steps.filter.outputs.docs == 'true' }}
       rust: ${{ github.event_name == 'push' || steps.filter.outputs.rust == 'true' }}
       e2e: ${{ github.event_name == 'push' || steps.filter.outputs.e2e == 'true' }}
       examples: ${{ steps.find.outputs.examples }}
@@ -47,23 +48,25 @@ jobs:
               - 'Cargo.*'
               - rust-toolchain.toml
               - deny.toml
+            # Code and config only; Markdown is `docs`, which just lints.
             js:
               - *shared
-              - 'packages/**'
-              - 'examples/**'
+              - '{packages,examples}/**/*.{ts,mts,cts,js,mjs,cjs,json,yaml,yml,proto,html,css}'
               - 'scripts/**'
               - 'package.json'
               - 'pnpm-*.yaml'
               - 'tsconfig*.json'
               - 'eslint.config.*'
+            docs:
               - '**/*.md'
             e2e:
               - *shared
               - 'crates/**'
               - 'Cargo.*'
-              - 'packages/**'
-              - 'examples/**'
+              - '{packages,examples}/**/*.{ts,mts,cts,js,mjs,cjs,json,yaml,yml,proto,html,css}'
+              - 'package.json'
               - 'pnpm-*.yaml'
+              - 'tsconfig*.json'
       # Example workspaces (the e2e tier, `test:e2e`); ones depending on @playwright/test get the
       # browser job, which installs Chromium. An empty list skips that job.
       - id: find
@@ -95,9 +98,11 @@ jobs:
           emit examples "${plain[@]}"
           emit browser-examples "${browser[@]}"
 
+  # Docs-only changes run just the install and lint (prettier covers Markdown).
+  # --ignore-scripts skips the root `prepare` build; js runs build explicitly below.
   ci:
     needs: changes
-    if: needs.changes.outputs.js == 'true'
+    if: needs.changes.outputs.js == 'true' || needs.changes.outputs.docs == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -111,24 +116,29 @@ jobs:
           auto-install: true
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Audit npm dependencies
+        if: needs.changes.outputs.js == 'true'
         run: pnpm audit --audit-level high
 
       - name: Lint & format check
         run: pnpm check
 
       - name: Typecheck
+        if: needs.changes.outputs.js == 'true'
         run: pnpm typecheck
 
       - name: Build
+        if: needs.changes.outputs.js == 'true'
         run: pnpm build
 
       - name: Check published package shape (publint, are-the-types-wrong)
+        if: needs.changes.outputs.js == 'true'
         run: pnpm --filter @decoyhq/playwright run check:package
 
       - name: Test
+        if: needs.changes.outputs.js == 'true'
         run: pnpm test
 
   # fmt, clippy, cargo-deny and the tests (run once, with coverage for Codecov).
