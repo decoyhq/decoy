@@ -50,8 +50,11 @@ choose **Only select repositories → decoy**, save. All are free for public rep
 - Optional: **Allow auto-merge**, so a PR merges once its required checks pass.
 
 **Settings → Rules → Rulesets → New branch ruleset** for `main` (optional but recommended):
-require a pull request and the status checks `ci`, `rust`, `cargo-deny`, `conventional` and the
-`e2e` jobs. Don't make CodeRabbit, Codecov or CodeQL required; they report, they don't gate.
+require a pull request and the status checks `required` (the aggregate of every `ci.yml` job, so
+example and matrix jobs can change freely), `conventional`, `autofix`, `coverage`,
+`analyze (actions)`, `analyze (javascript-typescript)` and `analyze (rust)`. Don't require
+`zizmor` or the Release jobs: they only run when their paths change, so a required one would
+leave other PRs waiting. CodeRabbit and Codecov report; they don't gate.
 
 ### 3. Check it works
 
