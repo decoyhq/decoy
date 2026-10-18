@@ -23,6 +23,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Audit npm dependencies
+        run: pnpm audit --audit-level high
+
       - name: Lint & format check
         run: pnpm check
 
@@ -37,6 +40,15 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+  # Known vulnerabilities, unexpected licenses and crate sources (deny.toml).
+  cargo-deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans sources
 
   rust:
     runs-on: ubuntu-latest

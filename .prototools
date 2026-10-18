@@ -1,6 +1,6 @@
-node = "24"
+node = "24.19.0"
 npm = "12"
-pnpm = "11"
+pnpm = "11.28.6"
 rust = "1.98"
 
 [settings]

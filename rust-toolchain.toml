@@ -1,0 +1,4 @@
+# Same Rust as .prototools, for rustup users outside proto.
+[toolchain]
+channel = "1.98"
+components = ["rustfmt", "clippy"]
