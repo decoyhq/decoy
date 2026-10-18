@@ -1,0 +1,16 @@
+{
+  "name": "@decoyhq-examples/grpc-node",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "cargo run --quiet -p decoy-runtime -- serve --config mocks/decoy.yaml",
+    "test:e2e": "node --test \"tests/*.test.ts\"",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@grpc/grpc-js": "^1.14.0",
+    "@grpc/proto-loader": "^0.8.0",
+    "@types/node": "^24.0.0"
+  }
+}

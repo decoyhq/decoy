@@ -1,0 +1,9 @@
+- id: happy-path
+  routes:
+    - approvals-get:any:echo
+    - approvals-get:pending:ok
+
+- id: approvals-down
+  from: happy-path
+  routes:
+    - approvals-get:any:not-found

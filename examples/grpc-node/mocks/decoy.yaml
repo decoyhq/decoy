@@ -1,0 +1,5 @@
+routes: routes
+collections: collections.yaml
+port: 8091 # gRPC (HTTP/2 cleartext) and the Control API share this port
+protos:
+  roots: [../proto]

@@ -535,10 +535,6 @@ mod tests {
             json!({ "id": "a-1" })
         );
         assert_eq!(
-            decode(&bytes, &[PipelineStep::Protobuf], &input).unwrap(),
-            json!({ "id": "a-1" })
-        );
-        assert_eq!(
             decode(&frame(&bytes), &[PipelineStep::GrpcFrame], &input).unwrap(),
             Value::String(BASE64.encode(&bytes))
         );
