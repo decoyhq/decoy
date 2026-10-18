@@ -116,7 +116,8 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     )));
     let app = Router::new()
         .fallback(any(handle_request))
-        .with_state(controller);
+        .with_state(controller)
+        .layer(Extension(MaxBodyBytes(config.max_body_bytes)));
     let tls_config = match &config.tls {
         None => None,
         Some(TlsSource::Files(files)) => Some(tls::server_config(files)?),
@@ -199,8 +200,9 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
 
 const DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Requests larger than this get `413` (or gRPC `RESOURCE_EXHAUSTED`) instead of being buffered.
-const MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
+/// `maxBodyBytes`: larger requests get `413` (or gRPC `RESOURCE_EXHAUSTED`) instead of buffering.
+#[derive(Debug, Clone, Copy)]
+struct MaxBodyBytes(usize);
 
 /// Ctrl-C, or SIGTERM (what `kill`, Docker and CI runners send).
 async fn shutdown_signal() {
@@ -285,13 +287,17 @@ async fn handle_request(
     let metadata = RequestMetadata {
         original_base_url: original_base_url(&headers, secure),
     };
-    let body = match to_bytes(request.into_body(), MAX_BODY_BYTES).await {
+    let max_body_bytes = request
+        .extensions()
+        .get::<MaxBodyBytes>()
+        .map_or(decoy_runtime::config::DEFAULT_MAX_BODY_BYTES, |max| max.0);
+    let body = match to_bytes(request.into_body(), max_body_bytes).await {
         Ok(body) => body.to_vec(),
         Err(error)
             if std::error::Error::source(&error)
                 .is_some_and(|source| source.is::<http_body_util::LengthLimitError>()) =>
         {
-            let message = format!("request body exceeds {MAX_BODY_BYTES} bytes");
+            let message = format!("request body exceeds {max_body_bytes} bytes (`maxBodyBytes`)");
             return if is_grpc(&headers) {
                 grpc_response(GrpcResponse::error(RESOURCE_EXHAUSTED, message))
             } else {

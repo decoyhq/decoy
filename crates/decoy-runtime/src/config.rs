@@ -6,6 +6,8 @@ use serde::Deserialize;
 use thiserror::Error;
 
 pub const DEFAULT_PORT: u16 = 8080;
+/// Larger request bodies get `413` (gRPC: `RESOURCE_EXHAUSTED`) instead of being buffered.
+pub const DEFAULT_MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
 /// Binds every loopback address `localhost` resolves to (`127.0.0.1` and `::1`).
 pub const DEFAULT_HOST: &str = "localhost";
 
@@ -32,6 +34,7 @@ pub struct ServeConfig {
     pub collection: Option<String>,
     pub passthrough_base_url: Option<String>,
     pub protos: ProtoSources,
+    pub max_body_bytes: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,6 +161,7 @@ struct NativeConfigFile {
     #[serde(alias = "passthroughBaseUrl")]
     passthrough_base_url: Option<String>,
     protos: Option<ProtoSources>,
+    max_body_bytes: Option<usize>,
 }
 
 impl ServeConfig {
@@ -273,6 +277,10 @@ impl ServeConfig {
                 .as_ref()
                 .and_then(|config| config.passthrough_base_url.clone())
         });
+        let max_body_bytes = file_config
+            .as_ref()
+            .and_then(|config| config.max_body_bytes)
+            .unwrap_or(DEFAULT_MAX_BODY_BYTES);
         let protos = file_config
             .and_then(|config| config.protos)
             .map(|protos| ProtoSources {
@@ -298,6 +306,7 @@ impl ServeConfig {
             collection,
             passthrough_base_url,
             protos,
+            max_body_bytes,
         })
     }
 }

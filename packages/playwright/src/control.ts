@@ -10,17 +10,18 @@ export interface DecoyRouter {
   useRoute(route: string, caseId: string, behavior: string): Promise<void>
   /** Drop this Session's route overrides. */
   reset(): Promise<void>
-  /** Free this Session in Decoy. The fixtures call it when the test ends. */
+  /** End this Session in Decoy (gives up after 2s). The fixtures call it when the test ends. */
   endSession(): Promise<void>
 }
 
 /** A Router bound to one Session of the Decoy runtime at `url`. Errors reject at the call site. */
 export function createRouter(url: string, sessionId: string): DecoyRouter {
-  const control = async (verb: string, body?: object): Promise<void> => {
+  const control = async (verb: string, body?: object, signal?: AbortSignal): Promise<void> => {
     const response = await fetch(`${url}/__decoy__/control/${verb}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', [SESSION_HEADER]: sessionId },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     })
     if (!response.ok) {
       throw new Error(`Decoy ${verb} failed (${response.status}): ${await errorMessage(response)}`)
@@ -32,7 +33,8 @@ export function createRouter(url: string, sessionId: string): DecoyRouter {
     useCollection: (collection) => control('useCollection', { collection }),
     useRoute: (route, caseId, behavior) => control('useRoute', { route, case: caseId, behavior }),
     reset: () => control('reset'),
-    endSession: () => control('endSession'),
+    // Runs in test teardown: an unreachable Decoy must not turn a passed test into a timeout.
+    endSession: () => control('endSession', undefined, AbortSignal.timeout(2000)),
   }
 }
 

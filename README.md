@@ -65,7 +65,8 @@ curl -i localhost:8080/users/123   # 404
 curl -X POST localhost:8080/__decoy__/control/useCollection -d '{"collection":"happy-path"}'
 ```
 
-Verbs: `useCollection`, `useRoute` (override one Behavior), `reset` (drop overrides). See
+Verbs: `useCollection`, `useRoute` (override one Behavior), `reset` (drop overrides), `endSession`
+(end the Session). See
 [`docs/design/native-control-api-shape.md`](docs/design/native-control-api-shape.md).
 
 ## Roadmap

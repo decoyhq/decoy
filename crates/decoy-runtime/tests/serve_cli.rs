@@ -645,21 +645,28 @@ cases:
 }
 
 #[tokio::test]
-async fn oversized_request_bodies_get_413() {
+async fn request_bodies_over_max_body_bytes_get_413() {
     let fixture = Fixture::new();
-    fixture.write_route("who.yaml", route_response("who", "MAIN"));
+    fixture.write_route(
+        "who.yaml",
+        route_response("who", "MAIN").replace("GET", "POST"),
+    );
     fixture.write_collections("- id: main\n  routes: [who:any:ok]\n");
     let port = unused_port();
-    let _server = fixture.spawn(port, &[]);
+    fixture.write_config(format!(
+        "routes: routes\ncollections: collections.yaml\nport: {port}\nmaxBodyBytes: 1024\n"
+    ));
+    let _server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
     wait_for_server(port).await;
+    let post = |size: usize| {
+        reqwest::Client::new()
+            .post(format!("http://127.0.0.1:{port}/who"))
+            .body(vec![b'x'; size])
+            .send()
+    };
 
-    let response = reqwest::Client::new()
-        .post(format!("http://127.0.0.1:{port}/who"))
-        .body(vec![b'x'; 33 * 1024 * 1024])
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), 413);
+    assert_eq!(post(1024).await.unwrap().status(), 200);
+    assert_eq!(post(1025).await.unwrap().status(), 413);
 }
 
 #[cfg(unix)]

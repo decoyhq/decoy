@@ -11,7 +11,7 @@ The native prototype exposes command-shaped Controller verbs below the reserved 
 | `useCollection` | `POST /__decoy__/control/useCollection` | `{ "collection": "<collection-id>" }`                                         |
 | `useRoute`      | `POST /__decoy__/control/useRoute`      | `{ "route": "<route-id>", "case": "<case-id>", "behavior": "<behavior-id>" }` |
 | `reset`         | `POST /__decoy__/control/reset`         | empty or omitted JSON body                                                    |
-| `endSession`    | `POST /__decoy__/control/endSession`    | empty or omitted JSON body; frees the Session (added for #267)                |
+| `endSession`    | `POST /__decoy__/control/endSession`    | empty or omitted JSON body; ends the Session (added for #267)                 |
 
 Liveness: `GET /__decoy__/health` returns `200 {"status":"ok"}` while the runtime serves. It is not Session-scoped and does not touch Selection.
 

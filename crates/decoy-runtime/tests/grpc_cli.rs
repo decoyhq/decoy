@@ -137,6 +137,16 @@ async fn http_routes_keep_working_over_http2_on_the_same_port() {
 }
 
 #[tokio::test]
+async fn an_oversized_call_gets_resource_exhausted() {
+    let server = Server::start(ROUTE, COLLECTIONS).await;
+    let mut client = server.client().await;
+
+    let id = "x".repeat(33 * 1024 * 1024);
+    let status = client.get(json!({ "id": id }), &[]).await.unwrap_err();
+    assert_eq!(status.code(), Code::ResourceExhausted);
+}
+
+#[tokio::test]
 async fn serves_grpc_over_tls_with_alpn_h2() {
     let server = Server::start_with(ROUTE, COLLECTIONS, true).await;
     let mut client = server.client().await;

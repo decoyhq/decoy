@@ -78,7 +78,7 @@ export async function provideDecoy(
 }
 
 /**
- * Frees the test's Session in Decoy once the test is done, so a long-lived Decoy doesn't keep one
+ * Ends the test's Session in Decoy once the test is done, so a long-lived Decoy doesn't keep one
  * Selection per test. Best effort: a Decoy that is already gone can't hold the Session either.
  */
 async function endDecoySession(testInfo: Pick<TestInfo, 'titlePath'>): Promise<void> {

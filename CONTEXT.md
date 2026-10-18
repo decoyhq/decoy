@@ -66,6 +66,8 @@ _Avoid_: "config" (Selection is runtime, not authored), broad "state" unless dis
 **Session**:
 An isolated **Selection** scope keyed canonically by the `x-mock-session` header. The default/global
 Session is for local dev; explicit Sessions isolate parallel e2e tests on a shared runtime.
+`endSession` ends a Session: its Selection is dropped, and the Session starts again from defaults
+the next time it is used.
 _Avoid_: "tenant", "context", "user".
 
 ### Matching & templating
@@ -115,8 +117,8 @@ _Avoid_: pretending matching order is incidental.
 ### Control surfaces
 
 **Controller**:
-The control verbs for runtime Selection: `useCollection`, `useRoute`, and `reset`. One-shot/temp
-behavior is roadmap.
+The control verbs for runtime Selection: `useCollection`, `useRoute`, `reset`, and `endSession`.
+One-shot/temp behavior is roadmap.
 _Avoid_: "admin", "manager".
 
 **Control API**:

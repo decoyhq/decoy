@@ -24,6 +24,7 @@ decoy serve --config mocks/decoy.yaml
 | `passthroughBaseUrl` | `--passthrough-base-url` | none (see [Passthrough](routes.md)) |
 | `protos`             | none                     | none                                |
 | `tls`                | none                     | none (plain http)                   |
+| `maxBodyBytes`       | none                     | `33554432` (32 MiB)                 |
 
 `listeners` opens extra named listeners. Each serves the same Routes, Sessions, and Control API as
 `port`, so a gRPC client and an HTTP client can use different ports but share one Session:
@@ -92,6 +93,8 @@ startup Collection all fail at startup with a diagnostic.
 
 ## Limits and shutdown
 
-- Request bodies over 32 MiB get `413` (gRPC: `RESOURCE_EXHAUSTED`) instead of being buffered.
+- Request bodies over `maxBodyBytes` (default `33554432`, 32 MiB) get `413` (gRPC:
+  `RESOURCE_EXHAUSTED`) instead of being buffered. Raise it for large uploads:
+  `maxBodyBytes: 104857600`.
 - Ctrl-C or SIGTERM stops `decoy serve`: it stops accepting, gives open requests 5s to finish (a
   long `delay` or a slow passthrough doesn't hold it up longer), then exits with status 0.
