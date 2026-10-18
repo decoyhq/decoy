@@ -102,6 +102,22 @@ pub fn auto_server_config(dir: &Path) -> Result<(Arc<ServerConfig>, PathBuf), St
 
     // An issuer rebuilt from the same params and key signs certs that chain to the stored CA.
     let issuer = Issuer::new(ca_params(), key);
+    let params = leaf_params(OffsetDateTime::now_utc());
+    let leaf_key = KeyPair::generate().expect("ring generates keys");
+    let leaf = params
+        .signed_by(&leaf_key, &issuer)
+        .expect("the CA signs the localhost cert");
+    let config = build(
+        vec![leaf.der().clone()],
+        PrivateKeyDer::Pkcs8(leaf_key.serialize_der().into()),
+    )
+    .expect("the generated cert and key fit");
+    Ok((config, ca_cert))
+}
+
+/// The localhost cert, in a shape strict verifiers (`openssl -x509_strict`, Apple, Python 3.13)
+/// accept: an AKI naming the CA key, and a validity Apple allows (at most 825 days).
+fn leaf_params(now: OffsetDateTime) -> CertificateParams {
     let mut params = CertificateParams::new(vec![
         "localhost".to_owned(),
         "127.0.0.1".to_owned(),
@@ -113,20 +129,10 @@ pub fn auto_server_config(dir: &Path) -> Result<(Arc<ServerConfig>, PathBuf), St
         .push(DnType::CommonName, "localhost");
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
     params.use_authority_key_identifier_extension = true;
-    // Re-signed every start, so keep it short: Apple clients reject leaves valid over 825 days.
-    let now = OffsetDateTime::now_utc();
+    // A year outlasts any dev server between restarts, which re-sign it.
     params.not_before = now - TimeDuration::days(1);
-    params.not_after = now + TimeDuration::days(30);
-    let leaf_key = KeyPair::generate().expect("ring generates keys");
-    let leaf = params
-        .signed_by(&leaf_key, &issuer)
-        .expect("the CA signs the localhost cert");
-    let config = build(
-        vec![leaf.der().clone()],
-        PrivateKeyDer::Pkcs8(leaf_key.serialize_der().into()),
-    )
-    .expect("the generated cert and key fit");
-    Ok((config, ca_cert))
+    params.not_after = now + TimeDuration::days(365);
+    params
 }
 
 fn ca_params() -> CertificateParams {
@@ -254,4 +260,22 @@ pub async fn serve(
     }
     graceful.shutdown().await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn leaf_carries_an_aki_and_an_apple_safe_validity() {
+        let params = leaf_params(OffsetDateTime::now_utc());
+        assert!(params.not_after - params.not_before <= TimeDuration::days(825));
+
+        let issuer = Issuer::new(ca_params(), KeyPair::generate().unwrap());
+        let leaf = params
+            .signed_by(&KeyPair::generate().unwrap(), &issuer)
+            .unwrap();
+        // id-ce-authorityKeyIdentifier (2.5.29.35)
+        assert!(contains(leaf.der(), &[0x06, 0x03, 0x55, 0x1d, 0x23]));
+    }
 }
