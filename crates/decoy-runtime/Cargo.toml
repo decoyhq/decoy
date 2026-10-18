@@ -28,7 +28,7 @@ fastrand = "2"
 humantime = "2"
 protox = "0.10.0"
 prost-reflect = { version = "0.16.5", features = ["serde"] }
-base64 = "0.22"
+base64 = "0.23"
 prost = "0.14"
 http-body = "1"
 http-body-util = "0.1"
