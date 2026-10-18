@@ -23,6 +23,8 @@ allow = [
 # Duplicate versions are known and benign (base64, getrandom, windows-sys, syn); see #267.
 multiple-versions = "allow"
 wildcards = "deny"
+# Workspace path deps have no version; every crate is `publish = false`.
+allow-wildcard-paths = true
 
 [sources]
 unknown-registry = "deny"

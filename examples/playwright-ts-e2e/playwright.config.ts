@@ -16,7 +16,7 @@ export default defineConfig<DecoyTestOptions>({
   use: {
     baseURL: 'http://127.0.0.1:4173',
     decoyOptions: {
-      command: 'cargo run --quiet -p decoy-runtime -- serve --config mocks/decoy.yaml',
+      command: 'cargo run --quiet -p decoy -- serve --config mocks/decoy.yaml',
       urls: '**/api/**',
       collection: 'happy-path',
       // The first run compiles the decoy binary.

@@ -16,10 +16,10 @@ pub mod matching;
 pub mod protos;
 pub mod request;
 pub mod schema;
+pub mod serve;
 pub mod startup;
 pub mod template;
 pub mod tls;
-pub mod upgrade;
 
 pub use collections::{Activation, Collection, CollectionRouteRef, CollectionsFile};
 pub use control_api::{
@@ -39,6 +39,7 @@ pub use schema::{
     Behavior, BehaviorKind, Case, GrpcRouteMatch, HttpMethod, HttpRouteMatch, Route, RouteMatch,
     Transport, ValidationError,
 };
+pub use serve::{BoundListener, ServeError, Server, serve};
 pub use startup::{
     SourceLocation, Startup, StartupDiagnostic, StartupDiagnosticKind, StartupError,
     load_catalog_from_files,

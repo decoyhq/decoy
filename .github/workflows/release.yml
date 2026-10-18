@@ -77,7 +77,7 @@ jobs:
         shell: bash # so "$TARGET" is the env var on Windows too (PowerShell reads it as $env:TARGET)
         env:
           TARGET: ${{ matrix.target }}
-        run: cargo build --release --locked -p decoy-runtime --target "$TARGET"
+        run: cargo build --release --locked -p decoy --target "$TARGET"
 
       - name: Package
         shell: bash

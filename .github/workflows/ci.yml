@@ -271,7 +271,7 @@ jobs:
 
       # Examples start native Decoy with `cargo run`; build it up front so startup is quick.
       - name: Build decoy binary
-        run: cargo build -p decoy-runtime
+        run: cargo build -p decoy
 
       - name: Install Chromium (+ system deps)
         env:

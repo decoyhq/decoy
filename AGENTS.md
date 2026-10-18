@@ -48,7 +48,7 @@ Prefer [`task`](https://taskfile.dev) (`Taskfile.yml`); each task wraps the plai
 | `task release -- <ver>`        | open a release PR setting one version everywhere              |
 | `task release:tag -- <ver>`    | after it merges, tag `origin/main` and push the tag           |
 | `task release:latest -- <ver>` | mark that release Latest (install script, `decoy upgrade`)    |
-| `task serve -- <args>`         | `cargo run -p decoy-runtime -- serve <args>`                  |
+| `task serve -- <args>`         | `cargo run -p decoy -- serve <args>`                          |
 
 Examples (`examples/*`) are the e2e tier and run their own `test:e2e` per workspace.
 

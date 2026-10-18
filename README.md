@@ -8,7 +8,7 @@ diagnostic miss, never the real upstream.
 
 ## Status
 
-Alpha. The native Rust runtime (`crates/decoy-runtime`) serves HTTP today. Install with
+Alpha. The native Rust runtime (`crates/decoy-runtime`, binary in `crates/decoy`) serves HTTP today. Install with
 `npm i -D @decoyhq/cli` or `curl -fsSL
 https://github.com/decoyhq/decoy/releases/latest/download/install.sh | sh`; see
 [Install](docs/guide/install.md).
@@ -19,7 +19,7 @@ Playwright.
 ## Quickstart
 
 ```sh
-cargo build --release -p decoy-runtime
+cargo build --release -p decoy
 ./target/release/decoy serve --routes mocks/routes --collections mocks/collections.yaml --port 8080
 ```
 
@@ -78,7 +78,9 @@ See [`docs/design/next-direction.md`](docs/design/next-direction.md).
 ## Repository layout
 
 ```
-crates/decoy-runtime/   native runtime and `decoy` CLI
+crates/decoy/           `decoy` CLI (binary)
+crates/decoy-runtime/   native runtime library (engine + server)
+crates/decoy-tui/       interactive terminal UI (in progress)
 packages/               language wrappers (e.g. Playwright), coming next
 examples/               end-to-end user flows (`test:e2e`)
 docs/adr/               accepted decisions

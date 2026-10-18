@@ -28,7 +28,7 @@ export function findBinary({ platform, arch, env, resolve }: BinaryLookup): stri
   if (packageName === undefined) {
     throw new Error(
       `@decoyhq/cli has no prebuilt decoy binary for ${key}. Supported: ${Object.keys(PLATFORM_PACKAGES).join(', ')}. ` +
-        'Build it from source (cargo build -p decoy-runtime) and set DECOY_BINARY_PATH.',
+        'Build it from source (cargo build -p decoy) and set DECOY_BINARY_PATH.',
     )
   }
   let manifest: string

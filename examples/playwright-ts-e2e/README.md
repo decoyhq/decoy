@@ -12,7 +12,7 @@ What happens:
 
 1. Playwright starts the static app (`app/serve.mjs`, port 4173) as its `webServer`.
 2. Global setup (`global-setup.ts`) starts a local Passthrough upstream on `127.0.0.1:4174`
-   (failing if the port is taken), then Decoy with `cargo run -p decoy-runtime -- serve --config
+   (failing if the port is taken), then Decoy with `cargo run -p decoy -- serve --config
 mocks/decoy.yaml` (port 8080), or reuses one already running locally.
 3. Each test gets its own Decoy Session on the `happy-path` Collection. Browser requests matching
    `**/api/**` go to Decoy; nothing reaches a real backend.

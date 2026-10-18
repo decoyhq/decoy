@@ -407,7 +407,7 @@ protos:
   roots: [{}]
 "#,
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/proto")
+            .join("../decoy-runtime/tests/fixtures/proto")
             .display()
     ));
 
@@ -464,7 +464,7 @@ protos:
   roots: [{}]
 "#,
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/proto")
+            .join("../decoy-runtime/tests/fixtures/proto")
             .display()
     ));
     let start = |route: &str| {
