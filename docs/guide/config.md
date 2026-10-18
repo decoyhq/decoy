@@ -39,7 +39,7 @@ The keys are free names; they only label logs and errors. Every listener speaks 
 clients work whichever one `localhost` resolves to for them. An IP binds just that address
 (`0.0.0.0` for every interface, e.g. inside Docker); another name binds every address it resolves
 to. A listener can set its own: `{ port: 9000, host: 0.0.0.0 }`. `--host` replaces the top-level
-`host` and the main listener's.
+`host` and the main listener's. Ports must be unique across listeners, whatever their host.
 
 `tls` serves every listener over HTTPS with your cert and key (PEM). ALPN picks HTTP/2 or HTTP/1.1
 per connection, so gRPC over TLS works on the same port. A listener given as `{ port, tls: false }`

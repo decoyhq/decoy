@@ -41,6 +41,11 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     Serve(ServeArgs),
+    /// Replace this binary with the newest (or given) release
+    Upgrade {
+        /// Version to install, e.g. 0.1.0-alpha.6 (default: newest release)
+        version: Option<String>,
+    },
 }
 
 #[derive(Debug, Parser)]
@@ -72,6 +77,7 @@ async fn main() {
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     match Cli::parse().command {
         Command::Serve(args) => serve(args).await?,
+        Command::Upgrade { version } => decoy_runtime::upgrade::run(version.as_deref())?,
     }
 
     Ok(())
@@ -216,6 +222,7 @@ async fn bind(name: &str, host: &str, port: u16) -> Result<Vec<TcpListener>, Str
                     std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied
                 ) =>
             {
+                eprintln!("decoy serve: skipped `{name}` on {addr}: {error}");
                 skipped = Some(format!("cannot listen on `{name}` ({addr}): {error}"));
             }
             Err(error) => return Err(format!("cannot listen on `{name}` ({addr}): {error}")),
@@ -486,5 +493,21 @@ fn http_method(method: &axum::http::Method) -> Option<HttpMethod> {
         axum::http::Method::HEAD => Some(HttpMethod::Head),
         axum::http::Method::OPTIONS => Some(HttpMethod::Options),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn port_zero_picks_one_port_for_every_address_of_a_host() {
+        let bound = bind("t", "localhost", 0).await.unwrap();
+        assert!(!bound.is_empty());
+        let ports: Vec<u16> = bound
+            .iter()
+            .map(|listener| listener.local_addr().unwrap().port())
+            .collect();
+        assert!(ports.iter().all(|port| *port == ports[0]), "{ports:?}");
     }
 }

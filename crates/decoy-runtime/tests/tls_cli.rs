@@ -325,10 +325,13 @@ async fn wait_until_up(client: &reqwest::Client, base: &str) {
     }
 }
 
+/// A port free on both loopbacks, since Decoy binds `127.0.0.1` and `::1` by default.
 fn unused_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+    loop {
+        let v4 = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = v4.local_addr().unwrap().port();
+        if TcpListener::bind(("::1", port)).is_ok() || TcpListener::bind("[::1]:0").is_err() {
+            return port;
+        }
+    }
 }
