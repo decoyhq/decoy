@@ -1,0 +1,10 @@
+- id: happy-path
+  routes:
+    - payments-get:any:paid
+    - crm-customer:any:ok
+    - inventory-stock:any:in-stock
+
+- id: out-of-stock
+  from: happy-path
+  routes:
+    - inventory-stock:any:empty

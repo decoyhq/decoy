@@ -1,0 +1,10 @@
+id: inventory-stock
+transport: grpc
+match: { service: inventory.v1.Inventory, method: GetStock }
+cases:
+  any:
+    behaviors:
+      in-stock:
+        message: { sku: '${ message.sku }', available: 3 }
+      empty:
+        message: { sku: '${ message.sku }', available: 0 }

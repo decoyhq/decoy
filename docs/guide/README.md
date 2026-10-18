@@ -8,5 +8,6 @@
 6. [Configuration](config.md)
 7. [Playwright](playwright.md)
 8. [gRPC](grpc.md)
+9. [TLS](tls.md)
 
 Terms follow the glossary in [`CONTEXT.md`](../../CONTEXT.md).
