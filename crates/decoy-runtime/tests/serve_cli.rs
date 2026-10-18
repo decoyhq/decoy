@@ -392,6 +392,66 @@ fn missing_startup_collection_fails_startup() {
     );
 }
 
+#[tokio::test]
+async fn serve_starts_with_configured_proto_root() {
+    let fixture = Fixture::new();
+    fixture.write_route("users.yaml", route_with_id("users"));
+    fixture.write_collections("- id: default\n  routes: [users:any:ok]\n");
+    let port = unused_port();
+    fixture.write_config(format!(
+        r#"
+routes: routes
+collections: collections.yaml
+port: {port}
+protos:
+  roots: [{}]
+"#,
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/proto")
+            .display()
+    ));
+
+    let _server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    wait_for_server(port).await;
+
+    let response = reqwest::get(format!("http://127.0.0.1:{port}/users/123"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+}
+
+#[test]
+fn broken_proto_fails_startup_with_file_and_reason() {
+    let fixture = Fixture::new();
+    fixture.write_route("users.yaml", route_with_id("users"));
+    fixture.write_collections("- id: default\n  routes: []\n");
+    fs::create_dir_all(fixture.temp.path().join("proto")).unwrap();
+    fs::write(
+        fixture.temp.path().join("proto/broken.proto"),
+        "syntax = \"proto3\";\nmessage Broken { string id = 1 }\n",
+    )
+    .unwrap();
+    fixture.write_config(
+        r#"
+routes: routes
+collections: collections.yaml
+protos:
+  roots: [proto]
+"#,
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_decoy"))
+        .args(["serve", "--config", "decoy.yaml"])
+        .current_dir(fixture.temp.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("proto/broken.proto"), "{stderr}");
+    assert!(stderr.contains("expected"), "{stderr}");
+}
+
 #[derive(Debug)]
 struct CapturedRequest {
     request_line: String,

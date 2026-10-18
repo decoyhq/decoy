@@ -69,7 +69,7 @@ impl fmt::Display for StartupDiagnostic {
 }
 
 impl StartupError {
-    fn new(
+    pub(crate) fn new(
         kind: StartupDiagnosticKind,
         path: impl Into<PathBuf>,
         message: impl Into<String>,
