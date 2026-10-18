@@ -9,18 +9,51 @@ use thiserror::Error;
 #[serde(rename_all = "lowercase")]
 pub enum Transport {
     Http,
+    Grpc,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "RawRoute")]
 pub struct Route {
     pub id: String,
     pub transport: Transport,
     #[serde(rename = "match")]
-    pub route_match: HttpRouteMatch,
+    pub route_match: RouteMatch,
     #[serde(default)]
     pub cases: BTreeMap<String, Case>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub passthrough: Option<PassthroughTarget>,
+}
+
+/// A Route as written; `match` is decoded once `transport` says which shape it has.
+#[derive(Deserialize)]
+struct RawRoute {
+    id: String,
+    transport: Transport,
+    #[serde(rename = "match")]
+    route_match: Value,
+    #[serde(default)]
+    cases: BTreeMap<String, Case>,
+    #[serde(default)]
+    passthrough: Option<PassthroughTarget>,
+}
+
+impl TryFrom<RawRoute> for Route {
+    type Error = serde_json::Error;
+
+    fn try_from(raw: RawRoute) -> Result<Self, Self::Error> {
+        let route_match = match raw.transport {
+            Transport::Http => RouteMatch::Http(serde_json::from_value(raw.route_match)?),
+            Transport::Grpc => RouteMatch::Grpc(serde_json::from_value(raw.route_match)?),
+        };
+        Ok(Self {
+            id: raw.id,
+            transport: raw.transport,
+            route_match,
+            cases: raw.cases,
+            passthrough: raw.passthrough,
+        })
+    }
 }
 
 impl Route {
@@ -51,33 +84,57 @@ impl Route {
 
             for (behavior_id, behavior) in &case.behaviors {
                 validate_id("behavior", behavior_id)?;
-                if let Behavior::Response(response) = behavior {
-                    crate::template::validate_response(response).map_err(|reason| {
-                        ValidationError::InvalidBehavior {
-                            address: format!("{}:{case_id}:{behavior_id}", self.id),
-                            reason,
-                        }
-                    })?;
-                }
+                let checked = match (&self.transport, behavior) {
+                    (Transport::Http, Behavior::Response(response)) => {
+                        crate::template::validate_response(response)
+                    }
+                    (Transport::Grpc, Behavior::Response(response)) => {
+                        crate::grpc_schema::validate_response(response)
+                    }
+                    (Transport::Http, Behavior::Passthrough(_)) => Ok(()),
+                    (Transport::Grpc, Behavior::Passthrough(_)) => {
+                        Err("gRPC Routes do not support passthrough".to_owned())
+                    }
+                };
+                checked.map_err(|reason| ValidationError::InvalidBehavior {
+                    address: format!("{}:{case_id}:{behavior_id}", self.id),
+                    reason,
+                })?;
             }
 
-            crate::matching::validate_case_match(&case.case_match).map_err(|reason| {
-                ValidationError::InvalidMatch {
+            crate::matching::validate_case_match(&self.transport, &case.case_match).map_err(
+                |reason| ValidationError::InvalidMatch {
                     route: self.id.clone(),
                     case: case_id.clone(),
                     reason,
-                }
-            })?;
+                },
+            )?;
         }
 
         Ok(())
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum RouteMatch {
+    Http(HttpRouteMatch),
+    Grpc(GrpcRouteMatch),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct HttpRouteMatch {
     pub method: HttpMethod,
     pub path: String,
+}
+
+/// A gRPC method address: the fully qualified service and the method name.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GrpcRouteMatch {
+    pub service: String,
+    pub method: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -141,6 +198,12 @@ pub struct ResponseBehavior {
     pub headers: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<Value>,
+    /// gRPC: the response message, or the status message when `status` is an error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<Value>,
+    /// gRPC: response metadata (sent as trailers).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub metadata: BTreeMap<String, String>,
     #[serde(skip)]
     pub delay: Option<Duration>,
 }
@@ -170,6 +233,10 @@ struct RawBehavior {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     body: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    message: Option<Value>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    metadata: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     target: Option<PassthroughTarget>,
     /// Integer milliseconds or a duration string such as `500ms` or `2s`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -186,6 +253,8 @@ impl TryFrom<RawBehavior> for Behavior {
                 status: raw.status,
                 headers: raw.headers,
                 body: raw.body,
+                message: raw.message,
+                metadata: raw.metadata,
                 delay,
             })),
             BehaviorKind::Passthrough => Ok(Self::Passthrough(PassthroughBehavior {
@@ -218,6 +287,8 @@ impl From<Behavior> for RawBehavior {
                 status: response.status,
                 headers: response.headers,
                 body: response.body,
+                message: response.message,
+                metadata: response.metadata,
                 target: None,
                 delay,
             },
@@ -226,6 +297,8 @@ impl From<Behavior> for RawBehavior {
                 status: None,
                 headers: BTreeMap::new(),
                 body: None,
+                message: None,
+                metadata: BTreeMap::new(),
                 target: passthrough.target,
                 delay,
             },
@@ -309,7 +382,13 @@ cases:
 
         assert_eq!(route.id, "get-user");
         assert_eq!(route.transport, Transport::Http);
-        assert_eq!(route.route_match.path, "/users/{id}");
+        assert_eq!(
+            route.route_match,
+            RouteMatch::Http(HttpRouteMatch {
+                method: HttpMethod::Get,
+                path: "/users/{id}".to_owned(),
+            })
+        );
         assert_eq!(
             route.cases["user-123"].behaviors["success"].kind(),
             BehaviorKind::Response
@@ -364,6 +443,69 @@ cases:
         assert_eq!(
             route.cases["any"].behaviors["real"].kind(),
             BehaviorKind::Passthrough
+        );
+    }
+
+    #[test]
+    fn parses_grpc_route_match_and_rejects_mismatched_shapes() {
+        let route = Route::from_yaml(
+            r#"
+id: approvals-get
+transport: grpc
+match:
+  service: approvals.v1.Approvals
+  method: GetApproval
+cases:
+  any:
+    behaviors:
+      ok:
+        message: { id: a-1 }
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            route.route_match,
+            RouteMatch::Grpc(GrpcRouteMatch {
+                service: "approvals.v1.Approvals".to_owned(),
+                method: "GetApproval".to_owned(),
+            })
+        );
+
+        let error = Route::from_yaml(
+            r#"
+id: approvals-get
+transport: grpc
+match: { method: GET, path: /x }
+cases:
+  any:
+    behaviors:
+      ok: {}
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("unknown field `path`"), "{error}");
+    }
+
+    #[test]
+    fn http_behaviors_reject_grpc_fields() {
+        let error = Route::from_yaml(
+            r#"
+id: users
+transport: http
+match: { method: GET, path: /users }
+cases:
+  any:
+    behaviors:
+      ok:
+        message: { id: 1 }
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            error.contains("`message` and `metadata` are for gRPC Routes"),
+            "{error}"
         );
     }
 

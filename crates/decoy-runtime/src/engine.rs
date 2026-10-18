@@ -7,7 +7,7 @@ use crate::http::{BodyPlan, RequestMetadata, ResponsePlan, RuntimeConfig};
 use crate::http_forward::{ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough};
 use crate::matching::{MatchInput, case_matches};
 use crate::request::RequestEnvelope;
-use crate::schema::{Behavior, HttpMethod, Route};
+use crate::schema::{Behavior, HttpMethod, Route, RouteMatch};
 use crate::template::{has_templates, render_response};
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -75,6 +75,7 @@ impl Catalog {
 
         for route in routes {
             route.validate()?;
+            crate::grpc_schema::check_route(&route, &runtime.protos).map_err(CatalogError::Grpc)?;
             if by_id.insert(route.id.clone(), route).is_some() {
                 return Err(CatalogError::DuplicateRoute);
             }
@@ -253,11 +254,15 @@ impl Catalog {
                 continue;
             };
 
-            if route.route_match.method != request.method {
+            let RouteMatch::Http(route_match) = &route.route_match else {
+                continue;
+            };
+
+            if route_match.method != request.method {
                 continue;
             }
 
-            let Some(path_params) = match_path(&route.route_match.path, &request.path) else {
+            let Some(path_params) = match_path(&route_match.path, &request.path) else {
                 continue;
             };
 
@@ -370,6 +375,8 @@ pub enum CatalogError {
     Validation(#[from] crate::schema::ValidationError),
     #[error("duplicate route id")]
     DuplicateRoute,
+    #[error("{0}")]
+    Grpc(String),
     #[error(transparent)]
     Collection(#[from] CollectionError),
 }
@@ -683,6 +690,7 @@ cases:
                 passthrough: Some(PassthroughTarget {
                     base_url: "https://runtime.example.test".to_owned(),
                 }),
+                ..RuntimeConfig::default()
             },
         )
         .unwrap()
@@ -922,6 +930,7 @@ cases:
                 passthrough: Some(PassthroughTarget {
                     base_url: "https://runtime.example.test".to_owned(),
                 }),
+                ..RuntimeConfig::default()
             },
         )
         .unwrap();
@@ -979,6 +988,7 @@ cases:
                 passthrough: Some(PassthroughTarget {
                     base_url: "https://runtime.example.test".to_owned(),
                 }),
+                ..RuntimeConfig::default()
             },
         )
         .unwrap();

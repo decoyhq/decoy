@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use prost_reflect::DescriptorPool;
 use serde_json::Value;
 
 use crate::schema::{Behavior, PassthroughTarget, Route};
@@ -7,6 +8,8 @@ use crate::schema::{Behavior, PassthroughTarget, Route};
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RuntimeConfig {
     pub passthrough: Option<PassthroughTarget>,
+    /// Message types for gRPC Routes, from the configured proto roots and descriptor sets.
+    pub protos: DescriptorPool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -293,6 +296,7 @@ cases:
                 passthrough: Some(PassthroughTarget {
                     base_url: "https://runtime.example.test".to_owned(),
                 }),
+                ..RuntimeConfig::default()
             },
             &RequestMetadata {
                 original_base_url: Some("https://request.example.test".to_owned()),

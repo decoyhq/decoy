@@ -108,6 +108,9 @@ pub fn load_catalog_from_files(
             StartupError::new(StartupDiagnosticKind::Io, &route_path, error.to_string())
         })?;
         let route = decode_route(&route_path, &input)?;
+        crate::grpc_schema::check_route(&route, &runtime.protos).map_err(|reason| {
+            StartupError::new(StartupDiagnosticKind::Schema, &route_path, reason)
+        })?;
         if let Some(first_path) = seen_route_paths.insert(route.id.clone(), route_path.clone()) {
             return Err(StartupError::new(
                 StartupDiagnosticKind::Schema,
@@ -620,6 +623,7 @@ cases:
                 passthrough: Some(PassthroughTarget {
                     base_url: "https://example.test".to_owned(),
                 }),
+                ..RuntimeConfig::default()
             },
             None,
         )
