@@ -25,7 +25,7 @@ pub struct ServeConfig {
     /// Extra named listeners (e.g. `grpc: 50051`) serving the same Routes and Sessions as `port`.
     pub ports: BTreeMap<String, Listener>,
     /// Certificate served by every listener with `tls` on; paths are absolute.
-    pub tls: Option<TlsFiles>,
+    pub tls: Option<TlsSource>,
     pub collection: Option<String>,
     pub passthrough_base_url: Option<String>,
     pub protos: ProtoSources,
@@ -43,6 +43,38 @@ pub struct TlsFiles {
     pub cert: PathBuf,
     pub key: PathBuf,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TlsSource {
+    Files(TlsFiles),
+    /// Generate a cert at startup, signed by a local CA kept (and reused) in `dir`.
+    Auto {
+        dir: PathBuf,
+    },
+}
+
+/// `tls` in the config file: `auto`, or `{ cert, key }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TlsFile {
+    Files(TlsFiles),
+    Auto,
+}
+
+impl<'de> Deserialize<'de> for TlsFile {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::Error;
+        match serde_yaml::Value::deserialize(deserializer)? {
+            serde_yaml::Value::String(value) if value == "auto" => Ok(Self::Auto),
+            value @ serde_yaml::Value::Mapping(_) => serde_yaml::from_value(value)
+                .map(Self::Files)
+                .map_err(D::Error::custom),
+            _ => Err(D::Error::custom("expected `auto` or `{ cert, key }`")),
+        }
+    }
+}
+
+/// Where `tls: auto` keeps its CA, relative to the config file.
+pub const AUTO_TLS_DIR: &str = ".decoy";
 
 /// A listener in the config file: a bare port, or an object for per-listener settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -109,7 +141,7 @@ struct NativeConfigFile {
     port: Option<ListenerFile>,
     #[serde(default, deserialize_with = "listener_files")]
     ports: BTreeMap<String, ListenerFile>,
-    tls: Option<TlsFiles>,
+    tls: Option<TlsFile>,
     #[serde(alias = "startupCollection")]
     collection: Option<String>,
     #[serde(alias = "passthroughBaseUrl")]
@@ -151,9 +183,14 @@ impl ServeConfig {
         let tls = file_config
             .as_ref()
             .and_then(|config| config.tls.clone())
-            .map(|tls| TlsFiles {
-                cert: absolutize(&config_base, &tls.cert),
-                key: absolutize(&config_base, &tls.key),
+            .map(|tls| match tls {
+                TlsFile::Files(files) => TlsSource::Files(TlsFiles {
+                    cert: absolutize(&config_base, &files.cert),
+                    key: absolutize(&config_base, &files.key),
+                }),
+                TlsFile::Auto => TlsSource::Auto {
+                    dir: config_base.join(AUTO_TLS_DIR),
+                },
             });
         let resolve = |name: &str, listener: ListenerFile| match (listener.tls, &tls) {
             (Some(true), None) => Err(ConfigError::TlsWithoutCert {
@@ -537,10 +574,10 @@ ports:
 
         assert_eq!(
             config.tls,
-            Some(TlsFiles {
+            Some(TlsSource::Files(TlsFiles {
                 cert: base.join("certs/dev.pem"),
                 key: base.join("certs/dev-key.pem"),
-            })
+            }))
         );
         assert_eq!(
             config.port,
@@ -632,6 +669,17 @@ ports:
         assert!(error.contains("unknown field `host`"), "{error}");
         let error = load("tls: { cert: c.pem }").unwrap_err().to_string();
         assert!(error.contains("missing field `key`"), "{error}");
+        let error = load("tls: yes-please").unwrap_err().to_string();
+        assert!(
+            error.contains("expected `auto` or `{ cert, key }`"),
+            "{error}"
+        );
+        assert_eq!(
+            load("tls: auto").unwrap().tls,
+            Some(TlsSource::Auto {
+                dir: base.join(".decoy")
+            })
+        );
     }
 
     #[test]

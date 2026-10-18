@@ -51,6 +51,16 @@ ports:
 `port` takes the same object form. `--port` changes only the port number. Clients must trust the
 cert, e.g. `NODE_EXTRA_CA_CERTS=certs/dev.pem` for Node.
 
+`tls: auto` skips the cert files: Decoy signs a fresh localhost cert (valid a year) at every start with a
+local CA kept in `.decoy/` next to the config (`ca.pem`, `ca-key.pem`). The CA is created once and
+reused, so trust it once (`NODE_EXTRA_CA_CERTS=mocks/.decoy/ca.pem`, grpc-js
+`credentials.createSsl(ca)`). `ca.pem` is rebuilt from the key if it goes missing. Decoy writes a
+`.gitignore` into `.decoy/` so the CA key stays out of git.
+
+```yaml
+tls: auto
+```
+
 `protos` loads protobuf schemas for gRPC:
 
 ```yaml
@@ -70,5 +80,5 @@ protos:
 
 Paths in the file resolve relative to the file; flag paths resolve relative to the working
 directory. Unknown keys, unreadable files, invalid Routes or Collections, duplicate Route ids,
-a port used twice or already taken, missing proto roots, protos that don't compile, unreadable or mismatched TLS cert/key, and an unknown
+a port used twice or already taken, missing proto roots, protos that don't compile, unreadable or mismatched TLS cert/key, an unreadable `.decoy/` CA, and an unknown
 startup Collection all fail at startup with a diagnostic.

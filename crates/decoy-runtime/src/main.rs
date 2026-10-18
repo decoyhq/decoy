@@ -10,7 +10,7 @@ use axum::routing::any;
 use axum::{Extension, Router};
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
-use decoy_runtime::config::{ServeCliOptions, ServeConfig};
+use decoy_runtime::config::{ServeCliOptions, ServeConfig, TlsSource};
 use decoy_runtime::control_api::{
     ControlApiRequest, ControlApiResponse, HEALTH_PATH, handle_control_request, is_control_path,
     session_id,
@@ -108,7 +108,18 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .fallback(any(handle_request))
         .with_state(controller);
-    let tls_config = config.tls.as_ref().map(tls::server_config).transpose()?;
+    let tls_config = match &config.tls {
+        None => None,
+        Some(TlsSource::Files(files)) => Some(tls::server_config(files)?),
+        Some(TlsSource::Auto { dir }) => {
+            let (tls_config, ca) = tls::auto_server_config(dir)?;
+            eprintln!(
+                "decoy serve: TLS cert signed by {}; trust it with e.g. NODE_EXTRA_CA_CERTS",
+                ca.display()
+            );
+            Some(tls_config)
+        }
+    };
     // Bind every listener before serving any, so a taken port fails startup cleanly (Q1).
     let mut listeners = vec![(
         "port".to_owned(),

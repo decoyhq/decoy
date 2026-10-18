@@ -99,6 +99,100 @@ async fn ctrl_c_stops_a_tls_listener_with_a_client_stuck_before_its_handshake() 
     }
 }
 
+#[tokio::test]
+async fn auto_tls_writes_a_ca_that_clients_trust_across_restarts() {
+    let fixture = Fixture::new();
+    let port = unused_port();
+    fixture.write_config(&format!("tls: auto\nport: {port}\n"));
+    let ca_path = fixture.temp.path().join(".decoy/ca.pem");
+
+    let server = fixture.spawn();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ca_path.exists() {
+        assert!(Instant::now() < deadline, "CA was not written");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let ca = fs::read_to_string(&ca_path).unwrap();
+    let client = trusting_client(&ca);
+    wait_until_up(&client, &format!("https://localhost:{port}")).await;
+    for host in ["localhost", "127.0.0.1"] {
+        let body = client
+            .get(format!("https://{host}:{port}/who"))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert_eq!(body, "hi", "{host}");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let key = fs::metadata(fixture.temp.path().join(".decoy/ca-key.pem")).unwrap();
+        assert_eq!(key.permissions().mode() & 0o777, 0o600);
+    }
+    drop(server);
+
+    // A restart signs a new localhost cert with the same CA, so the old trust still holds.
+    let _server = fixture.spawn();
+    let client = trusting_client(&ca);
+    wait_until_up(&client, &format!("https://localhost:{port}")).await;
+    assert_eq!(fs::read_to_string(&ca_path).unwrap(), ca);
+
+    // Losing ca.pem rewrites it from the kept key; old trust still holds.
+    drop(_server);
+    fs::remove_file(&ca_path).unwrap();
+    let server = fixture.spawn();
+    wait_until_up(&trusting_client(&ca), &format!("https://localhost:{port}")).await;
+
+    // Losing the key makes a new CA, and ca.pem follows it instead of going stale.
+    drop(server);
+    let stale = fs::read_to_string(&ca_path).unwrap();
+    fs::remove_file(fixture.temp.path().join(".decoy/ca-key.pem")).unwrap();
+    let _server = fixture.spawn();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while fs::read_to_string(&ca_path).is_ok_and(|current| current == stale) {
+        assert!(Instant::now() < deadline, "ca.pem was not rebuilt");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let renewed = fs::read_to_string(&ca_path).unwrap();
+    wait_until_up(
+        &trusting_client(&renewed),
+        &format!("https://localhost:{port}"),
+    )
+    .await;
+    assert_eq!(
+        fs::read_to_string(fixture.temp.path().join(".decoy/.gitignore")).unwrap(),
+        "*\n"
+    );
+}
+
+#[tokio::test]
+async fn two_first_starts_share_one_auto_ca() {
+    let fixture = Fixture::new();
+    let ports = [unused_port(), unused_port()];
+    for (name, port) in ["a", "b"].iter().zip(ports) {
+        fs::write(
+            fixture.temp.path().join(format!("{name}.yaml")),
+            format!("routes: routes\ncollections: collections.yaml\ntls: auto\nport: {port}\n"),
+        )
+        .unwrap();
+    }
+    let _servers = ["a.yaml", "b.yaml"].map(|config| fixture.spawn_config(config));
+
+    let ca_path = fixture.temp.path().join(".decoy/ca.pem");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !ca_path.exists() {
+        assert!(Instant::now() < deadline, "CA was not written");
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    let client = trusting_client(&fs::read_to_string(&ca_path).unwrap());
+    for port in ports {
+        wait_until_up(&client, &format!("https://localhost:{port}")).await;
+    }
+}
+
 #[test]
 fn unreadable_or_mismatched_cert_fails_startup() {
     let fixture = Fixture::new();
@@ -186,9 +280,13 @@ impl Fixture {
     }
 
     fn spawn(&self) -> Server {
+        self.spawn_config("decoy.yaml")
+    }
+
+    fn spawn_config(&self, config: &str) -> Server {
         Server(
             Command::new(env!("CARGO_BIN_EXE_decoy"))
-                .args(["serve", "--config", "decoy.yaml"])
+                .args(["serve", "--config", config])
                 .current_dir(self.temp.path())
                 .stdout(Stdio::null())
                 .stderr(Stdio::inherit())
