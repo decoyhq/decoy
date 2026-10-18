@@ -55,6 +55,9 @@ cases:
 | `pathParams`, `query`, `headers`, `cookies` | each listed key must be present; values compare as strings (`page: 5` matches `?page=5`); a repeated query key matches if any value does                            |
 | `body`                                      | objects: listed keys must match, others are ignored. Arrays: the request array must contain each listed element, in any order. Scalars: exactly equal (`1` ≠ `"1"`) |
 
+Path segments and `pathParams` compare percent-decoded, like `query` (`/users/a%20b` gives `id: a
+b`; `%2F` stays inside one segment). The envelope `path` stays as sent.
+
 `body` is the parsed JSON when the request's `content-type` is JSON (`application/json`,
 `*+json`), otherwise the raw text. Repeated request headers are joined with `", "`. An unknown
 field, such as a misspelled `querry`, fails startup.

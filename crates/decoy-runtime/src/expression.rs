@@ -209,7 +209,17 @@ pub fn predicate_holds(predicate: &str, envelope: &Value) -> bool {
     match result {
         Ok(result) => result.is_truthy(),
         Err(error) => {
-            eprintln!("decoy serve: predicate `{predicate}` failed, treated as false: {error}");
+            // Once per predicate: a fallback Case checked on every request mustn't flood stderr.
+            static LOGGED: std::sync::Mutex<std::collections::BTreeSet<String>> =
+                std::sync::Mutex::new(std::collections::BTreeSet::new());
+            if LOGGED
+                .lock()
+                .is_ok_and(|mut logged| logged.insert(predicate.to_owned()))
+            {
+                eprintln!(
+                    "decoy serve: predicate `{predicate}` failed, treated as false (logged once): {error}"
+                );
+            }
             false
         }
     }

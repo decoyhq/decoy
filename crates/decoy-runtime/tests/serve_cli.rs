@@ -761,7 +761,7 @@ async fn end_session_forgets_the_sessions_selection() {
 }
 
 #[tokio::test]
-async fn path_params_are_percent_decoded() {
+async fn path_params_and_segments_compare_percent_decoded() {
     let fixture = Fixture::new();
     fixture.write_route(
         "user.yaml",
@@ -775,18 +775,33 @@ cases:
       ok: { body: '${ pathParams.id }' }
 "#,
     );
-    fixture.write_collections("- id: main\n  routes: [user:any:ok]\n");
+    fixture.write_route(
+        "docs.yaml",
+        r#"
+id: docs
+transport: http
+match: { method: GET, path: '/docs/getting started' }
+cases:
+  any:
+    behaviors:
+      ok: { body: guide }
+"#,
+    );
+    fixture.write_collections("- id: main\n  routes: [user:any:ok, docs:any:ok]\n");
     let port = unused_port();
     let _server = fixture.spawn(port, &[]);
     wait_for_server(port).await;
+    let get = |path: &'static str| async move {
+        reqwest::get(format!("http://127.0.0.1:{port}{path}"))
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap()
+    };
 
-    let body = reqwest::get(format!("http://127.0.0.1:{port}/users/a%20b%2Fc"))
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
-    assert_eq!(body, "a b/c");
+    assert_eq!(get("/users/a%20b%2Fc").await, "a b/c");
+    assert_eq!(get("/docs/getting%20started").await, "guide");
 }
 
 #[test]

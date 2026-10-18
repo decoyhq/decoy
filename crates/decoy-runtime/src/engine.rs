@@ -359,7 +359,7 @@ fn match_path(pattern: &str, actual: &str) -> Option<BTreeMap<String, String>> {
             continue;
         }
 
-        if *pattern_part != actual_part {
+        if *pattern_part != percent_encoding::percent_decode_str(actual_part).decode_utf8_lossy() {
             return None;
         }
     }

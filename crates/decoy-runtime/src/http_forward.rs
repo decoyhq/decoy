@@ -213,6 +213,12 @@ fn forwardable_request_headers(
         if stripped.contains(&lower) || lower == SESSION_HEADER || lower == VIA_HEADER {
             continue;
         }
+        // Non-UTF-8 bytes were replaced with U+FFFD for matching; forwarding that would send bytes
+        // the client never did, so the header stays behind (as before), but not silently.
+        if value.contains('\u{fffd}') {
+            eprintln!("decoy serve: passthrough left out header `{name}`: not valid UTF-8");
+            continue;
+        }
         let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|source| {
             ForwardingError::InvalidRequestHeaderName {
                 name: name.clone(),
@@ -260,8 +266,11 @@ fn forwardable_response_headers(headers: &HeaderMap) -> Vec<(String, String)> {
         {
             continue;
         }
-        if let Ok(value) = value.to_str() {
-            out.push((name.as_str().to_owned(), value.to_owned()));
+        match value.to_str() {
+            Ok(value) => out.push((name.as_str().to_owned(), value.to_owned())),
+            Err(_) => eprintln!(
+                "decoy serve: passthrough left out upstream header `{name}`: not valid UTF-8"
+            ),
         }
     }
     out
