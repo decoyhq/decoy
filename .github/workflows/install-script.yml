@@ -23,6 +23,8 @@ jobs:
       GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Install (sh)
         if: runner.os != 'Windows'
