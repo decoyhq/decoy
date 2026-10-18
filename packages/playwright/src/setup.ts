@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process'
-import { dirname } from 'node:path'
+import { dirname, resolve } from 'node:path'
 import type { FullConfig, FullProject } from '@playwright/test'
 import type { DecoyTestOptions } from './fixtures'
 import { type DecoyOptions, isHealthy, type ResolvedDecoyOptions, resolveOptions } from './options'
@@ -27,9 +27,7 @@ export type SetupConfig = Pick<FullConfig<DecoyTestOptions>, 'configFile'> & {
 export async function setup(config: SetupConfig): Promise<Teardown> {
   const teardowns: Teardown[] = []
   const stopAll: Teardown = async () => {
-    for (const teardown of teardowns.splice(0).reverse()) {
-      await teardown()
-    }
+    await Promise.all(teardowns.splice(0).map((teardown) => teardown()))
   }
   try {
     for (const decoyOptions of distinctDecoyOptions(config)) {
@@ -44,7 +42,10 @@ export async function setup(config: SetupConfig): Promise<Teardown> {
 
 async function start(decoyOptions: DecoyOptions, config: SetupConfig): Promise<Teardown> {
   const options = resolveOptions(decoyOptions)
-  const cwd = options.cwd ?? (config.configFile ? dirname(config.configFile) : process.cwd())
+  // Absolute, so the PATH entries and the walk up to the root don't depend on process.cwd().
+  const cwd = resolve(
+    options.cwd ?? (config.configFile ? dirname(config.configFile) : process.cwd()),
+  )
 
   if (await isHealthy(options.url)) {
     if (options.reuseExistingServer) {
@@ -71,18 +72,38 @@ async function start(decoyOptions: DecoyOptions, config: SetupConfig): Promise<T
   return () => stopProcess(child)
 }
 
-/** The first project's options for each Decoy `url`; projects sharing a url share one Decoy. */
+/**
+ * One set of options per Decoy `url`: projects sharing a url share one Decoy, so they must agree
+ * on how it starts.
+ */
 function distinctDecoyOptions(config: SetupConfig): DecoyOptions[] {
   const byUrl = new Map<string, DecoyOptions>()
   for (const { use } of config.projects) {
-    if (use.decoyOptions) {
-      const { url } = resolveOptions(use.decoyOptions)
-      if (!byUrl.has(url)) {
-        byUrl.set(url, use.decoyOptions)
-      }
+    if (!use.decoyOptions) {
+      continue
+    }
+    const { url } = resolveOptions(use.decoyOptions)
+    const first = byUrl.get(url)
+    if (first === undefined) {
+      byUrl.set(url, use.decoyOptions)
+    } else if (!sameStart(first, use.decoyOptions)) {
+      throw new Error(
+        `Projects share the Decoy at ${url} but set different command, cwd, reuseExistingServer or timeout; give them one set of decoyOptions or different urls.`,
+      )
     }
   }
   return [...byUrl.values()]
+}
+
+function sameStart(a: DecoyOptions, b: DecoyOptions): boolean {
+  const left = resolveOptions(a)
+  const right = resolveOptions(b)
+  return (
+    left.command === right.command &&
+    left.cwd === right.cwd &&
+    left.reuseExistingServer === right.reuseExistingServer &&
+    left.timeout === right.timeout
+  )
 }
 
 async function waitForHealth(child: ChildProcess, options: ResolvedDecoyOptions): Promise<void> {

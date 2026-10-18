@@ -40,9 +40,10 @@ export async function stopProcess(child: ChildProcess, graceMs = 8_000): Promise
     Promise.race([
       exited,
       new Promise<boolean>((resolve) =>
+        // unref: an already-exited Decoy mustn't keep the caller alive for the grace period.
         setTimeout(() => {
           resolve(false)
-        }, ms),
+        }, ms).unref(),
       ),
     ])
 

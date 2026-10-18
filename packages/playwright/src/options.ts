@@ -4,7 +4,7 @@ export interface DecoyOptions {
   url?: string
   /** Shell command `setup` runs when Decoy is not already serving. Default `decoy serve`. */
   command?: string
-  /** Working directory for `command`. Default: the Playwright config file's directory. */
+  /** Working directory for `command` (relative: to `process.cwd()`). Default: the config file's directory. */
   cwd?: string
   /** Reuse a Decoy already serving at `url`. Default: `true` locally, `false` when `CI` is set. */
   reuseExistingServer?: boolean

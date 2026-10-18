@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { defineConfig, type FullConfig } from '@playwright/test'
 import { afterEach, describe, expect, test } from '@rstest/core'
 import { expectTypeOf } from 'expect-type'
@@ -139,6 +139,18 @@ describe('setup', () => {
     expect(await isHealthy(`http://127.0.0.1:${second}`)).toBe(false)
   })
 
+  test('refuses projects that share a url but start Decoy differently', async () => {
+    const url = `http://127.0.0.1:${await freePort()}`
+    await expect(
+      setup({
+        projects: [
+          { use: { decoyOptions: { url, command: 'decoy serve --config a.yaml' } } },
+          { use: { decoyOptions: { url, command: 'decoy serve --config b.yaml' } } },
+        ],
+      }),
+    ).rejects.toThrow(/share the Decoy at .* but set different command/)
+  })
+
   test.skipIf(process.platform === 'win32')(
     'finds commands in node_modules/.bin like an npm script',
     async () => {
@@ -151,7 +163,13 @@ describe('setup', () => {
       const url = `http://127.0.0.1:${port}`
 
       const teardown = await setup(
-        config({ url, command: `decoy-fake ${port}`, cwd: dir, reuseExistingServer: false }),
+        // Relative, like a hand-written config; resolved against process.cwd().
+        config({
+          url,
+          command: `decoy-fake ${port}`,
+          cwd: relative(process.cwd(), dir),
+          reuseExistingServer: false,
+        }),
       )
       expect(await isHealthy(url)).toBe(true)
       await teardown()
