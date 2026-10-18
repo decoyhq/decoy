@@ -5,6 +5,7 @@ use std::time::Duration;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use thiserror::Error;
 
+use crate::control_api::SESSION_HEADER;
 use crate::http::PassthroughPlan;
 use crate::schema::HttpMethod;
 
@@ -75,7 +76,8 @@ impl From<reqwest::Error> for ForwardingError {
 }
 
 /// Lists the Decoy processes a request passed through, so one that comes back is refused instead
-/// of forwarded forever (a target that points at Decoy itself). Chains of distinct Decoys work.
+/// of forwarded forever (a target that points at Decoy itself). Chains of distinct Decoys still
+/// forward, but `x-mock-session` isn't passed on, so a downstream Decoy uses its default Session.
 pub const VIA_HEADER: &str = "x-decoy-via";
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -149,7 +151,12 @@ pub async fn forward_passthrough(
     let mut headers = forwardable_request_headers(&request.headers)?;
     headers.insert(
         HeaderName::from_static(VIA_HEADER),
-        HeaderValue::from_str(&via).expect("instance ids are header-safe"),
+        HeaderValue::from_str(&via).map_err(|source| {
+            ForwardingError::InvalidRequestHeaderValue {
+                name: VIA_HEADER.to_owned(),
+                source,
+            }
+        })?,
     );
     let response = client()
         .request(reqwest_method(&request.method), url)
@@ -202,8 +209,8 @@ fn forwardable_request_headers(
 
     for (name, value) in headers {
         let lower = name.to_ascii_lowercase();
-        // `x-mock-*` (Session, miss markers) is Decoy's own; the via list is rebuilt above.
-        if stripped.contains(&lower) || lower.starts_with("x-mock-") || lower == VIA_HEADER {
+        // The Session header is Decoy's own; the via list is rebuilt by the caller.
+        if stripped.contains(&lower) || lower == SESSION_HEADER || lower == VIA_HEADER {
             continue;
         }
         let header_name = HeaderName::from_bytes(name.as_bytes()).map_err(|source| {
@@ -422,6 +429,26 @@ mod tests {
         .unwrap_err();
 
         assert!(matches!(error, ForwardingError::Loop), "{error}");
+    }
+
+    #[tokio::test]
+    async fn an_upstream_that_never_answers_is_a_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _hold = thread::spawn(move || listener.accept().map(|(stream, _)| stream));
+        let error = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(100))
+            .build()
+            .unwrap()
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .unwrap_err();
+
+        assert!(matches!(
+            ForwardingError::from(error),
+            ForwardingError::Timeout(_)
+        ));
     }
 
     #[tokio::test]
