@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 import type { FullConfig, FullProject } from '@playwright/test'
 import type { DecoyTestOptions } from './fixtures'
 import { type DecoyOptions, isHealthy, type ResolvedDecoyOptions, resolveOptions } from './options'
+import { stopProcess, withLocalBins } from './process'
 
 export type Teardown = () => Promise<void>
 
@@ -15,7 +16,8 @@ export type SetupConfig = Pick<FullConfig<DecoyTestOptions>, 'configFile'> & {
 
 /**
  * Playwright global setup: start or reuse native Decoy, following Playwright `webServer` reuse
- * semantics. Returns a teardown that stops Decoy only if this call started it.
+ * semantics, once per distinct `decoyOptions.url` across projects. Returns a teardown that stops
+ * only the Decoys this call started.
  *
  * ```ts
  * // global-setup.ts
@@ -23,12 +25,26 @@ export type SetupConfig = Pick<FullConfig<DecoyTestOptions>, 'configFile'> & {
  * ```
  */
 export async function setup(config: SetupConfig): Promise<Teardown> {
-  const decoyOptions = findDecoyOptions(config)
-  if (!decoyOptions) {
-    return keepRunning
+  const teardowns: Teardown[] = []
+  const stopAll: Teardown = async () => {
+    for (const teardown of teardowns.splice(0).reverse()) {
+      await teardown()
+    }
   }
+  try {
+    for (const decoyOptions of distinctDecoyOptions(config)) {
+      teardowns.push(await start(decoyOptions, config))
+    }
+  } catch (error) {
+    await stopAll()
+    throw error
+  }
+  return teardowns.length === 0 ? keepRunning : stopAll
+}
+
+async function start(decoyOptions: DecoyOptions, config: SetupConfig): Promise<Teardown> {
   const options = resolveOptions(decoyOptions)
-  const cwd = options.cwd ?? (config.configFile ? dirname(config.configFile) : undefined)
+  const cwd = options.cwd ?? (config.configFile ? dirname(config.configFile) : process.cwd())
 
   if (await isHealthy(options.url)) {
     if (options.reuseExistingServer) {
@@ -41,6 +57,7 @@ export async function setup(config: SetupConfig): Promise<Teardown> {
 
   const child = spawn(options.command, {
     cwd,
+    env: withLocalBins(cwd, process.env),
     shell: true,
     detached: process.platform !== 'win32',
     stdio: ['ignore', 'ignore', 'inherit'],
@@ -48,14 +65,24 @@ export async function setup(config: SetupConfig): Promise<Teardown> {
   try {
     await waitForHealth(child, options)
   } catch (error) {
-    await stop(child)
+    await stopProcess(child)
     throw error
   }
-  return () => stop(child)
+  return () => stopProcess(child)
 }
 
-function findDecoyOptions(config: SetupConfig): DecoyOptions | undefined {
-  return config.projects.find((project) => project.use.decoyOptions)?.use.decoyOptions
+/** The first project's options for each Decoy `url`; projects sharing a url share one Decoy. */
+function distinctDecoyOptions(config: SetupConfig): DecoyOptions[] {
+  const byUrl = new Map<string, DecoyOptions>()
+  for (const { use } of config.projects) {
+    if (use.decoyOptions) {
+      const { url } = resolveOptions(use.decoyOptions)
+      if (!byUrl.has(url)) {
+        byUrl.set(url, use.decoyOptions)
+      }
+    }
+  }
+  return [...byUrl.values()]
 }
 
 async function waitForHealth(child: ChildProcess, options: ResolvedDecoyOptions): Promise<void> {
@@ -80,22 +107,4 @@ async function waitForHealth(child: ChildProcess, options: ResolvedDecoyOptions)
   throw new Error(
     `Decoy did not become healthy at ${options.url} within ${options.timeout}ms (command: \`${options.command}\`).`,
   )
-}
-
-async function stop(child: ChildProcess): Promise<void> {
-  if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
-    return
-  }
-  const exited = new Promise<void>((resolve) =>
-    child.once('exit', () => {
-      resolve()
-    }),
-  )
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'])
-  } else {
-    // The shell runs in its own process group (detached), so this also stops `decoy` under it.
-    process.kill(-child.pid, 'SIGTERM')
-  }
-  await exited
 }

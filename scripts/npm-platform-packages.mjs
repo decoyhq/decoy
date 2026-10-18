@@ -1,6 +1,7 @@
 // Turn release archives into @decoyhq/cli-<os>-<arch> npm packages, and pin them as
 // optionalDependencies of packages/cli (done at publish time: they only exist once released).
 //   node scripts/npm-platform-packages.mjs <archives-dir> <out-dir>
+import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -19,7 +20,7 @@ if (!archives || !out) {
   console.error('usage: node scripts/npm-platform-packages.mjs <archives-dir> <out-dir>')
   process.exit(1)
 }
-const root = new URL('..', import.meta.url).pathname
+const root = fileURLToPath(new URL('..', import.meta.url))
 const cliManifestPath = join(root, 'packages/cli/package.json')
 const cli = JSON.parse(readFileSync(cliManifestPath, 'utf8'))
 const optionalDependencies = {}

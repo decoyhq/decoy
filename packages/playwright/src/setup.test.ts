@@ -1,5 +1,7 @@
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
-import { resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { defineConfig, type FullConfig } from '@playwright/test'
 import { afterEach, describe, expect, test } from '@rstest/core'
 import { expectTypeOf } from 'expect-type'
@@ -112,6 +114,49 @@ describe('setup', () => {
     await teardown()
     expect(await isHealthy(url)).toBe(false)
   })
+
+  test('starts one Decoy per distinct url across projects', async () => {
+    const [first, second] = [await freePort(), await freePort()]
+    const options = (port: number) => ({
+      url: `http://127.0.0.1:${port}`,
+      command: `node ${FAKE_DECOY} ${port}`,
+      reuseExistingServer: false,
+    })
+
+    const teardown = await setup({
+      projects: [
+        { use: { decoyOptions: options(first) } },
+        { use: { decoyOptions: options(first) } },
+        { use: { decoyOptions: options(second) } },
+        { use: {} },
+      ],
+    })
+    expect(await isHealthy(`http://127.0.0.1:${first}`)).toBe(true)
+    expect(await isHealthy(`http://127.0.0.1:${second}`)).toBe(true)
+
+    await teardown()
+    expect(await isHealthy(`http://127.0.0.1:${first}`)).toBe(false)
+    expect(await isHealthy(`http://127.0.0.1:${second}`)).toBe(false)
+  })
+
+  test.skipIf(process.platform === 'win32')(
+    'finds commands in node_modules/.bin like an npm script',
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'decoy-setup-'))
+      const bin = join(dir, 'node_modules', '.bin')
+      mkdirSync(bin, { recursive: true })
+      writeFileSync(join(bin, 'decoy-fake'), `#!/bin/sh\nexec node ${FAKE_DECOY} "$@"\n`)
+      chmodSync(join(bin, 'decoy-fake'), 0o755)
+      const port = await freePort()
+      const url = `http://127.0.0.1:${port}`
+
+      const teardown = await setup(
+        config({ url, command: `decoy-fake ${port}`, cwd: dir, reuseExistingServer: false }),
+      )
+      expect(await isHealthy(url)).toBe(true)
+      await teardown()
+    },
+  )
 
   test('fails clearly when the command exits before serving', async () => {
     const port = await freePort()
