@@ -1,0 +1,7 @@
+# Version tags are accepted for now; Renovate pins every action to a commit SHA
+# (helpers:pinGitHubActionDigestsToSemver), after which this can tighten to `hash-pin`.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        '*': ref-pin

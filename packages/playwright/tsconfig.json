@@ -6,5 +6,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src", "fixtures", "rslib.config.ts"]
+  "include": ["src", "fixtures", "rslib.config.ts", "rstest.config.ts"]
 }

@@ -1,0 +1,16 @@
+# Coverage is reported on PRs but never fails CI.
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+flags:
+  rust:
+    paths: [crates/]
+  js:
+    paths: [packages/]
+comment:
+  layout: 'diff, flags, files'

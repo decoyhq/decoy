@@ -27,6 +27,11 @@ what CI gates on). Without it, use the underlying commands:
 
 Examples (`examples/*`) are the e2e tier and run their own `test:e2e` per workspace.
 
+## Automation
+
+Bots and checks on every PR (Renovate, CodeRabbit, autofix.ci, CodeQL, zizmor, Codecov) and the
+settings that enable them: [`docs/repo-automation.md`](docs/repo-automation.md).
+
 ## Conventions
 
 - **Conventional Commits**, small **vertical-slice** PRs.
