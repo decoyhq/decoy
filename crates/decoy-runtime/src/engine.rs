@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use thiserror::Error;
 
 use crate::collections::{Activation, CollectionError, CollectionsFile};
+use crate::grpc::{GrpcRequest, GrpcResponse};
 use crate::http::{BodyPlan, RequestMetadata, ResponsePlan, RuntimeConfig};
 use crate::http_forward::{ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough};
 use crate::matching::{MatchInput, case_matches};
@@ -219,24 +220,16 @@ impl Catalog {
         }
     }
 
-    fn resolve_http_with_overrides(
+    /// The Collection's activations with Session overrides appended; the last one wins.
+    pub(crate) fn activations(
         &self,
         collection_id: &str,
-        request: &HttpRequest,
         overrides: &BTreeMap<(String, String), String>,
-        metadata: &RequestMetadata,
-    ) -> ResolveOutcome {
-        let mut activations = match self.collections.resolve(collection_id) {
-            Ok(activations) => activations,
-            Err(error) => {
-                return ResolveOutcome::Miss(MissDiagnostic {
-                    collection: collection_id.to_owned(),
-                    reason: error.to_string(),
-                    checked: Vec::new(),
-                });
-            }
-        };
-
+    ) -> Result<Vec<Activation>, String> {
+        let mut activations = self
+            .collections
+            .resolve(collection_id)
+            .map_err(|error| error.to_string())?;
         for ((route, case), behavior) in overrides {
             activations.push(Activation {
                 route: route.clone(),
@@ -244,6 +237,34 @@ impl Catalog {
                 behavior: behavior.clone(),
             });
         }
+        Ok(activations)
+    }
+
+    pub(crate) fn route(&self, id: &str) -> Option<&Route> {
+        self.routes.get(id)
+    }
+
+    pub(crate) fn runtime(&self) -> &RuntimeConfig {
+        &self.runtime
+    }
+
+    fn resolve_http_with_overrides(
+        &self,
+        collection_id: &str,
+        request: &HttpRequest,
+        overrides: &BTreeMap<(String, String), String>,
+        metadata: &RequestMetadata,
+    ) -> ResolveOutcome {
+        let activations = match self.activations(collection_id, overrides) {
+            Ok(activations) => activations,
+            Err(reason) => {
+                return ResolveOutcome::Miss(MissDiagnostic {
+                    collection: collection_id.to_owned(),
+                    reason,
+                    checked: Vec::new(),
+                });
+            }
+        };
 
         let mut checked = Vec::new();
 
@@ -525,6 +546,13 @@ impl Controller {
         let selection = self.selection(session);
         self.catalog
             .execute_http_with_overrides(&selection.collection, &selection.route_overrides, request)
+            .await
+    }
+
+    pub async fn execute_grpc(&self, session: &str, request: GrpcRequest) -> GrpcResponse {
+        let selection = self.selection(session);
+        self.catalog
+            .execute_grpc(&selection.collection, &selection.route_overrides, request)
             .await
     }
 

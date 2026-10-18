@@ -15,7 +15,7 @@ use prost_reflect::{
 };
 use serde_json::Value;
 
-use crate::schema::{Behavior, ResponseBehavior, Route, RouteMatch};
+use crate::schema::{Behavior, PipelineStep, ResponseBehavior, Route, RouteMatch};
 use crate::template::{validate_string, validate_value};
 
 /// gRPC status codes by name, indexed by numeric code.
@@ -45,9 +45,35 @@ pub fn request_json_options() -> SerializeOptions {
     SerializeOptions::new().skip_default_fields(false)
 }
 
+/// A Route's Pipeline: steps run in order, at most once each, and `protobuf` (if present) last,
+/// since it turns bytes into JSON and nothing after it takes JSON.
+pub fn validate_pipeline(steps: &[PipelineStep]) -> Result<(), String> {
+    for (index, step) in steps.iter().enumerate() {
+        if steps[..index].contains(step) {
+            return Err(format!("step `{}` appears twice", step_name(*step)));
+        }
+    }
+    if steps
+        .iter()
+        .position(|step| *step == PipelineStep::Protobuf)
+        .is_some_and(|index| index + 1 != steps.len())
+    {
+        return Err("`protobuf` must be the last step".to_owned());
+    }
+    Ok(())
+}
+
+fn step_name(step: PipelineStep) -> &'static str {
+    match step {
+        PipelineStep::GrpcFrame => "grpc-frame",
+        PipelineStep::Protobuf => "protobuf",
+    }
+}
+
 /// Shape of a gRPC response Behavior: `message` (success), or `status` plus an optional `message`
-/// string (error); `metadata` for trailers. No HTTP fields.
-pub fn validate_response(response: &ResponseBehavior) -> Result<(), String> {
+/// string (error); `metadata` for trailers. No HTTP fields. Without a `protobuf` step (`decoded`
+/// false), a success `message` is base64 bytes instead of a mapping.
+pub fn validate_response(response: &ResponseBehavior, decoded: bool) -> Result<(), String> {
     if response.body.is_some() || !response.headers.is_empty() {
         return Err("gRPC Behaviors use `message` and `metadata`, not `body` and `headers`".into());
     }
@@ -61,11 +87,40 @@ pub fn validate_response(response: &ResponseBehavior) -> Result<(), String> {
             ));
         }
     }
+    for name in response.metadata.keys() {
+        let valid = !name.is_empty()
+            && name
+                .bytes()
+                .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.'));
+        if !valid {
+            return Err(format!(
+                "metadata name `{name}` must be lowercase letters, digits, `-`, `_`, or `.`"
+            ));
+        }
+        if name.starts_with("grpc-") {
+            return Err(format!("metadata name `{name}` is reserved by gRPC"));
+        }
+    }
+    if !decoded {
+        match (&response.message, status_kind(response)) {
+            (Some(Value::String(text)), StatusKind::Ok) if !text.contains("${") => {
+                BASE64
+                    .decode(text)
+                    .map_err(|error| format!("`message` must be base64 bytes: {error}"))?;
+            }
+            (Some(Value::Object(_)), StatusKind::Ok) => {
+                return Err(
+                    "without a `protobuf` step, `message` is base64 bytes, not a mapping".into(),
+                );
+            }
+            _ => {}
+        }
+    }
     match (&response.message, status_kind(response)) {
         (None, _)
         | (Some(Value::String(_)), StatusKind::Error | StatusKind::Templated)
         | (Some(Value::Object(_)), StatusKind::Ok | StatusKind::Templated) => {}
-        (Some(Value::String(text)), StatusKind::Ok) if text.contains("${") => {}
+        (Some(Value::String(text)), StatusKind::Ok) if !decoded || text.contains("${") => {}
         (Some(_), StatusKind::Error) => {
             return Err("an error status takes a string `message`".into());
         }
@@ -115,6 +170,15 @@ pub fn check_route(route: &Route, pool: &DescriptorPool) -> Result<(), String> {
             route.id,
             method.full_name()
         ));
+    }
+
+    // Literals are protobuf JSON only where a `protobuf` step runs (Q3).
+    if route
+        .pipeline
+        .as_ref()
+        .is_some_and(|steps| !steps.contains(&PipelineStep::Protobuf))
+    {
+        return Ok(());
     }
 
     for (case_id, case) in &route.cases {
@@ -571,6 +635,87 @@ cases:
         )
         .unwrap_err();
         assert!(error.contains("unknown field `message.nope`"), "{error}");
+    }
+
+    #[test]
+    fn pipelines_without_protobuf_skip_literal_checks() {
+        let route = Route::from_yaml(
+            r#"
+id: raw
+transport: grpc
+match: { service: approvals.v1.Approvals, method: GetApproval }
+pipeline: [grpc-frame]
+cases:
+  any:
+    behaviors:
+      ok: { message: CgNhLTE= }
+"#,
+        )
+        .unwrap();
+        check_route(&route, &pool()).unwrap();
+
+        let raw = |behavior: &str| {
+            Route::from_yaml(&format!(
+                "id: r\ntransport: grpc\nmatch: {{ service: s, method: m }}\npipeline: [grpc-frame]\ncases:\n  any:\n    behaviors:\n      ok: {behavior}\n"
+            ))
+            .map_err(|error| error.to_string())
+        };
+        assert!(
+            raw("{ message: { id: x } }")
+                .unwrap_err()
+                .contains("base64 bytes, not a mapping")
+        );
+        assert!(
+            raw("{ message: 'not base64!' }")
+                .unwrap_err()
+                .contains("must be base64 bytes")
+        );
+        raw("{ message: '${ message }' }").unwrap();
+
+        for (steps, expected) in [
+            ("[protobuf, grpc-frame]", "`protobuf` must be the last step"),
+            ("[protobuf, protobuf]", "step `protobuf` appears twice"),
+        ] {
+            let error = Route::from_yaml(&format!(
+                "id: r\ntransport: grpc\nmatch: {{ service: s, method: m }}\npipeline: {steps}\ncases:\n  any:\n    behaviors:\n      ok: {{}}\n"
+            ))
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains(expected), "{steps}: {error}");
+        }
+
+        let unknown = Route::from_yaml(
+            "id: r\ntransport: grpc\nmatch: { service: s, method: m }\npipeline: [msgpack]\ncases: {}\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(unknown.contains("unknown variant `msgpack`"), "{unknown}");
+
+        let http = Route::from_yaml(
+            "id: r\ntransport: http\nmatch: { method: GET, path: /x }\npipeline: [protobuf]\ncases:\n  any:\n    behaviors:\n      ok: {}\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            http.contains("HTTP Routes do not take a `pipeline` yet"),
+            "{http}"
+        );
+    }
+
+    #[test]
+    fn rejects_reserved_and_invalid_metadata_names() {
+        for (name, expected) in [
+            ("grpc-status", "reserved by gRPC"),
+            ("X-Reason", "must be lowercase"),
+            ("'bad name'", "must be lowercase"),
+        ] {
+            let error = Route::from_yaml(&format!(
+                "id: r\ntransport: grpc\nmatch: {{ service: s, method: m }}\ncases:\n  any:\n    behaviors:\n      ok: {{ metadata: {{ {name}: x }} }}\n"
+            ))
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains(expected), "{name}: {error}");
+        }
     }
 
     #[test]

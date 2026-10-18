@@ -8,6 +8,7 @@ use axum::body::{Body, to_bytes};
 use axum::extract::{OriginalUri, State};
 use axum::http::{HeaderName, HeaderValue, Request, Response, StatusCode};
 use axum::routing::any;
+use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use decoy_runtime::config::{ServeCliOptions, ServeConfig};
 use decoy_runtime::control_api::{
@@ -15,6 +16,7 @@ use decoy_runtime::control_api::{
     session_id,
 };
 use decoy_runtime::engine::{Controller, HttpExecutionOutcome, HttpExecutionRequest};
+use decoy_runtime::grpc::{GrpcRequest, GrpcResponse, UNIMPLEMENTED};
 use decoy_runtime::http::{
     BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig,
 };
@@ -22,6 +24,8 @@ use decoy_runtime::http_forward::ForwardResponse;
 use decoy_runtime::protos::load_descriptor_pool;
 use decoy_runtime::schema::{HttpMethod, PassthroughTarget};
 use decoy_runtime::startup::load_catalog_from_files;
+use http_body::Frame;
+use http_body_util::StreamBody;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 
@@ -141,6 +145,28 @@ async fn handle_request(
         }
     };
 
+    if is_grpc(&headers) && !is_control_path(uri.path()) {
+        let Some((service, method)) = GrpcRequest::parse_path(uri.path()) else {
+            return grpc_response(GrpcResponse::error(
+                UNIMPLEMENTED,
+                format!("`{}` is not a gRPC method path", uri.path()),
+            ));
+        };
+        let controller = controller.read().await.clone();
+        let response = controller
+            .execute_grpc(
+                &session,
+                GrpcRequest {
+                    service,
+                    method,
+                    metadata: headers,
+                    body,
+                },
+            )
+            .await;
+        return grpc_response(response);
+    }
+
     if is_control_path(uri.path()) {
         let response = handle_control_request(
             &mut *controller.write().await,
@@ -176,6 +202,58 @@ async fn handle_request(
         .await;
 
     response_from_execution_outcome(outcome)
+}
+
+/// One entry handler serves every transport (Q1): `application/grpc*` requests are gRPC calls.
+fn is_grpc(headers: &BTreeMap<String, String>) -> bool {
+    headers
+        .get("content-type")
+        .and_then(|value| value.strip_prefix("application/grpc"))
+        // `application/grpc`, `+proto`, `;charset`; not grpc-web, which frames trailers in the body.
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(['+', ';']))
+}
+
+/// A gRPC answer: HTTP 200, the framed message, then `grpc-status`/`grpc-message` and metadata as
+/// trailers.
+fn grpc_response(response: GrpcResponse) -> Response<Body> {
+    let mut trailers = axum::http::HeaderMap::new();
+    trailers.insert("grpc-status", HeaderValue::from(u16::from(response.status)));
+    if !response.status_message.is_empty()
+        && let Ok(value) = HeaderValue::from_str(&percent_encode(&response.status_message))
+    {
+        trailers.insert("grpc-message", value);
+    }
+    for (name, value) in response.metadata {
+        if let (Ok(name), Ok(value)) = (
+            HeaderName::from_bytes(name.as_bytes()),
+            HeaderValue::from_str(&value),
+        ) {
+            trailers.insert(name, value);
+        }
+    }
+    let mut frames = Vec::new();
+    if !response.body.is_empty() {
+        frames.push(Ok::<_, std::convert::Infallible>(Frame::data(Bytes::from(
+            response.body,
+        ))));
+    }
+    frames.push(Ok(Frame::trailers(trailers)));
+    let mut http = Response::new(Body::new(StreamBody::new(futures_util::stream::iter(
+        frames,
+    ))));
+    http.headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/grpc"));
+    http
+}
+
+/// `grpc-message` is percent-encoded UTF-8 (gRPC over HTTP/2 spec).
+fn percent_encode(text: &str) -> String {
+    text.bytes()
+        .map(|byte| match byte {
+            b' '..=b'~' if byte != b'%' => char::from(byte).to_string(),
+            _ => format!("%{byte:02X}"),
+        })
+        .collect()
 }
 
 fn response_from_execution_outcome(outcome: HttpExecutionOutcome) -> Response<Body> {
