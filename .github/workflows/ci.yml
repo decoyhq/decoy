@@ -99,6 +99,7 @@ jobs:
           emit browser-examples "${browser[@]}"
 
   # Docs-only changes run just the install and lint (prettier covers Markdown).
+  # --ignore-scripts skips the root `prepare` build; js runs build explicitly below.
   ci:
     needs: changes
     if: needs.changes.outputs.js == 'true' || needs.changes.outputs.docs == 'true'
@@ -115,7 +116,7 @@ jobs:
           auto-install: true
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Audit npm dependencies
         if: needs.changes.outputs.js == 'true'
