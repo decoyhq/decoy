@@ -4,6 +4,21 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+catalogs:
+  default:
+    '@grpc/grpc-js':
+      specifier: ^1.14.0
+      version: 1.14.6
+    '@grpc/proto-loader':
+      specifier: ^0.8.0
+      version: 0.8.1
+    '@playwright/test':
+      specifier: ^1.56.0
+      version: 1.64.1
+    '@types/node':
+      specifier: ^24.0.0
+      version: 24.13.2
+
 importers:
 
   .:
@@ -24,7 +39,7 @@ importers:
         specifier: ^0.10.4
         version: 0.10.4
       '@types/node':
-        specifier: ^24.0.0
+        specifier: 'catalog:'
         version: 24.13.2
       '@typescript/native':
         specifier: npm:typescript@7.0.2
@@ -57,13 +72,13 @@ importers:
   examples/grpc-node:
     devDependencies:
       '@grpc/grpc-js':
-        specifier: ^1.14.0
+        specifier: 'catalog:'
         version: 1.14.6
       '@grpc/proto-loader':
-        specifier: ^0.8.0
+        specifier: 'catalog:'
         version: 0.8.1
       '@types/node':
-        specifier: ^24.0.0
+        specifier: 'catalog:'
         version: 24.13.2
 
   examples/playwright-ts-e2e:
@@ -72,37 +87,37 @@ importers:
         specifier: workspace:*
         version: link:../../packages/playwright
       '@playwright/test':
-        specifier: ^1.56.0
+        specifier: 'catalog:'
         version: 1.64.1
       '@types/node':
-        specifier: ^24.0.0
+        specifier: 'catalog:'
         version: 24.13.2
 
   examples/tls-bff-node:
     devDependencies:
       '@grpc/grpc-js':
-        specifier: ^1.14.0
+        specifier: 'catalog:'
         version: 1.14.6
       '@grpc/proto-loader':
-        specifier: ^0.8.0
+        specifier: 'catalog:'
         version: 0.8.1
       '@types/node':
-        specifier: ^24.0.0
+        specifier: 'catalog:'
         version: 24.13.2
 
   packages/cli:
     devDependencies:
       '@types/node':
-        specifier: ^24.0.0
+        specifier: 'catalog:'
         version: 24.13.2
 
   packages/playwright:
     devDependencies:
       '@playwright/test':
-        specifier: ^1.56.0
+        specifier: 'catalog:'
         version: 1.64.1
       '@types/node':
-        specifier: ^24.0.0
+        specifier: 'catalog:'
         version: 24.13.2
       expect-type:
         specifier: ^1.4.0

@@ -10,7 +10,7 @@
   },
   "devDependencies": {
     "@decoyhq/playwright": "workspace:*",
-    "@playwright/test": "^1.56.0",
-    "@types/node": "^24.0.0"
+    "@playwright/test": "catalog:",
+    "@types/node": "catalog:"
   }
 }

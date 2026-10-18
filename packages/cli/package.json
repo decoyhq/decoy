@@ -21,6 +21,6 @@
     "typecheck": "tsc"
   },
   "devDependencies": {
-    "@types/node": "^24.0.0"
+    "@types/node": "catalog:"
   }
 }
