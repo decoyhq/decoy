@@ -1,0 +1,8 @@
+id: crm-customer
+transport: http
+match: { method: GET, path: '/customers/{id}' }
+cases:
+  any:
+    behaviors:
+      ok:
+        body: { id: '${ pathParams.id }', name: Ada }

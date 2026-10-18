@@ -3,6 +3,7 @@
 Decoy answers unary gRPC calls on its normal port. gRPC over HTTP/2 cleartext (h2c), plain HTTP,
 and the Control API all share it. Point your gRPC client at Decoy instead of the real service; no
 generated code or server stubs are needed. Server, client, and bidi streaming are not supported yet.
+For gRPC over TLS, turn on [TLS](tls.md); the same port then speaks gRPC over HTTPS.
 
 ## Proto roots
 

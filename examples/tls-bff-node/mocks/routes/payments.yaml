@@ -1,0 +1,8 @@
+id: payments-get
+transport: http
+match: { method: GET, path: '/payments/{id}' }
+cases:
+  any:
+    behaviors:
+      paid:
+        body: { id: '${ pathParams.id }', status: paid, amount: 42 }

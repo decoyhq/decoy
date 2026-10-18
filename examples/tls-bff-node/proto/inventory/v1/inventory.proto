@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package inventory.v1;
+
+service Inventory {
+  rpc GetStock(GetStockRequest) returns (Stock);
+}
+
+message GetStockRequest { string sku = 1; }
+
+message Stock {
+  string sku = 1;
+  int32 available = 2;
+}
