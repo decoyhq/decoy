@@ -610,17 +610,6 @@ impl Controller {
         }
     }
 
-    pub async fn execute_http(
-        &self,
-        session: &str,
-        request: HttpExecutionRequest,
-    ) -> HttpExecutionOutcome {
-        self.session_view(session).execute_http(request).await
-    }
-
-    pub async fn execute_grpc(&self, session: &str, request: GrpcRequest) -> GrpcResponse {
-        self.session_view(session).execute_grpc(request).await
-    }
 
     fn selection(&self, session: &str) -> Selection {
         self.sessions
