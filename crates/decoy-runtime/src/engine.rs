@@ -7,7 +7,7 @@ use crate::collections::{Activation, CollectionError, CollectionsFile};
 use crate::grpc::{GrpcRequest, GrpcResponse};
 use crate::http::{BodyPlan, RequestMetadata, ResponsePlan, RuntimeConfig};
 use crate::http_forward::{ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough};
-use crate::matching::{ConditionFailure, MatchInput, case_mismatch};
+use crate::matching::{ConditionFailure, MatchInput, case_matches, case_mismatch};
 use crate::request::RequestEnvelope;
 use crate::schema::{Behavior, HttpMethod, Route, RouteMatch};
 use crate::template::{has_templates, render_response};
@@ -42,17 +42,18 @@ pub enum HttpExecutionOutcome {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum ResolveOutcome {
+pub enum ResolveOutcome<'a> {
     Matched {
         activation: Activation,
         path_params: BTreeMap<String, String>,
         plan: ResponsePlan,
         /// The selected Behavior's `delay`, applied before responding or forwarding.
         delay: Option<std::time::Duration>,
-        /// Candidates rejected before the winner, in evaluation order.
+        /// Candidates rejected before the winner, in evaluation order; empty on the serving
+        /// fast path, which does not explain hits.
         skipped: Vec<Candidate>,
         /// The winning Case's `match`; every condition in it passed.
-        conditions: serde_json::Value,
+        conditions: &'a serde_json::Value,
     },
     Miss(MissDiagnostic),
 }
@@ -143,7 +144,8 @@ impl Catalog {
         })
     }
 
-    pub fn resolve_http(&self, collection_id: &str, request: &HttpRequest) -> ResolveOutcome {
+    /// Resolves with the full explanation; serving uses `execute_http`, which skips it on hits.
+    pub fn resolve_http(&self, collection_id: &str, request: &HttpRequest) -> ResolveOutcome<'_> {
         self.resolve_http_with_metadata(collection_id, request, &RequestMetadata::default())
     }
 
@@ -190,8 +192,8 @@ impl Catalog {
         collection_id: &str,
         request: &HttpRequest,
         metadata: &RequestMetadata,
-    ) -> ResolveOutcome {
-        self.resolve_http_with_overrides(collection_id, request, &BTreeMap::new(), metadata)
+    ) -> ResolveOutcome<'_> {
+        self.resolve_http_with_overrides(collection_id, request, &BTreeMap::new(), metadata, true)
     }
 
     pub async fn execute_http(
@@ -225,6 +227,7 @@ impl Catalog {
             &resolve_request,
             overrides,
             &request.metadata,
+            false,
         ) {
             ResolveOutcome::Matched {
                 activation,
@@ -311,7 +314,8 @@ impl Catalog {
         request: &HttpRequest,
         overrides: &BTreeMap<(String, String), String>,
         metadata: &RequestMetadata,
-    ) -> ResolveOutcome {
+        explain: bool,
+    ) -> ResolveOutcome<'_> {
         let activations = match self.activations(collection_id, overrides) {
             Ok(activations) => activations,
             Err(reason) => {
@@ -323,40 +327,35 @@ impl Catalog {
             }
         };
 
-        let mut candidates = Vec::new();
+        let mut candidates = explain.then(Vec::new);
 
         for activation in activations.iter().rev() {
-            let reject = |rejection| Candidate {
-                address: activation.address(),
-                rejection,
-            };
-
             let Some(route) = self.routes.get(&activation.route) else {
-                candidates.push(reject(Rejection::MissingRoute));
+                reject(&mut candidates, activation, || Rejection::MissingRoute);
                 continue;
             };
 
             let RouteMatch::Http(route_match) = &route.route_match else {
-                candidates.push(reject(Rejection::Transport));
+                reject(&mut candidates, activation, || Rejection::Transport);
                 continue;
             };
 
             if route_match.method != request.method {
-                candidates.push(reject(Rejection::Method {
+                reject(&mut candidates, activation, || Rejection::Method {
                     expected: route_match.method.as_str().to_owned(),
-                }));
+                });
                 continue;
             }
 
             let Some(path_params) = match_path(&route_match.path, &request.path) else {
-                candidates.push(reject(Rejection::Path {
+                reject(&mut candidates, activation, || Rejection::Path {
                     expected: route_match.path.clone(),
-                }));
+                });
                 continue;
             };
 
             let Some(case) = route.cases.get(&activation.case) else {
-                candidates.push(reject(Rejection::MissingCase));
+                reject(&mut candidates, activation, || Rejection::MissingCase);
                 continue;
             };
 
@@ -366,13 +365,19 @@ impl Catalog {
                 path_params: &path_params,
                 envelope: &request.envelope,
             };
-            if let Some(failure) = case_mismatch(&case.case_match, &input) {
-                candidates.push(reject(Rejection::Condition(failure)));
+            if explain {
+                if let Some(failure) = case_mismatch(&case.case_match, &input) {
+                    reject(&mut candidates, activation, || {
+                        Rejection::Condition(failure)
+                    });
+                    continue;
+                }
+            } else if !case_matches(&case.case_match, &input) {
                 continue;
             }
 
             let Some(behavior) = case.behaviors.get(&activation.behavior) else {
-                candidates.push(reject(Rejection::MissingBehavior));
+                reject(&mut candidates, activation, || Rejection::MissingBehavior);
                 continue;
             };
 
@@ -400,16 +405,40 @@ impl Catalog {
                 path_params,
                 plan,
                 delay: behavior.delay(),
-                skipped: candidates,
-                conditions: case.case_match.clone(),
+                skipped: candidates.unwrap_or_default(),
+                conditions: &case.case_match,
             };
         }
 
+        let Some(candidates) = candidates else {
+            // Misses are rare: only now pay for the candidates the fail-closed body lists.
+            return self.resolve_http_with_overrides(
+                collection_id,
+                request,
+                overrides,
+                metadata,
+                true,
+            );
+        };
         ResolveOutcome::Miss(MissDiagnostic {
             collection: collection_id.to_owned(),
             reason: "no active route case matched request".to_owned(),
             candidates,
         })
+    }
+}
+
+/// Records why `activation` was rejected when explaining (`Some`); the fast path builds nothing.
+pub(crate) fn reject(
+    candidates: &mut Option<Vec<Candidate>>,
+    activation: &Activation,
+    rejection: impl FnOnce() -> Rejection,
+) {
+    if let Some(candidates) = candidates {
+        candidates.push(Candidate {
+            address: activation.address(),
+            rejection: rejection(),
+        });
     }
 }
 
@@ -640,13 +669,14 @@ impl Controller {
         self.selection(session).snapshot()
     }
 
-    pub fn resolve_http(&self, session: &str, request: &HttpRequest) -> ResolveOutcome {
+    pub fn resolve_http(&self, session: &str, request: &HttpRequest) -> ResolveOutcome<'_> {
         let selection = self.selection(session);
         self.catalog.resolve_http_with_overrides(
             &selection.collection,
             request,
             &selection.route_overrides,
             &RequestMetadata::default(),
+            true,
         )
     }
 
@@ -1438,13 +1468,14 @@ cases:
 
     #[test]
     fn a_hit_explains_skipped_candidates_and_the_winner() {
+        let catalog = explain_catalog();
         let ResolveOutcome::Matched {
             activation,
             path_params,
             skipped,
             conditions,
             ..
-        } = explain_catalog().resolve_http("local", &get("/users/456"))
+        } = catalog.resolve_http("local", &get("/users/456"))
         else {
             panic!("expected match")
         };
@@ -1453,7 +1484,7 @@ cases:
         assert_eq!(path_params["id"], "456");
         assert_eq!(
             conditions,
-            serde_json::json!({ "pathParams": { "id": "*" } })
+            &serde_json::json!({ "pathParams": { "id": "*" } })
         );
         assert_eq!(
             skipped,
@@ -1495,6 +1526,34 @@ cases:
                 candidates: Vec::new(),
             })
         );
+    }
+
+    #[tokio::test]
+    async fn serving_skips_explanations_yet_picks_the_same_winner_and_miss_body() {
+        let catalog = explain_catalog();
+        let HttpExecutionOutcome::Response { activation, .. } = catalog
+            .execute_http("local", execution_request("/users/456", "/users/456"))
+            .await
+        else {
+            panic!("expected a response")
+        };
+        assert_eq!(
+            activation.map(|activation| activation.address()).as_deref(),
+            Some("get-user:any:fallback")
+        );
+
+        let ResolveOutcome::Miss(miss) = catalog.resolve_http("local", &get("/nope")) else {
+            panic!("expected miss")
+        };
+        assert_eq!(miss.candidates.len(), 7);
+        let HttpExecutionOutcome::Response { response, .. } = catalog
+            .execute_http("local", execution_request("/nope", "/nope"))
+            .await
+        else {
+            panic!("expected fail-closed response")
+        };
+        let body: serde_json::Value = serde_json::from_slice(&response.body).unwrap();
+        assert_eq!(body["candidates"], serde_json::json!(miss.candidates));
     }
 
     #[tokio::test]

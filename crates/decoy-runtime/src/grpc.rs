@@ -11,9 +11,9 @@ use prost_reflect::{DynamicMessage, MessageDescriptor, MethodDescriptor};
 use serde_json::{Value, json};
 
 use crate::collections::Activation;
-use crate::engine::{Candidate, Catalog, MissDiagnostic, Rejection};
+use crate::engine::{Candidate, Catalog, MissDiagnostic, Rejection, reject};
 use crate::grpc_schema::{STATUS_CODES, find_method, request_json_options};
-use crate::matching::grpc_case_mismatch;
+use crate::matching::{grpc_case_matches, grpc_case_mismatch};
 use crate::schema::{Behavior, PipelineStep, ResponseBehavior, Route, RouteMatch};
 use crate::template::render_grpc_response;
 
@@ -81,7 +81,7 @@ impl GrpcResponse {
 pub enum GrpcResolution<'a> {
     Matched {
         activation: Activation,
-        /// Candidates rejected before the winner, in evaluation order.
+        /// Candidates rejected before the winner, in evaluation order; empty when serving.
         skipped: Vec<Candidate>,
         /// The winning Case's `match`; every condition in it passed.
         conditions: &'a Value,
@@ -102,7 +102,7 @@ impl Catalog {
         overrides: &BTreeMap<(String, String), String>,
         request: GrpcRequest,
     ) -> GrpcResponse {
-        match self.resolve_grpc(collection_id, overrides, &request) {
+        match self.resolve_grpc_with(collection_id, overrides, &request, false) {
             GrpcResolution::Matched {
                 activation,
                 route,
@@ -126,11 +126,24 @@ impl Catalog {
         }
     }
 
+    /// Resolves with the full explanation; serving uses `execute_grpc`, which skips it.
     pub fn resolve_grpc(
         &self,
         collection_id: &str,
         overrides: &BTreeMap<(String, String), String>,
         request: &GrpcRequest,
+    ) -> GrpcResolution<'_> {
+        self.resolve_grpc_with(collection_id, overrides, request, true)
+    }
+
+    /// Unexplained (`explain: false`) leaves `skipped` and a miss's `candidates` empty: a gRPC
+    /// miss answers with its reason only.
+    fn resolve_grpc_with(
+        &self,
+        collection_id: &str,
+        overrides: &BTreeMap<(String, String), String>,
+        request: &GrpcRequest,
+        explain: bool,
     ) -> GrpcResolution<'_> {
         let activations = match self.activations(collection_id, overrides) {
             Ok(activations) => activations,
@@ -143,30 +156,26 @@ impl Catalog {
             }
         };
 
-        let mut candidates = Vec::new();
+        let mut candidates = explain.then(Vec::new);
         for activation in activations.iter().rev() {
-            let reject = |rejection| Candidate {
-                address: activation.address(),
-                rejection,
-            };
             let Some(route) = self.route(&activation.route) else {
-                candidates.push(reject(Rejection::MissingRoute));
+                reject(&mut candidates, activation, || Rejection::MissingRoute);
                 continue;
             };
             let RouteMatch::Grpc(address) = &route.route_match else {
-                candidates.push(reject(Rejection::Transport));
+                reject(&mut candidates, activation, || Rejection::Transport);
                 continue;
             };
             if address.service != request.service || address.method != request.method {
-                candidates.push(reject(Rejection::Method {
+                reject(&mut candidates, activation, || Rejection::Method {
                     expected: format!("{}/{}", address.service, address.method),
-                }));
+                });
                 continue;
             }
             // Startup checks every gRPC Route against the protos, so this only guards the lookup.
             let Ok(method) = find_method(&self.runtime().protos, &address.service, &address.method)
             else {
-                candidates.push(reject(Rejection::MissingRoute));
+                reject(&mut candidates, activation, || Rejection::MissingRoute);
                 continue;
             };
             let message = match decode(&request.body, pipeline(route), &method.input()) {
@@ -188,21 +197,27 @@ impl Catalog {
                 "message": message,
             });
             let Some(case) = route.cases.get(&activation.case) else {
-                candidates.push(reject(Rejection::MissingCase));
+                reject(&mut candidates, activation, || Rejection::MissingCase);
                 continue;
             };
-            if let Some(failure) = grpc_case_mismatch(&case.case_match, &envelope) {
-                candidates.push(reject(Rejection::Condition(failure)));
+            if explain {
+                if let Some(failure) = grpc_case_mismatch(&case.case_match, &envelope) {
+                    reject(&mut candidates, activation, || {
+                        Rejection::Condition(failure)
+                    });
+                    continue;
+                }
+            } else if !grpc_case_matches(&case.case_match, &envelope) {
                 continue;
             }
             let Some(Behavior::Response(response)) = case.behaviors.get(&activation.behavior)
             else {
-                candidates.push(reject(Rejection::MissingBehavior));
+                reject(&mut candidates, activation, || Rejection::MissingBehavior);
                 continue;
             };
             return GrpcResolution::Matched {
                 activation: activation.clone(),
-                skipped: candidates,
+                skipped: candidates.unwrap_or_default(),
                 conditions: &case.case_match,
                 route,
                 method,
@@ -214,7 +229,7 @@ impl Catalog {
         GrpcResolution::Miss(MissDiagnostic {
             collection: collection_id.to_owned(),
             reason: "no active route case matched request".to_owned(),
-            candidates,
+            candidates: candidates.unwrap_or_default(),
         })
     }
 }

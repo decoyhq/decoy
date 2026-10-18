@@ -91,8 +91,41 @@ impl ConditionFailure {
     }
 }
 
+/// What a failed condition reports: the whole [`ConditionFailure`], or `()` when only the verdict
+/// matters (the serving fast path), so nothing is formatted or cloned.
+trait Failure: Sized {
+    fn build(make: impl FnOnce() -> ConditionFailure) -> Self;
+    fn edit(self, edit: impl FnOnce(&mut ConditionFailure)) -> Self;
+}
+
+impl Failure for ConditionFailure {
+    fn build(make: impl FnOnce() -> ConditionFailure) -> Self {
+        make()
+    }
+
+    fn edit(mut self, edit: impl FnOnce(&mut ConditionFailure)) -> Self {
+        edit(&mut self);
+        self
+    }
+}
+
+impl Failure for () {
+    fn build(_: impl FnOnce() -> ConditionFailure) -> Self {}
+
+    fn edit(self, _: impl FnOnce(&mut ConditionFailure)) -> Self {}
+}
+
 /// `None` when the request satisfies the Case's `match`, else its first failed condition.
 pub fn case_mismatch(case_match: &Value, input: &MatchInput) -> Option<ConditionFailure> {
+    case_failure(case_match, input)
+}
+
+/// [`case_mismatch`] as a verdict only, building no failure.
+pub fn case_matches(case_match: &Value, input: &MatchInput) -> bool {
+    case_failure::<()>(case_match, input).is_none()
+}
+
+fn case_failure<F: Failure>(case_match: &Value, input: &MatchInput) -> Option<F> {
     let request = OnceCell::new();
     let request = || {
         request.get_or_init(|| {
@@ -105,17 +138,21 @@ pub fn case_mismatch(case_match: &Value, input: &MatchInput) -> Option<Condition
         Value::Null => return None,
         Value::String(predicate) => {
             return (!predicate_holds(predicate, request()))
-                .then(|| ConditionFailure::predicate("match", predicate));
+                .then(|| F::build(|| ConditionFailure::predicate("match", predicate)));
         }
         Value::Object(fields) => fields,
-        other => return Some(ConditionFailure::new("match", other, Value::Null)),
+        other => {
+            return Some(F::build(|| {
+                ConditionFailure::new("match", other, Value::Null)
+            }));
+        }
     };
     let envelope = input.envelope;
     fields
         .iter()
         .find_map(|(field, pattern)| match (field.as_str(), pattern) {
             (_, Value::String(text)) if is_predicate(text) => (!predicate_holds(text, request()))
-                .then(|| ConditionFailure::predicate(field, text)),
+                .then(|| F::build(|| ConditionFailure::predicate(field, text))),
             ("pathParams", _) => strings_mismatch(field, pattern, |key| {
                 input.path_params.get(key).into_iter().collect()
             }),
@@ -133,28 +170,42 @@ pub fn case_mismatch(case_match: &Value, input: &MatchInput) -> Option<Condition
                 envelope.cookies.get(key).into_iter().collect()
             }),
             ("body", _) => value_mismatch(field, pattern, &envelope.body),
-            _ => Some(ConditionFailure::new(field.as_str(), pattern, Value::Null)),
+            _ => Some(F::build(|| {
+                ConditionFailure::new(field.as_str(), pattern, Value::Null)
+            })),
         })
 }
 
 /// gRPC Case matching over the message envelope `{ service, method, metadata, message }`:
 /// `message` is a deep partial match like HTTP `body`, `metadata` matches like `headers`.
 pub fn grpc_case_mismatch(case_match: &Value, envelope: &Value) -> Option<ConditionFailure> {
+    grpc_case_failure(case_match, envelope)
+}
+
+/// [`grpc_case_mismatch`] as a verdict only, building no failure.
+pub fn grpc_case_matches(case_match: &Value, envelope: &Value) -> bool {
+    grpc_case_failure::<()>(case_match, envelope).is_none()
+}
+
+fn grpc_case_failure<F: Failure>(case_match: &Value, envelope: &Value) -> Option<F> {
     let fields = match case_match {
         Value::Null => return None,
         Value::String(predicate) => {
             return (!predicate_holds(predicate, envelope))
-                .then(|| ConditionFailure::predicate("match", predicate));
+                .then(|| F::build(|| ConditionFailure::predicate("match", predicate)));
         }
         Value::Object(fields) => fields,
-        other => return Some(ConditionFailure::new("match", other, Value::Null)),
+        other => {
+            return Some(F::build(|| {
+                ConditionFailure::new("match", other, Value::Null)
+            }));
+        }
     };
     fields
         .iter()
         .find_map(|(field, pattern)| match (field.as_str(), pattern) {
-            (_, Value::String(text)) if is_predicate(text) => {
-                (!predicate_holds(text, envelope)).then(|| ConditionFailure::predicate(field, text))
-            }
+            (_, Value::String(text)) if is_predicate(text) => (!predicate_holds(text, envelope))
+                .then(|| F::build(|| ConditionFailure::predicate(field, text))),
             ("message", _) => value_mismatch(field, pattern, &envelope["message"]),
             ("metadata", _) => strings_mismatch(field, pattern, |key| {
                 envelope["metadata"]
@@ -163,7 +214,9 @@ pub fn grpc_case_mismatch(case_match: &Value, envelope: &Value) -> Option<Condit
                     .into_iter()
                     .collect()
             }),
-            _ => Some(ConditionFailure::new(field.as_str(), pattern, Value::Null)),
+            _ => Some(F::build(|| {
+                ConditionFailure::new(field.as_str(), pattern, Value::Null)
+            })),
         })
 }
 
@@ -176,13 +229,15 @@ fn is_predicate(text: &str) -> bool {
 
 /// Every pattern key must be present, and one of its request values must equal the pattern value
 /// compared as a string (`'*'` accepts any value).
-fn strings_mismatch<'a, S: AsRef<str> + ?Sized + 'a>(
+fn strings_mismatch<'a, S: AsRef<str> + ?Sized + 'a, F: Failure>(
     field: &str,
     pattern: &Value,
     actual: impl Fn(&str) -> Vec<&'a S>,
-) -> Option<ConditionFailure> {
+) -> Option<F> {
     let Value::Object(pattern) = pattern else {
-        return Some(ConditionFailure::new(field, pattern, Value::Null));
+        return Some(F::build(|| {
+            ConditionFailure::new(field, pattern, Value::Null)
+        }));
     };
     pattern.iter().find_map(|(key, expected)| {
         let values = actual(key);
@@ -192,45 +247,46 @@ fn strings_mismatch<'a, S: AsRef<str> + ?Sized + 'a>(
             None => false,
         };
         (!holds).then(|| {
-            let mut values = values
-                .iter()
-                .map(|value| Value::String(value.as_ref().to_owned()));
-            let actual = match (values.next(), values.next()) {
-                (None, _) => Value::Null,
-                (Some(only), None) => only,
-                (Some(first), Some(second)) => {
-                    Value::Array([first, second].into_iter().chain(values).collect())
-                }
-            };
-            ConditionFailure::new(format!("{field}.{key}"), expected, actual)
+            F::build(|| {
+                let mut values = values
+                    .iter()
+                    .map(|value| Value::String(value.as_ref().to_owned()));
+                let actual = match (values.next(), values.next()) {
+                    (None, _) => Value::Null,
+                    (Some(only), None) => only,
+                    (Some(first), Some(second)) => {
+                        Value::Array([first, second].into_iter().chain(values).collect())
+                    }
+                };
+                ConditionFailure::new(format!("{field}.{key}"), expected, actual)
+            })
         })
     })
 }
 
 /// Deep partial match: objects need every pattern key, arrays need every pattern element somewhere
 /// in the request array, scalars must be equal (numbers compared by value).
-fn value_mismatch(field: &str, pattern: &Value, actual: &Value) -> Option<ConditionFailure> {
-    let mut failure = value_failure(pattern, actual)?;
-    failure.field.insert_str(0, field);
-    Some(failure)
+fn value_mismatch<F: Failure>(field: &str, pattern: &Value, actual: &Value) -> Option<F> {
+    Some(value_failure::<F>(pattern, actual)?.edit(|failure| failure.field.insert_str(0, field)))
 }
 
 /// The failure's `field` is the `.key` path below the matched value, built only on failure.
-fn value_failure(pattern: &Value, actual: &Value) -> Option<ConditionFailure> {
+fn value_failure<F: Failure>(pattern: &Value, actual: &Value) -> Option<F> {
     let holds = match (pattern, actual) {
         (Value::Object(pattern), Value::Object(actual)) => {
             return pattern.iter().find_map(|(key, expected)| {
-                let mut failure = match actual.get(key) {
-                    Some(value) => value_failure(expected, value)?,
-                    None => ConditionFailure::new(String::new(), expected, Value::Null),
+                let failure = match actual.get(key) {
+                    Some(value) => value_failure::<F>(expected, value)?,
+                    None => {
+                        F::build(|| ConditionFailure::new(String::new(), expected, Value::Null))
+                    }
                 };
-                failure.field.insert_str(0, &format!(".{key}"));
-                Some(failure)
+                Some(failure.edit(|failure| failure.field.insert_str(0, &format!(".{key}"))))
             });
         }
         (pattern, actual) => value_matches(pattern, actual),
     };
-    (!holds).then(|| ConditionFailure::new(String::new(), pattern, actual.clone()))
+    (!holds).then(|| F::build(|| ConditionFailure::new(String::new(), pattern, actual.clone())))
 }
 
 /// `value_failure` without building the failure, for array elements tried one by one.
@@ -427,7 +483,7 @@ mod tests {
             "metadata": { "x-tenant": "acme" },
             "message": { "id": "a-1", "approvers": ["alice", "bob"] },
         });
-        let matches = |case_match: Value| grpc_case_mismatch(&case_match, &envelope).is_none();
+        let matches = |case_match: Value| grpc_mismatch(&case_match, &envelope).is_none();
         assert!(matches(Value::Null));
         assert!(matches(json!({ "message": { "id": "a-1" } })));
         assert!(matches(json!({ "message": { "approvers": ["bob"] } })));
@@ -523,16 +579,31 @@ mod tests {
         })
     }
 
+    /// Also checks the fast-path verdict agrees with the explained one.
     fn mismatch(pattern: Value, request: &RequestEnvelope) -> Option<ConditionFailure> {
-        case_mismatch(
-            &pattern,
-            &MatchInput {
-                method: &HttpMethod::Post,
-                path: "/orders/7",
-                path_params: &params(&[("id", "7")]),
-                envelope: request,
-            },
-        )
+        let input = MatchInput {
+            method: &HttpMethod::Post,
+            path: "/orders/7",
+            path_params: &params(&[("id", "7")]),
+            envelope: request,
+        };
+        let failure = case_mismatch(&pattern, &input);
+        assert_eq!(
+            case_matches(&pattern, &input),
+            failure.is_none(),
+            "{pattern}"
+        );
+        failure
+    }
+
+    fn grpc_mismatch(case_match: &Value, envelope: &Value) -> Option<ConditionFailure> {
+        let failure = grpc_case_mismatch(case_match, envelope);
+        assert_eq!(
+            grpc_case_matches(case_match, envelope),
+            failure.is_none(),
+            "{case_match}"
+        );
+        failure
     }
 
     #[test]
@@ -596,7 +667,7 @@ mod tests {
             "metadata": { "x-tenant": "acme" },
             "message": { "id": "a-1" },
         });
-        let mismatch = |case_match: Value| grpc_case_mismatch(&case_match, &envelope);
+        let mismatch = |case_match: Value| grpc_mismatch(&case_match, &envelope);
         assert_eq!(mismatch(json!({ "message": { "id": "a-1" } })), None);
         assert_eq!(
             mismatch(json!({ "message": { "id": "a-2" } })),
@@ -629,7 +700,7 @@ mod tests {
         );
 
         let envelope = json!({ "message": {}, "metadata": {} });
-        let mismatch = |case_match: Value| grpc_case_mismatch(&case_match, &envelope);
+        let mismatch = |case_match: Value| grpc_mismatch(&case_match, &envelope);
         assert_eq!(
             mismatch(json!([1])),
             failure("match", json!([1]), Value::Null)
