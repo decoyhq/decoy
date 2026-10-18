@@ -1,3 +1,4 @@
+use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -371,6 +372,8 @@ impl Catalog {
         };
 
         let mut candidates = explain.then(Vec::new);
+        // The envelope's JSON, built once per request; only `pathParams` changes per candidate.
+        let mut json = OnceCell::<serde_json::Value>::new();
 
         for activation in activations.iter().rev() {
             let Some(route) = self.routes.get(&activation.route) else {
@@ -402,11 +405,15 @@ impl Catalog {
                 continue;
             };
 
+            if let Some(json) = json.get_mut() {
+                json["pathParams"] = serde_json::json!(path_params);
+            }
             let input = MatchInput {
                 method: &request.method,
                 path: &request.path,
                 path_params: &path_params,
                 envelope: &request.envelope,
+                json: &json,
             };
             if explain {
                 if let Some(failure) = case_mismatch(&case.case_match, &input) {
@@ -426,11 +433,12 @@ impl Catalog {
 
             let plan = match behavior {
                 Behavior::Response(response) if has_templates(response) => {
-                    let envelope =
+                    let envelope = json.get_or_init(|| {
                         request
                             .envelope
-                            .to_json(&request.method, &request.path, &path_params);
-                    match render_response(response, &envelope) {
+                            .to_json(&request.method, &request.path, &path_params)
+                    });
+                    match render_response(response, envelope) {
                         Ok(rendered) => ResponsePlan::from_behavior(
                             route,
                             &Behavior::Response(rendered),
@@ -1829,5 +1837,73 @@ cases:
                 }],
             })
         );
+    }
+
+    #[tokio::test]
+    async fn a_template_builds_the_envelope_when_no_condition_did() {
+        let route = Route::from_yaml(
+            "id: echo\ntransport: http\nmatch: { method: GET, path: '/users/{id}' }\ncases:\n  any:\n    behaviors:\n      ok: { status: 200, body: { id: '${ pathParams.id }' } }\n",
+        )
+        .unwrap();
+        let catalog = Catalog::new(
+            vec![route],
+            CollectionsFile::from_yaml("- id: local\n  routes: [echo:any:ok]\n").unwrap(),
+            RuntimeConfig::default(),
+        )
+        .unwrap();
+
+        let HttpExecutionOutcome::Response { response, .. } = catalog
+            .execute_http("local", execution_request("/users/42", "/users/42"))
+            .await
+        else {
+            panic!("expected a response")
+        };
+        assert_eq!(response.body, br#"{"id":"42"}"#);
+    }
+
+    #[tokio::test]
+    async fn predicates_and_templates_see_each_candidates_own_path_params() {
+        let by_id = Route::from_yaml(
+            "id: by-id\ntransport: http\nmatch: { method: GET, path: '/users/{id}' }\ncases:\n  eight:\n    match: \"${ pathParams.id == '8' }\"\n    behaviors:\n      ok: { status: 200 }\n",
+        )
+        .unwrap();
+        let by_name = Route::from_yaml(
+            "id: by-name\ntransport: http\nmatch: { method: GET, path: '/users/{name}' }\ncases:\n  named:\n    match: \"${ pathParams.name == '7' }\"\n    behaviors:\n      echo: { status: 200, body: { name: '${ pathParams.name }' } }\n",
+        )
+        .unwrap();
+        let catalog = Catalog::new(
+            vec![by_id, by_name],
+            CollectionsFile::from_yaml(
+                "- id: local\n  routes:\n    - by-name:named:echo\n    - by-id:eight:ok\n",
+            )
+            .unwrap(),
+            RuntimeConfig::default(),
+        )
+        .unwrap();
+
+        let ResolveOutcome::Matched {
+            activation, plan, ..
+        } = catalog.resolve_http("local", &get("/users/7"))
+        else {
+            panic!("expected match")
+        };
+
+        assert_eq!(activation.address(), "by-name:named:echo");
+        let ResponsePlan::Response(response) = plan else {
+            panic!("expected response")
+        };
+        assert_eq!(
+            response.body,
+            Some(BodyPlan::Json(serde_json::json!({ "name": "7" })))
+        );
+
+        // The serving fast path shares the same envelope.
+        let HttpExecutionOutcome::Response { response, .. } = catalog
+            .execute_http("local", execution_request("/users/7", "/users/7"))
+            .await
+        else {
+            panic!("expected a response")
+        };
+        assert_eq!(response.body, br#"{"name":"7"}"#);
     }
 }
