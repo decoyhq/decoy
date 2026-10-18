@@ -15,13 +15,14 @@ const ROUNDS: u32 = 20_000;
 #[tokio::test]
 #[ignore = "timing, run by hand"]
 async fn hit_path_with_many_entries_ahead_of_the_winner() {
-    // Ahead of the winner: AHEAD Cases whose condition fails, AHEAD Routes whose path differs.
+    // Ahead of the winner: AHEAD Cases that pass `pathParams` and fail on the JSON body, AHEAD
+    // Routes whose path differs.
     let mut users = "id: users\ntransport: http\nmatch: { method: GET, path: '/users/{id}' }\ncases:\n  any:\n    behaviors:\n      ok: { status: 200, body: { ok: true } }\n".to_owned();
     let mut routes = Vec::new();
     let mut entries = vec!["users:any:ok".to_owned()];
     for i in 0..AHEAD {
         users.push_str(&format!(
-            "  c{i}:\n    match: {{ pathParams: {{ id: 'u{i}' }}, body: {{ user: {{ name: 'n{i}' }} }} }}\n    behaviors:\n      ok: {{ status: 200 }}\n"
+            "  c{i}:\n    match: {{ pathParams: {{ id: x }}, body: {{ user: {{ name: 'n{i}' }} }} }}\n    behaviors:\n      ok: {{ status: 200 }}\n"
         ));
         routes.push(
             Route::from_yaml(&format!(
@@ -47,7 +48,7 @@ async fn hit_path_with_many_entries_ahead_of_the_winner() {
         method: HttpMethod::Get,
         path: "/users/x".into(),
         path_and_query: "/users/x".into(),
-        headers: BTreeMap::new(),
+        headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
         body: br#"{"user":{"name":"someone"}}"#.to_vec(),
         metadata: Default::default(),
     };
