@@ -9,7 +9,7 @@ others plain http next to it.
 ```yaml
 tls: auto # or: tls: { cert: certs/dev.pem, key: certs/dev-key.pem }
 port: 8443 # https
-ports:
+listeners:
   payments: 9443 # https
   legacy-crm: { port: 8080, tls: false } # http
 ```

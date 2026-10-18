@@ -23,7 +23,7 @@ async fn tls_and_plain_listeners_serve_the_same_routes() {
     let cert = fixture.write_cert();
     let (secure, extra, plain) = (unused_port(), unused_port(), unused_port());
     fixture.write_config(&format!(
-        "tls: {{ cert: certs/dev.pem, key: certs/dev-key.pem }}\nport: {secure}\nports:\n  payments: {extra}\n  legacy: {{ port: {plain}, tls: false }}\n"
+        "tls: {{ cert: certs/dev.pem, key: certs/dev-key.pem }}\nport: {secure}\nlisteners:\n  payments: {extra}\n  legacy: {{ port: {plain}, tls: false }}\n"
     ));
     let _server = fixture.spawn();
     let client = trusting_client(&cert);

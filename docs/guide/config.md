@@ -17,22 +17,29 @@ decoy serve --config mocks/decoy.yaml
 | -------------------- | ------------------------ | ----------------------------------- |
 | `routes`             | `--routes <dir>`         | required                            |
 | `collections`        | `--collections <file>`   | required                            |
-| `port`               | `--port <port>`          | `8080` (binds `127.0.0.1`)          |
-| `ports`              | none                     | none                                |
+| `port`               | `--port <port>`          | `8080`                              |
+| `host`               | `--host <host>`          | `localhost` (`127.0.0.1` and `::1`) |
+| `listeners`          | none                     | none                                |
 | `collection`         | `--collection <id>`      | first Collection in the file        |
 | `passthroughBaseUrl` | `--passthrough-base-url` | none (see [Passthrough](routes.md)) |
 | `protos`             | none                     | none                                |
 | `tls`                | none                     | none (plain http)                   |
 
-`ports` opens extra named listeners. Each serves the same Routes, Sessions, and Control API as
+`listeners` opens extra named listeners. Each serves the same Routes, Sessions, and Control API as
 `port`, so a gRPC client and an HTTP client can use different ports but share one Session:
 
 ```yaml
 port: 8080
-ports: { grpc: 50051 }
+listeners: { grpc: 50051 }
 ```
 
-The keys are free names; they only label logs and errors. Every port speaks HTTP and gRPC.
+The keys are free names; they only label logs and errors. Every listener speaks HTTP and gRPC.
+
+`host` is where listeners bind. `localhost` (the default) binds both `127.0.0.1` and `::1`, so
+clients work whichever one `localhost` resolves to for them. An IP binds just that address
+(`0.0.0.0` for every interface, e.g. inside Docker); another name binds every address it resolves
+to. A listener can set its own: `{ port: 9000, host: 0.0.0.0 }`. `--host` replaces the top-level
+`host` and the main listener's.
 
 `tls` serves every listener over HTTPS with your cert and key (PEM). ALPN picks HTTP/2 or HTTP/1.1
 per connection, so gRPC over TLS works on the same port. A listener given as `{ port, tls: false }`
@@ -43,12 +50,12 @@ tls:
   cert: certs/dev.pem
   key: certs/dev-key.pem
 port: 8443 # https
-ports:
+listeners:
   payments: 9443 # https
   legacy-crm: { port: 8080, tls: false } # http
 ```
 
-`port` takes the same object form. `--port` changes only the port number. Clients must trust the
+`port` takes the same object form (`{ port, host, tls }`). `--port` changes only the port number. Clients must trust the
 cert, e.g. `NODE_EXTRA_CA_CERTS=certs/dev.pem` for Node.
 
 `tls: auto` skips the cert files: Decoy signs a fresh localhost cert (valid a year) at every start with a

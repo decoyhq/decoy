@@ -3,11 +3,11 @@
 A small BFF (`src/bff.ts`) answers `GET /orders/{id}` by calling three backends, all served by one
 Decoy:
 
-| Backend      | Transport     | Decoy listener                          |
-| ------------ | ------------- | --------------------------------------- |
-| payments API | https         | `port: 8443` (`tls: auto`)              |
-| legacy CRM   | plain http    | `ports.crm: { port: 8092, tls: false }` |
-| Inventory    | gRPC over TLS | `port: 8443`                            |
+| Backend      | Transport     | Decoy listener                              |
+| ------------ | ------------- | ------------------------------------------- |
+| payments API | https         | `port: 8443` (`tls: auto`)                  |
+| legacy CRM   | plain http    | `listeners.crm: { port: 8092, tls: false }` |
+| Inventory    | gRPC over TLS | `port: 8443`                                |
 
 ```sh
 pnpm --filter ./examples/tls-bff-node test:e2e

@@ -533,7 +533,7 @@ cases:
     );
     let (port, extra) = (unused_port(), unused_port());
     fixture.write_config(format!(
-        "routes: routes\ncollections: collections.yaml\nport: {port}\nports: {{ grpc: {extra} }}\n"
+        "routes: routes\ncollections: collections.yaml\nport: {port}\nlisteners: {{ grpc: {extra} }}\n"
     ));
     let _server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
     wait_for_server(port).await;
@@ -567,6 +567,53 @@ cases:
     assert_eq!(get(port, "other").await, "MAIN");
 }
 
+#[tokio::test]
+async fn default_host_serves_both_loopback_addresses() {
+    let fixture = Fixture::new();
+    fixture.write_route("who.yaml", route_response("who", "MAIN"));
+    fixture.write_collections("- id: main\n  routes: [who:any:ok]\n");
+    let port = unused_port();
+    let _server = fixture.spawn(port, &[]);
+    wait_for_server(port).await;
+
+    let get = |host: &str| reqwest::get(format!("http://{host}:{port}/who"));
+    assert_eq!(
+        get("127.0.0.1").await.unwrap().text().await.unwrap(),
+        "MAIN"
+    );
+    if has_ipv6_loopback() {
+        assert_eq!(get("[::1]").await.unwrap().text().await.unwrap(), "MAIN");
+    }
+}
+
+#[tokio::test]
+async fn explicit_host_binds_only_that_address() {
+    if !has_ipv6_loopback() {
+        return;
+    }
+    let fixture = Fixture::new();
+    fixture.write_route("who.yaml", route_response("who", "MAIN"));
+    fixture.write_collections("- id: main\n  routes: [who:any:ok]\n");
+    let port = unused_port();
+    let _server = fixture.spawn(port, &["--host", "127.0.0.1"]);
+    wait_for_server(port).await;
+
+    assert!(
+        reqwest::get(format!("http://[::1]:{port}/who"))
+            .await
+            .is_err()
+    );
+}
+
+/// Whether `::1` works here (not every CI container or WSL setup has a usable IPv6 loopback).
+fn has_ipv6_loopback() -> bool {
+    let Ok(listener) = TcpListener::bind("[::1]:0") else {
+        return false;
+    };
+    let addr = listener.local_addr().unwrap();
+    std::net::TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok()
+}
+
 #[test]
 fn taken_extra_port_fails_startup() {
     let fixture = Fixture::new();
@@ -575,7 +622,7 @@ fn taken_extra_port_fails_startup() {
     let taken = TcpListener::bind("127.0.0.1:0").unwrap();
     let taken_port = taken.local_addr().unwrap().port();
     fixture.write_config(format!(
-        "routes: routes\ncollections: collections.yaml\nport: {}\nports: {{ grpc: {taken_port} }}\n",
+        "routes: routes\ncollections: collections.yaml\nport: {}\nlisteners: {{ grpc: {taken_port} }}\n",
         unused_port()
     ));
 
@@ -589,7 +636,7 @@ fn taken_extra_port_fails_startup() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains(&format!(
-            "cannot listen on `ports.grpc` (127.0.0.1:{taken_port})"
+            "cannot listen on `listeners.grpc` (127.0.0.1:{taken_port})"
         )),
         "{stderr}"
     );
