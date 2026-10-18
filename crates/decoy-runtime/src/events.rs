@@ -155,14 +155,15 @@ pub enum Level {
     Error,
 }
 
-/// Where [`warn`] and [`error`] send: the broadcast of the last started server. Process-wide,
-/// because the sites that log (matching, forwarding, accept loops) don't hold a `Controller`.
-static LOG_SINK: std::sync::RwLock<Option<Sender>> = std::sync::RwLock::new(None);
+tokio::task_local! {
+    /// The broadcast of the server whose request (or accept loop) is running.
+    static SINK: Sender;
+}
 
-pub(crate) fn set_log_sink(events: Sender) {
-    *LOG_SINK
-        .write()
-        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(events);
+/// Runs `future` with [`warn`] and [`error`] going to `events`; the sites that log (matching,
+/// forwarding, accept loops) don't hold a `Controller`.
+pub(crate) async fn logging_to<F: Future>(events: Sender, future: F) -> F::Output {
+    SINK.scope(events, future).await
 }
 
 pub(crate) fn warn(message: impl Into<String>) {
@@ -175,15 +176,11 @@ pub(crate) fn error(message: impl Into<String>) {
 
 /// An [`Event::Log`] while someone subscribes; otherwise stderr, as headless `decoy serve` prints it.
 fn log(level: Level, message: String) {
-    let sink = LOG_SINK
-        .read()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clone();
     let event = Event::Log(LogEvent { level, message });
     // `send` fails (and hands the event back) when nobody subscribes.
-    let unsent = match sink {
-        Some(events) => events.send(event).err().map(|unsent| unsent.0),
-        None => Some(event),
+    let unsent = match SINK.try_with(Sender::clone) {
+        Ok(events) => events.send(event).err().map(|unsent| unsent.0),
+        Err(_) => Some(event),
     };
     if let Some(Event::Log(LogEvent { message, .. })) = unsent {
         eprintln!("decoy serve: {message}");

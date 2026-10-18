@@ -95,10 +95,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("decoy serve: {notice}");
     }
     for listener in &server.listeners {
-        match listener.name.as_str() {
-            "port" => eprintln!("decoy serve listening on {}", listener.url()),
-            name => eprintln!("decoy serve listening on {} ({name})", listener.url()),
-        }
+        eprintln!("decoy serve listening on {}", listener.label());
     }
     server
         .wait()

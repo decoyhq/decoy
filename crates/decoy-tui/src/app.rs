@@ -7,10 +7,10 @@ use crossterm::event::{
     Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
     MouseEventKind,
 };
-use decoy_runtime::SelectionSnapshot;
 use decoy_runtime::events::{
     Event as RuntimeEvent, Level, LogEvent, SessionChange, SessionEvent, SessionSource,
 };
+use decoy_runtime::{RouteOverrideSnapshot, SelectionSnapshot};
 use ratatui::layout::{Position, Rect};
 
 use crate::log::{Entry, Log, RequestLine, Theme};
@@ -108,7 +108,7 @@ impl App {
             }
             Event::Terminal(TermEvent::Mouse(mouse)) => self.on_mouse(mouse),
             Event::Terminal(TermEvent::Paste(text)) => {
-                self.edit(|input| input.push_str(&text.replace(['\r', '\n'], " ")));
+                self.input.push_str(&text.replace(['\r', '\n'], " "));
                 vec![]
             }
             Event::Terminal(_) => vec![],
@@ -179,7 +179,7 @@ impl App {
                     .overrides
                     .iter()
                     .filter(|o| !before.overrides.contains(o))
-                    .map(|o| format!("{}:{}:{}", o.route, o.case_id, o.behavior))
+                    .map(RouteOverrideSnapshot::address)
                     .collect();
                 format!("route {}", added.join(", "))
             }
@@ -212,7 +212,10 @@ impl App {
 
         if self.selected.is_some() {
             match key.code {
-                _ if copy_chord => return self.copy_selection(),
+                _ if copy_chord => {
+                    self.ctrl_c_armed = false;
+                    return self.copy_selection();
+                }
                 KeyCode::Enter => {
                     let effects = self.copy_selection();
                     self.follow();
@@ -239,11 +242,11 @@ impl App {
                 self.hint = Some("Ctrl+C again to quit".to_owned());
             }
             KeyCode::Char('d') if ctrl && self.input.is_empty() => return vec![Effect::Quit],
-            KeyCode::Char('u') if ctrl => self.edit(String::clear),
-            KeyCode::Char(c) if !ctrl => self.edit(|input| input.push(c)),
-            KeyCode::Backspace => self.edit(|input| {
-                input.pop();
-            }),
+            KeyCode::Char('u') if ctrl => self.input.clear(),
+            KeyCode::Char(c) if !ctrl => self.input.push(c),
+            KeyCode::Backspace => {
+                self.input.pop();
+            }
             KeyCode::Esc => self.follow(),
             KeyCode::PageUp => self.scroll_log(true, self.page()),
             KeyCode::PageDown => self.scroll_log(false, self.page()),
@@ -258,10 +261,6 @@ impl App {
             _ => {}
         }
         vec![]
-    }
-
-    fn edit(&mut self, change: impl FnOnce(&mut String)) {
-        change(&mut self.input);
     }
 
     fn submit(&mut self, text: &str) {

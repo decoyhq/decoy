@@ -42,6 +42,14 @@ impl BoundListener {
         let scheme = if self.tls { "https" } else { "http" };
         format!("{scheme}://{}", self.addr)
     }
+
+    /// The URL, plus the config key unless it is the main `port`: what `listening on` shows.
+    pub fn label(&self) -> String {
+        match self.name.as_str() {
+            "port" => self.url(),
+            name => format!("{} ({name})", self.url()),
+        }
+    }
 }
 
 /// A started runtime: every listener is bound and serving until the shutdown signal fires.
@@ -81,13 +89,13 @@ pub async fn serve(
 
     let controller = Controller::new(startup.catalog, startup.default_collection);
     let events = controller.events();
-    crate::events::set_log_sink(events.clone());
     let mut notices = Vec::new();
     let controller = Arc::new(RwLock::new(controller));
     let app = Router::new()
         .fallback(any(handle_request))
         .with_state(controller.clone())
-        .layer(Extension(MaxBodyBytes(config.max_body_bytes)));
+        .layer(Extension(MaxBodyBytes(config.max_body_bytes)))
+        .layer(Extension(events.clone()));
     let tls_config = match &config.tls {
         None => None,
         Some(TlsSource::Files(files)) => Some(tls::server_config(files)?),
@@ -128,7 +136,10 @@ pub async fn serve(
         match tls_config.clone().filter(|_| secure) {
             Some(tls_config) => {
                 let app = app.clone().layer(Extension(Secure));
-                servers.spawn(tls::serve(listener, app, tls_config, stop));
+                servers.spawn(crate::events::logging_to(
+                    events.clone(),
+                    tls::serve(listener, app, tls_config, stop),
+                ));
             }
             None => {
                 servers.spawn(
@@ -161,6 +172,7 @@ impl Server {
     /// Serves until the shutdown signal fires or a listener fails, then drains.
     pub async fn wait(self) -> Result<(), ServeError> {
         let Self {
+            events,
             shutdown,
             stop_all,
             mut servers,
@@ -182,10 +194,13 @@ impl Server {
         match drained {
             Ok(result) => result?,
             Err(_) => {
-                crate::events::warn(format!(
-                    "closed connections still open after {}s",
-                    DRAIN_TIMEOUT.as_secs()
-                ));
+                crate::events::logging_to(events, async {
+                    crate::events::warn(format!(
+                        "closed connections still open after {}s",
+                        DRAIN_TIMEOUT.as_secs()
+                    ));
+                })
+                .await;
                 servers.abort_all();
             }
         }
@@ -259,7 +274,16 @@ async fn bind(
 
 async fn handle_request(
     State(controller): State<Arc<RwLock<Controller>>>,
+    Extension(events): Extension<crate::events::Sender>,
     OriginalUri(uri): OriginalUri,
+    request: Request<Body>,
+) -> Response<Body> {
+    crate::events::logging_to(events, respond(controller, uri, request)).await
+}
+
+async fn respond(
+    controller: Arc<RwLock<Controller>>,
+    uri: axum::http::Uri,
     request: Request<Body>,
 ) -> Response<Body> {
     if uri.path() == HEALTH_PATH && request.method() == axum::http::Method::GET {

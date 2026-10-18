@@ -352,6 +352,22 @@ mod tests {
     }
 
     #[test]
+    fn a_ctrl_c_that_copies_disarms_quitting() {
+        let mut app = app();
+        app.handle_event(hit(1));
+        render(&mut app, 100, 10);
+        app.handle_event(ctrl('c'));
+        app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 5, 0));
+        app.handle_event(mouse(MouseEventKind::Drag(MouseButton::Left), 5, 0));
+        app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 5, 0));
+        assert!(matches!(
+            app.handle_event(ctrl('c')).as_slice(),
+            [Effect::Copy(_)]
+        ));
+        assert_eq!(app.handle_event(ctrl('c')), []);
+    }
+
+    #[test]
     fn enter_with_a_selection_copies_and_follows() {
         let mut app = app();
         for id in 1..=20 {

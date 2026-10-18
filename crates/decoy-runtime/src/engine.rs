@@ -601,6 +601,13 @@ pub struct RouteOverrideSnapshot {
     pub behavior: String,
 }
 
+impl RouteOverrideSnapshot {
+    /// The override's Behavior address, `route:case:behavior`.
+    pub fn address(&self) -> String {
+        format!("{}:{}:{}", self.route, self.case_id, self.behavior)
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ControlError {
     #[error("unknown collection `{id}`")]

@@ -8,8 +8,12 @@ mod ui;
 use std::io::Write;
 
 use base64::Engine;
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture, EventStream};
+use crossterm::event::{
+    DisableMouseCapture, EnableMouseCapture, EventStream, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::execute;
+use crossterm::terminal::supports_keyboard_enhancement;
 use decoy_runtime::{DEFAULT_SESSION, ServeError, Server};
 use futures_util::StreamExt;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
@@ -46,45 +50,64 @@ pub async fn run(server: Server, quit: tokio::sync::oneshot::Sender<()>) -> Resu
         app.info(notice.clone());
     }
     for listener in &server.listeners {
-        match listener.name.as_str() {
-            "port" => app.info(format!("listening on {}", listener.url())),
-            name => app.info(format!("listening on {} ({name})", listener.url())),
-        }
+        app.info(format!("listening on {}", listener.label()));
     }
 
     let mut events = server.subscribe();
     let mut served = tokio::spawn(server.wait());
 
     let mut terminal = ratatui::init();
+    // Keyboard enhancement reports Ctrl+Shift+C and Cmd+C, where the terminal supports it.
+    let enhanced = supports_keyboard_enhancement().unwrap_or(false);
+    if enhanced {
+        execute!(
+            std::io::stdout(),
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        )?;
+    }
     execute!(std::io::stdout(), EnableMouseCapture)?;
-    // ratatui's hook leaves the alternate screen and raw mode; release the mouse before it.
+    // ratatui's hook leaves the alternate screen and raw mode; release the rest before it.
     let restore = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        let _ = execute!(std::io::stdout(), DisableMouseCapture);
+        release(enhanced);
         restore(info);
     }));
 
     let result = event_loop(&mut terminal, &mut app, &mut events, &mut served).await;
 
-    let _ = execute!(std::io::stdout(), DisableMouseCapture);
+    release(enhanced);
     ratatui::restore();
+    // Nobody reads the log any more, so drain warnings go to stderr.
+    drop(events);
 
-    let stopped = match result {
+    match result {
         Ok(Some(stopped)) => stopped,
         Ok(None) => {
             let _ = quit.send(());
-            served.await
+            joined(served.await)
         }
         Err(error) => {
             let _ = quit.send(());
             let _ = served.await;
-            return Err(error.into());
+            Err(error.into())
         }
-    };
-    stopped.map_err(|error| Box::new(error) as ServeError)?
+    }
+}
+
+fn release(enhanced: bool) {
+    let _ = execute!(std::io::stdout(), DisableMouseCapture);
+    if enhanced {
+        let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+    }
 }
 
 type Served = tokio::task::JoinHandle<Result<(), ServeError>>;
+
+fn joined(
+    result: Result<Result<(), ServeError>, tokio::task::JoinError>,
+) -> Result<(), ServeError> {
+    result.map_err(|error| Box::new(error) as ServeError)?
+}
 
 /// Returns the server's result when it stopped first, `None` when the user quit.
 async fn event_loop(
@@ -92,7 +115,7 @@ async fn event_loop(
     app: &mut App,
     events: &mut tokio::sync::broadcast::Receiver<decoy_runtime::events::Event>,
     served: &mut Served,
-) -> std::io::Result<Option<Result<Result<(), ServeError>, tokio::task::JoinError>>> {
+) -> std::io::Result<Option<Result<(), ServeError>>> {
     let mut input = EventStream::new();
     loop {
         terminal.draw(|frame| app.draw(frame))?;
@@ -106,7 +129,7 @@ async fn event_loop(
                 Err(RecvError::Lagged(dropped)) => Event::Lagged(dropped),
                 Err(RecvError::Closed) => return Ok(None),
             },
-            stopped = &mut *served => return Ok(Some(stopped)),
+            stopped = &mut *served => return Ok(Some(joined(stopped))),
         };
         let mut batch = vec![first];
         while batch.len() < BATCH {
