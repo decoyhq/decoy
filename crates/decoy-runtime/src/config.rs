@@ -21,12 +21,71 @@ pub struct ServeCliOptions {
 pub struct ServeConfig {
     pub routes: PathBuf,
     pub collections: PathBuf,
-    pub port: u16,
+    pub port: Listener,
     /// Extra named listeners (e.g. `grpc: 50051`) serving the same Routes and Sessions as `port`.
-    pub ports: BTreeMap<String, u16>,
+    pub ports: BTreeMap<String, Listener>,
+    /// Certificate served by every listener with `tls` on; paths are absolute.
+    pub tls: Option<TlsFiles>,
     pub collection: Option<String>,
     pub passthrough_base_url: Option<String>,
     pub protos: ProtoSources,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Listener {
+    pub port: u16,
+    pub tls: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TlsFiles {
+    pub cert: PathBuf,
+    pub key: PathBuf,
+}
+
+/// A listener in the config file: a bare port, or an object for per-listener settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListenerFile {
+    port: u16,
+    tls: Option<bool>,
+}
+
+fn listener_file<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<ListenerFile, D::Error> {
+    use serde::de::Error;
+    match serde_yaml::Value::deserialize(deserializer)? {
+        serde_yaml::Value::Mapping(mapping) => {
+            serde_yaml::from_value(serde_yaml::Value::Mapping(mapping)).map_err(D::Error::custom)
+        }
+        value => u16::deserialize(value)
+            .map(|port| ListenerFile { port, tls: None })
+            .map_err(D::Error::custom),
+    }
+}
+
+fn optional_listener_file<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<ListenerFile>, D::Error> {
+    match serde_yaml::Value::deserialize(deserializer)? {
+        serde_yaml::Value::Null => Ok(None),
+        value => listener_file(value)
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
+}
+
+fn listener_files<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, ListenerFile>, D::Error> {
+    #[derive(Deserialize)]
+    struct Entry(#[serde(deserialize_with = "listener_file")] ListenerFile);
+    Ok(BTreeMap::<String, Entry>::deserialize(deserializer)?
+        .into_iter()
+        .map(|(name, Entry(listener))| (name, listener))
+        .collect())
 }
 
 /// Where gRPC message types come from; paths are absolute after config resolution.
@@ -46,9 +105,11 @@ struct NativeConfigFile {
     routes: Option<PathBuf>,
     #[serde(alias = "collectionsFile")]
     collections: Option<PathBuf>,
-    port: Option<u16>,
-    #[serde(default)]
-    ports: BTreeMap<String, u16>,
+    #[serde(default, deserialize_with = "optional_listener_file")]
+    port: Option<ListenerFile>,
+    #[serde(default, deserialize_with = "listener_files")]
+    ports: BTreeMap<String, ListenerFile>,
+    tls: Option<TlsFiles>,
     #[serde(alias = "startupCollection")]
     collection: Option<String>,
     #[serde(alias = "passthroughBaseUrl")]
@@ -87,25 +148,53 @@ impl ServeConfig {
                 .and_then(|config| config.collections.clone()),
             "collections",
         )?;
-        let port = options
-            .port
-            .or_else(|| file_config.as_ref().and_then(|config| config.port))
-            .unwrap_or(DEFAULT_PORT);
+        let tls = file_config
+            .as_ref()
+            .and_then(|config| config.tls.clone())
+            .map(|tls| TlsFiles {
+                cert: absolutize(&config_base, &tls.cert),
+                key: absolutize(&config_base, &tls.key),
+            });
+        let resolve = |name: &str, listener: ListenerFile| match (listener.tls, &tls) {
+            (Some(true), None) => Err(ConfigError::TlsWithoutCert {
+                name: name.to_owned(),
+            }),
+            (on, tls) => Ok(Listener {
+                port: listener.port,
+                tls: tls.is_some() && on != Some(false),
+            }),
+        };
+        let file_port = file_config.as_ref().and_then(|config| config.port);
+        let mut port = resolve(
+            "port",
+            file_port.unwrap_or(ListenerFile {
+                port: DEFAULT_PORT,
+                tls: None,
+            }),
+        )?;
+        if let Some(cli_port) = options.port {
+            port.port = cli_port;
+        }
         let ports = file_config
             .as_ref()
             .map(|config| config.ports.clone())
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, listener)| {
+                Ok((name.clone(), resolve(&format!("ports.{name}"), listener)?))
+            })
+            .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
         let main = if options.port.is_some() {
             "--port"
         } else {
             "port"
         };
-        let mut taken = BTreeMap::from([(port, main.to_owned())]);
+        let mut taken = BTreeMap::from([(port.port, main.to_owned())]);
         // Port 0 asks the OS for a free port, so several 0s never collide.
-        for (name, extra) in ports.iter().filter(|(_, extra)| **extra != 0) {
-            if let Some(first) = taken.insert(*extra, format!("ports.{name}")) {
+        for (name, extra) in ports.iter().filter(|(_, extra)| extra.port != 0) {
+            if let Some(first) = taken.insert(extra.port, format!("ports.{name}")) {
                 return Err(ConfigError::PortConflict {
-                    port: *extra,
+                    port: extra.port,
                     first,
                     second: format!("ports.{name}"),
                 });
@@ -142,6 +231,7 @@ impl ServeConfig {
             collections,
             port,
             ports,
+            tls,
             collection,
             passthrough_base_url,
             protos,
@@ -204,6 +294,8 @@ pub enum ConfigError {
         first: String,
         second: String,
     },
+    #[error("`{name}` sets `tls: true`, but no top-level `tls` cert is configured")]
+    TlsWithoutCert { name: String },
     #[error("missing required serve {name}; pass --{name} or set it in --config")]
     MissingValue { name: &'static str },
 }
@@ -245,7 +337,13 @@ startupCollection: local
             config.collections,
             base.join("nested/config/collections.yaml")
         );
-        assert_eq!(config.port, 4100);
+        assert_eq!(
+            config.port,
+            Listener {
+                port: 4100,
+                tls: false
+            }
+        );
         assert_eq!(config.collection.as_deref(), Some("local"));
         assert_eq!(config.protos, ProtoSources::default());
     }
@@ -341,7 +439,13 @@ collection: config-collection
 
         assert_eq!(config.routes, base.join("flag/routes"));
         assert_eq!(config.collections, base.join("flag/collections.yaml"));
-        assert_eq!(config.port, 4200);
+        assert_eq!(
+            config.port,
+            Listener {
+                port: 4200,
+                tls: false
+            }
+        );
         assert_eq!(config.collection.as_deref(), Some("flag-collection"));
         assert_eq!(
             config.passthrough_base_url.as_deref(),
@@ -380,7 +484,16 @@ collection: config-collection
         };
 
         let config = load("{ grpc: 50051 }", None).unwrap();
-        assert_eq!(config.ports, BTreeMap::from([("grpc".to_owned(), 50051)]));
+        assert_eq!(
+            config.ports,
+            BTreeMap::from([(
+                "grpc".to_owned(),
+                Listener {
+                    port: 50051,
+                    tls: false
+                }
+            )])
+        );
 
         assert_eq!(
             load("{ grpc: 4100 }", None).unwrap_err().to_string(),
@@ -400,6 +513,125 @@ collection: config-collection
         )
         .unwrap();
         assert!(load_raw(base).is_ok());
+    }
+
+    #[test]
+    fn tls_applies_to_every_listener_unless_it_opts_out() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        fs::write(
+            base.join("decoy.yaml"),
+            r#"
+routes: r
+collections: c.yaml
+tls: { cert: certs/dev.pem, key: certs/dev-key.pem }
+port: 8443
+ports:
+  payments: 9443
+  legacy: { port: 8080, tls: false }
+"#,
+        )
+        .unwrap();
+
+        let config = load_raw(base).unwrap();
+
+        assert_eq!(
+            config.tls,
+            Some(TlsFiles {
+                cert: base.join("certs/dev.pem"),
+                key: base.join("certs/dev-key.pem"),
+            })
+        );
+        assert_eq!(
+            config.port,
+            Listener {
+                port: 8443,
+                tls: true
+            }
+        );
+        assert_eq!(
+            config.ports,
+            BTreeMap::from([
+                (
+                    "legacy".to_owned(),
+                    Listener {
+                        port: 8080,
+                        tls: false
+                    }
+                ),
+                (
+                    "payments".to_owned(),
+                    Listener {
+                        port: 9443,
+                        tls: true
+                    }
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn main_port_object_keeps_its_tls_choice_under_a_cli_port() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        fs::write(
+            base.join("decoy.yaml"),
+            "routes: r\ncollections: c.yaml\ntls: { cert: c.pem, key: k.pem }\nport: { port: 8080, tls: false }\n",
+        )
+        .unwrap();
+
+        let config = ServeConfig::from_options(
+            ServeCliOptions {
+                config_file: Some(base.join("decoy.yaml")),
+                port: Some(4200),
+                ..ServeCliOptions::default()
+            },
+            base,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.port,
+            Listener {
+                port: 4200,
+                tls: false
+            }
+        );
+    }
+
+    #[test]
+    fn listener_tls_without_a_cert_and_unknown_listener_keys_fail() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        let load = |yaml: &str| {
+            fs::write(
+                base.join("decoy.yaml"),
+                format!("routes: r\ncollections: c.yaml\n{yaml}\n"),
+            )
+            .unwrap();
+            load_raw(base)
+        };
+
+        assert_eq!(
+            load("ports: { a: { port: 9000, tls: true } }")
+                .unwrap_err()
+                .to_string(),
+            "`ports.a` sets `tls: true`, but no top-level `tls` cert is configured"
+        );
+        assert_eq!(
+            load("port: { port: 9000, tls: false }").unwrap().port,
+            Listener {
+                port: 9000,
+                tls: false
+            }
+        );
+        assert_eq!(load("port: ~").unwrap().port.port, DEFAULT_PORT);
+        let error = load("ports: { a: { port: 9000, host: x } }")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("unknown field `host`"), "{error}");
+        let error = load("tls: { cert: c.pem }").unwrap_err().to_string();
+        assert!(error.contains("missing field `key`"), "{error}");
     }
 
     #[test]

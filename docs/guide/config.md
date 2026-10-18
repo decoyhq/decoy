@@ -22,6 +22,7 @@ decoy serve --config mocks/decoy.yaml
 | `collection`         | `--collection <id>`      | first Collection in the file        |
 | `passthroughBaseUrl` | `--passthrough-base-url` | none (see [Passthrough](routes.md)) |
 | `protos`             | none                     | none                                |
+| `tls`                | none                     | none (plain http)                   |
 
 `ports` opens extra named listeners. Each serves the same Routes, Sessions, and Control API as
 `port`, so a gRPC client and an HTTP client can use different ports but share one Session:
@@ -30,6 +31,25 @@ decoy serve --config mocks/decoy.yaml
 port: 8080
 ports: { grpc: 50051 }
 ```
+
+The keys are free names; they only label logs and errors. Every port speaks HTTP and gRPC.
+
+`tls` serves every listener over HTTPS with your cert and key (PEM). ALPN picks HTTP/2 or HTTP/1.1
+per connection, so gRPC over TLS works on the same port. A listener given as `{ port, tls: false }`
+stays plain http, so you can mix both:
+
+```yaml
+tls:
+  cert: certs/dev.pem
+  key: certs/dev-key.pem
+port: 8443 # https
+ports:
+  payments: 9443 # https
+  legacy-crm: { port: 8080, tls: false } # http
+```
+
+`port` takes the same object form. `--port` changes only the port number. Clients must trust the
+cert, e.g. `NODE_EXTRA_CA_CERTS=certs/dev.pem` for Node.
 
 `protos` loads protobuf schemas for gRPC:
 
@@ -50,5 +70,5 @@ protos:
 
 Paths in the file resolve relative to the file; flag paths resolve relative to the working
 directory. Unknown keys, unreadable files, invalid Routes or Collections, duplicate Route ids,
-a port used twice or already taken, missing proto roots, protos that don't compile, and an unknown
+a port used twice or already taken, missing proto roots, protos that don't compile, unreadable or mismatched TLS cert/key, and an unknown
 startup Collection all fail at startup with a diagnostic.

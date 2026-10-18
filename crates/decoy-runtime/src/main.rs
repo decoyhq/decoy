@@ -3,11 +3,11 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::body::{Body, to_bytes};
 use axum::extract::{OriginalUri, State};
 use axum::http::{HeaderName, HeaderValue, Request, Response, StatusCode};
 use axum::routing::any;
+use axum::{Extension, Router};
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use decoy_runtime::config::{ServeCliOptions, ServeConfig};
@@ -24,6 +24,7 @@ use decoy_runtime::http_forward::ForwardResponse;
 use decoy_runtime::protos::load_descriptor_pool;
 use decoy_runtime::schema::{HttpMethod, PassthroughTarget};
 use decoy_runtime::startup::load_catalog_from_files;
+use decoy_runtime::tls;
 use http_body::Frame;
 use http_body_util::StreamBody;
 use tokio::net::TcpListener;
@@ -107,31 +108,45 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .fallback(any(handle_request))
         .with_state(controller);
+    let tls_config = config.tls.as_ref().map(tls::server_config).transpose()?;
     // Bind every listener before serving any, so a taken port fails startup cleanly (Q1).
-    let mut listeners = vec![("port".to_owned(), bind("port", config.port).await?)];
-    for (name, port) in &config.ports {
+    let mut listeners = vec![(
+        "port".to_owned(),
+        config.port.tls,
+        bind("port", config.port.port).await?,
+    )];
+    for (name, listener) in &config.ports {
         let name = format!("ports.{name}");
-        let listener = bind(&name, *port).await?;
-        listeners.push((name, listener));
+        let bound = bind(&name, listener.port).await?;
+        listeners.push((name, listener.tls, bound));
     }
 
     let (shutdown, _) = tokio::sync::watch::channel(());
     let mut servers = tokio::task::JoinSet::new();
-    for (name, listener) in listeners {
+    for (name, secure, listener) in listeners {
         let addr = listener.local_addr()?;
+        let scheme = if secure { "https" } else { "http" };
         if name == "port" {
-            eprintln!("decoy serve listening on http://{addr}");
+            eprintln!("decoy serve listening on {scheme}://{addr}");
         } else {
-            eprintln!("decoy serve listening on http://{addr} ({name})");
+            eprintln!("decoy serve listening on {scheme}://{addr} ({name})");
         }
         let mut stop = shutdown.subscribe();
-        servers.spawn(
-            axum::serve(listener, app.clone())
-                .with_graceful_shutdown(async move {
-                    let _ = stop.changed().await;
-                })
-                .into_future(),
-        );
+        match tls_config.clone().filter(|_| secure) {
+            Some(tls_config) => {
+                let app = app.clone().layer(Extension(Secure));
+                servers.spawn(tls::serve(listener, app, tls_config, stop));
+            }
+            None => {
+                servers.spawn(
+                    axum::serve(listener, app.clone())
+                        .with_graceful_shutdown(async move {
+                            let _ = stop.changed().await;
+                        })
+                        .into_future(),
+                );
+            }
+        }
     }
     tokio::select! {
         _ = tokio::signal::ctrl_c() => {}
@@ -144,6 +159,10 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+/// Marks requests that arrived on a TLS listener.
+#[derive(Debug, Clone, Copy)]
+struct Secure;
 
 async fn bind(name: &str, port: u16) -> Result<TcpListener, String> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -164,8 +183,9 @@ async fn handle_request(
     let headers = request_headers(request.headers());
     let session = session_id(&headers);
     let request_method = request.method().clone();
+    let secure = request.extensions().get::<Secure>().is_some();
     let metadata = RequestMetadata {
-        original_base_url: original_base_url(&headers),
+        original_base_url: original_base_url(&headers, secure),
     };
     let body = match to_bytes(request.into_body(), usize::MAX).await {
         Ok(body) => body.to_vec(),
@@ -392,11 +412,12 @@ fn request_headers(headers: &axum::http::HeaderMap) -> BTreeMap<String, String> 
     joined
 }
 
-fn original_base_url(headers: &BTreeMap<String, String>) -> Option<String> {
+fn original_base_url(headers: &BTreeMap<String, String>, secure: bool) -> Option<String> {
+    let scheme = if secure { "https" } else { "http" };
     headers
         .iter()
         .find(|(key, _)| key.eq_ignore_ascii_case("host"))
-        .map(|(_, value)| format!("http://{value}"))
+        .map(|(_, value)| format!("{scheme}://{value}"))
 }
 
 fn http_method(method: &axum::http::Method) -> Option<HttpMethod> {
