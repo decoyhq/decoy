@@ -4,7 +4,7 @@ use crate::events::{CapturedBody, CapturedResponse};
 use crate::schema::Transport;
 
 impl SessionView {
-    /// Executes the call and, if anyone subscribed, emits its [`RequestEvent`].
+    /// Executes the call and, if anyone subscribed, emits its [`RequestEvent`](crate::events::RequestEvent).
     pub async fn execute_grpc(&self, request: GrpcRequest) -> GrpcResponse {
         let capture = self.events.receiver_count() > 0;
         let started = capture.then(|| {

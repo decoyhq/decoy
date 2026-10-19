@@ -7,7 +7,7 @@ use crate::events::{CapturedBody, CapturedResponse};
 use crate::schema::Transport;
 
 impl SessionView {
-    /// Executes the request and, if anyone subscribed, emits its [`RequestEvent`].
+    /// Executes the request and, if anyone subscribed, emits its [`RequestEvent`](crate::events::RequestEvent).
     pub async fn execute_http(&self, request: HttpExecutionRequest) -> HttpExecutionOutcome {
         // No subscriber (headless `serve`): skip every capture and clone.
         let started = (self.events.receiver_count() > 0).then(|| {
