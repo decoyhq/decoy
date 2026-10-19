@@ -1,5 +1,6 @@
 import { describe, expect, test } from '@rstest/core'
-import { forwardToDecoy, type InterceptedRequest, SESSION_HEADER, toMatchers } from './routing'
+import { SESSION_HEADER } from '@decoyhq/runner-core'
+import { forwardToDecoy, type InterceptedRequest, toMatchers } from './routing'
 
 function fakeRequest(url: string, headers: Record<string, string> = {}) {
   const result: { continued?: Parameters<InterceptedRequest['continue']>[0]; aborted?: string } = {}

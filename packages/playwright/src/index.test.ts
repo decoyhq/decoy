@@ -1,7 +1,7 @@
 import { expect as playwrightExpect, type TestType } from '@playwright/test'
 import { expect, test } from '@rstest/core'
 import { expectTypeOf } from 'expect-type'
-import type { DecoyRouter } from './control'
+import type { DecoyRouter } from '@decoyhq/runner-core'
 import * as decoy from './index'
 
 test('exports a Playwright `test` already extended with the Decoy fixtures', () => {

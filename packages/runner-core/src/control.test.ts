@@ -1,6 +1,6 @@
 import { createServer } from 'node:http'
 import { afterEach, describe, expect, test } from '@rstest/core'
-import { startFakeDecoy } from '../fixtures/fake-decoy-server'
+import { startFakeDecoy } from '../fixtures'
 import { createRouter } from './control'
 
 const closers: Array<() => Promise<void>> = []

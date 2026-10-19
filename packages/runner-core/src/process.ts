@@ -4,7 +4,7 @@ import { delimiter, dirname, join } from 'node:path'
 
 /**
  * `env` with every `node_modules/.bin` from `cwd` up to the root put first on PATH, as npm scripts
- * do, so `decoy` from `@decoyhq/cli` is found even when Testplane isn't started by a script.
+ * do, so `decoy` from `@decoyhq/cli` is found even when the test runner isn't started by a script.
  */
 export function withLocalBins(cwd: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const bins: string[] = []
@@ -58,6 +58,46 @@ export async function stopProcess(child: ChildProcess, graceMs = 8_000): Promise
     signalGroup(pid, 'SIGKILL')
     await within(2_000)
   }
+}
+
+/**
+ * Stops the process group led by `pid`, which is not our child (an earlier run started it), so
+ * there is no exit event: SIGTERM, then SIGKILL if it outlives `graceMs`.
+ */
+export async function stopGroup(pid: number, graceMs = 8_000): Promise<void> {
+  if (process.platform === 'win32') {
+    await new Promise((done) => {
+      spawn('taskkill', ['/pid', String(pid), '/T', '/F'])
+        .on('error', done)
+        .on('exit', done)
+    })
+    return
+  }
+  signalGroup(pid, 'SIGTERM')
+  if (!(await goneWithin(pid, graceMs))) {
+    signalGroup(pid, 'SIGKILL')
+    await goneWithin(pid, 2_000)
+  }
+}
+
+/** True while the process group led by `pid` (on Windows: the process) still exists. */
+export function isAlive(pid: number): boolean {
+  try {
+    process.kill(process.platform === 'win32' ? pid : -pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function goneWithin(pid: number, ms: number): Promise<boolean> {
+  for (const deadline = Date.now() + ms; Date.now() < deadline;) {
+    if (!isAlive(pid)) {
+      return true
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
+  }
+  return !isAlive(pid)
 }
 
 function signalGroup(pid: number, signal: NodeJS.Signals): void {

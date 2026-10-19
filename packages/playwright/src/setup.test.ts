@@ -1,15 +1,11 @@
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
-import { tmpdir } from 'node:os'
-import { join, relative, resolve } from 'node:path'
+import { FAKE_DECOY } from '@decoyhq/runner-core/testing'
 import { defineConfig, type FullConfig } from '@playwright/test'
-import { afterEach, describe, expect, test } from '@rstest/core'
+import { describe, expect, test } from '@rstest/core'
 import { expectTypeOf } from 'expect-type'
 import type { DecoyTestOptions } from './fixtures'
-import { type DecoyOptions, isHealthy, resolveOptions } from './options'
-import { type SetupConfig, setup, type Teardown } from './setup'
-
-const FAKE_DECOY = resolve(process.cwd(), 'fixtures/fake-decoy.mjs')
+import { type DecoyOptions, isHealthy } from './options'
+import { type SetupConfig, setup } from './setup'
 
 describe('config typing', () => {
   test('a typed Playwright config fits setup', () => {
@@ -44,97 +40,10 @@ async function freePort(): Promise<number> {
   return port
 }
 
-async function runningDecoy(): Promise<{ url: string; server: Server }> {
-  const server = createServer((_req, res) => {
-    res.writeHead(200).end('{"status":"ok"}')
-  })
-  const port = await listen(server)
-  return { url: `http://127.0.0.1:${port}`, server }
-}
-
-const cleanups: Array<() => Promise<unknown>> = []
-afterEach(async () => {
-  for (const cleanup of cleanups.splice(0)) {
-    await cleanup()
-  }
-})
-
-describe('resolveOptions', () => {
-  test('applies defaults matching native decoy serve', () => {
-    expect(resolveOptions({}, {})).toEqual({
-      url: 'http://127.0.0.1:8080',
-      command: 'decoy serve',
-      cwd: undefined,
-      reuseExistingServer: true,
-      timeout: 60_000,
-    })
-  })
-
-  test('requires a fresh server in CI and trims trailing slashes', () => {
-    const options = resolveOptions({ url: 'http://127.0.0.1:9000/' }, { CI: 'true' })
-    expect(options.reuseExistingServer).toBe(false)
-    expect(options.url).toBe('http://127.0.0.1:9000')
-  })
-})
-
 describe('setup', () => {
   test('does nothing when Decoy is not configured', async () => {
     const teardown = await setup(config(undefined))
     await teardown()
-  })
-
-  test('reuses a healthy Decoy without running the command', async () => {
-    const { url, server } = await runningDecoy()
-    cleanups.push(() => new Promise((done) => server.close(done)))
-
-    const teardown = await setup(config({ url, command: 'exit 1', reuseExistingServer: true }))
-    await teardown()
-
-    expect(await isHealthy(url)).toBe(true)
-  })
-
-  test('refuses to share a healthy Decoy when reuse is disabled', async () => {
-    const { url, server } = await runningDecoy()
-    cleanups.push(() => new Promise((done) => server.close(done)))
-
-    await expect(setup(config({ url, reuseExistingServer: false }))).rejects.toThrow(
-      /already serving/,
-    )
-  })
-
-  test('starts the command, waits for health, and teardown stops it', async () => {
-    const port = await freePort()
-    const url = `http://127.0.0.1:${port}`
-
-    const teardown: Teardown = await setup(
-      config({ url, command: `node ${FAKE_DECOY} ${port}`, reuseExistingServer: false }),
-    )
-    expect(await isHealthy(url)).toBe(true)
-
-    await teardown()
-    expect(await isHealthy(url)).toBe(false)
-  })
-
-  test('replaces a Decoy that a hard-killed run started instead of reusing it', async () => {
-    const port = await freePort()
-    const url = `http://127.0.0.1:${port}`
-    const options = config({
-      url,
-      command: `node ${FAKE_DECOY} ${port}`,
-      reuseExistingServer: true,
-    })
-    const servingPid = async () =>
-      ((await (await fetch(`${url}/__decoy__/health`)).json()) as { pid: number }).pid
-
-    // The first run never tears down, as when its runner is killed.
-    await setup(options)
-    const orphan = await servingPid()
-
-    const teardown = await setup(options)
-    expect(await servingPid()).not.toBe(orphan)
-
-    await teardown()
-    expect(await isHealthy(url)).toBe(false)
   })
 
   test('starts one Decoy per distinct url across projects', async () => {
@@ -171,52 +80,5 @@ describe('setup', () => {
         ],
       }),
     ).rejects.toThrow(/share the Decoy at .* but set different command/)
-  })
-
-  test.skipIf(process.platform === 'win32')(
-    'finds commands in node_modules/.bin like an npm script',
-    async () => {
-      const dir = mkdtempSync(join(tmpdir(), 'decoy-setup-'))
-      const bin = join(dir, 'node_modules', '.bin')
-      mkdirSync(bin, { recursive: true })
-      writeFileSync(join(bin, 'decoy-fake'), `#!/bin/sh\nexec node ${FAKE_DECOY} "$@"\n`)
-      chmodSync(join(bin, 'decoy-fake'), 0o755)
-      const port = await freePort()
-      const url = `http://127.0.0.1:${port}`
-
-      const teardown = await setup(
-        // Relative, like a hand-written config; resolved against process.cwd().
-        config({
-          url,
-          command: `decoy-fake ${port}`,
-          cwd: relative(process.cwd(), dir),
-          reuseExistingServer: false,
-        }),
-      )
-      expect(await isHealthy(url)).toBe(true)
-      await teardown()
-    },
-  )
-
-  test('fails clearly when the command exits before serving', async () => {
-    const port = await freePort()
-    await expect(
-      setup(config({ url: `http://127.0.0.1:${port}`, command: 'exit 3' })),
-    ).rejects.toThrow(/exited before serving \(code 3\)/)
-  })
-
-  test('fails clearly and stops the command when health never succeeds', async () => {
-    const port = await freePort()
-    const other = await freePort()
-    await expect(
-      setup(
-        config({
-          url: `http://127.0.0.1:${port}`,
-          command: `node ${FAKE_DECOY} ${other}`,
-          timeout: 500,
-        }),
-      ),
-    ).rejects.toThrow(/did not become healthy .* within 500ms/)
-    expect(await isHealthy(`http://127.0.0.1:${other}`)).toBe(false)
   })
 })

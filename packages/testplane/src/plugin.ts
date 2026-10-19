@@ -1,10 +1,9 @@
 import { randomUUID } from 'node:crypto'
+import { createRouter, type DecoyRouter, startDecoy, type Teardown } from '@decoyhq/runner-core'
 import type Testplane from 'testplane'
 import type { TestFunctionCtx } from 'testplane'
-import { createRouter, type DecoyRouter } from './control'
 import { type DecoyOptions, isHealthy, resolveOptions } from './options'
 import { type InterceptableBrowser, routeToDecoy, type SessionHolder } from './routing'
-import { startDecoy, type Teardown } from './server'
 
 /** Per-browser state: Testplane reuses one browser for many tests, one test at a time. */
 interface BrowserState {
@@ -53,7 +52,8 @@ export default function decoyPlugin(testplane: Testplane, options: DecoyOptions 
 
   let teardown: Teardown | undefined
   testplane.on(testplane.events.RUNNER_START, async () => {
-    teardown = await startDecoy(options)
+    const resolved = resolveOptions(options)
+    teardown = await startDecoy({ ...resolved, cwd: resolved.cwd ?? process.cwd() })
   })
   testplane.on(testplane.events.RUNNER_END, async () => {
     await teardown?.()

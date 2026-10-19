@@ -36,6 +36,8 @@
     "testplane": ">=8"
   },
   "devDependencies": {
+    "@decoyhq/runner-core": "workspace:*",
+    "@microsoft/api-extractor": "catalog:",
     "@types/node": "catalog:",
     "testplane": "catalog:"
   },

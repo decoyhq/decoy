@@ -21,45 +21,4 @@ export interface DecoyOptions {
   collection?: string
 }
 
-export interface ResolvedDecoyOptions {
-  url: string
-  command: string
-  cwd: string
-  reuseExistingServer: boolean
-  timeout: number
-}
-
-export const DEFAULT_URL = 'http://127.0.0.1:8080'
-export const HEALTH_PATH = '/__decoy__/health'
-
-export function resolveOptions(
-  options: DecoyOptions,
-  env: NodeJS.ProcessEnv = process.env,
-): ResolvedDecoyOptions {
-  return {
-    url: trimTrailingSlashes(options.url ?? DEFAULT_URL),
-    command: options.command ?? 'decoy serve',
-    cwd: options.cwd ?? process.cwd(),
-    reuseExistingServer: options.reuseExistingServer ?? !env.CI,
-    timeout: options.timeout ?? 60_000,
-  }
-}
-
-// A loop, not /\/+$/: that regex backtracks polynomially on long runs of '/'.
-function trimTrailingSlashes(url: string): string {
-  let end = url.length
-  while (end > 0 && url[end - 1] === '/') {
-    end--
-  }
-  return url.slice(0, end)
-}
-
-/** True when Decoy answers its liveness probe at `url`. */
-export async function isHealthy(url: string): Promise<boolean> {
-  try {
-    const response = await fetch(`${url}${HEALTH_PATH}`, { signal: AbortSignal.timeout(1_000) })
-    return response.ok
-  } catch {
-    return false
-  }
-}
+export { isHealthy, resolveServerOptions as resolveOptions } from '@decoyhq/runner-core'
