@@ -33,7 +33,8 @@ describe('stopProcess', () => {
 
       await stopProcess(child, 200)
 
-      expect(child.signalCode ?? child.exitCode).not.toBeNull()
+      // The whole group is gone, not just the shell: `node` under it ignored SIGTERM.
+      expect(() => process.kill(-(child.pid ?? 0), 0)).toThrow()
     },
   )
 

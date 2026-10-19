@@ -9,6 +9,10 @@ describe('newSessionId', () => {
     expect(newSessionId('Users > Loading a user!')).not.toBe(id)
   })
 
+  test('trims leading and trailing separators', () => {
+    expect(newSessionId('  >> Users <<  ')).toMatch(/^users-[0-9a-f-]{36}$/)
+  })
+
   test('falls back to a bare uuid for a title with no letters or digits', () => {
     expect(newSessionId('>>>')).toMatch(/^[0-9a-f-]{36}$/)
   })

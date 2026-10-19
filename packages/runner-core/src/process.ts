@@ -53,10 +53,12 @@ export async function stopProcess(child: ChildProcess, graceMs = 8_000): Promise
     return
   }
   // The shell runs in its own process group (detached), so this also reaches `decoy` under it.
+  // Wait for the whole group, not just the shell: a shell that dies on SIGTERM would otherwise
+  // leave a child that ignores it running.
   signalGroup(pid, 'SIGTERM')
-  if (!(await within(graceMs))) {
+  if (!(await groupGone(pid, graceMs))) {
     signalGroup(pid, 'SIGKILL')
-    await within(2_000)
+    await groupGone(pid, 2_000)
   }
 }
 
@@ -105,5 +107,21 @@ function signalGroup(pid: number, signal: NodeJS.Signals): void {
     process.kill(-pid, signal)
   } catch {
     // ESRCH: the group is already gone.
+  }
+}
+
+/** Polls until no process is left in group `pid`; false if some still are after `ms`. */
+async function groupGone(pid: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms
+  for (;;) {
+    try {
+      process.kill(-pid, 0)
+    } catch {
+      return true
+    }
+    if (Date.now() >= deadline) {
+      return false
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50))
   }
 }

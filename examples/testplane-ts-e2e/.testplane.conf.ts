@@ -30,7 +30,9 @@ export default {
   },
   // Testplane's `webServer`: the static app on port 4173.
   devServer: {
-    command: 'node app/serve.mjs',
+    // `exec`: Testplane stops the dev server by signalling its shell only; without `exec` the
+    // `node` under that shell would outlive the run and keep port 4173.
+    command: 'exec node app/serve.mjs',
     reuseExisting: !process.env.CI,
     readinessProbe: { url: 'http://127.0.0.1:4173' },
   },
