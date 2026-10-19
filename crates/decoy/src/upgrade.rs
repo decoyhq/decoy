@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::process::Command;
 
-// The release copies default to that release's version; DECOY_VERSION overrides it.
+// The Latest release's copies install that release's version, unless DECOY_VERSION overrides it.
 const INSTALL_SH: &str = "https://github.com/decoyhq/decoy/releases/latest/download/install.sh";
 const INSTALL_PS1: &str = "https://github.com/decoyhq/decoy/releases/latest/download/install.ps1";
 
@@ -15,8 +15,8 @@ pub fn refusal(exe: &Path) -> Option<&'static str> {
         .then_some("decoy was installed with npm; upgrade with `npm i -D @decoyhq/cli@latest`")
 }
 
-/// Upgrade the running binary to `version` (`None` = newest release).
-pub fn run(version: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+/// Upgrade the running binary to the release marked Latest.
+pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let exe = std::env::current_exe()?.canonicalize()?;
     if let Some(reason) = refusal(&exe) {
         return Err(reason.into());
@@ -43,9 +43,8 @@ pub fn run(version: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
         command
     };
     command.env("DECOY_INSTALL_DIR", dir);
-    if let Some(version) = version {
-        command.env("DECOY_VERSION", version);
-    }
+    // An inherited DECOY_VERSION would pin the script; upgrade always means Latest.
+    command.env_remove("DECOY_VERSION");
 
     if !command.status()?.success() {
         return Err("upgrade failed".into());
