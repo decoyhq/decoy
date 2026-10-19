@@ -2,6 +2,7 @@ use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use futures_util::StreamExt as _;
 use jmespath::Rcvar;
 use thiserror::Error;
 
@@ -15,7 +16,7 @@ use crate::expression::{set_field, to_rcvar};
 use crate::grpc::{GrpcRequest, GrpcResponse};
 use crate::http::{BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig};
 use crate::http_forward::{
-    ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough, target_url,
+    ForwardRequest, ForwardResponse, ForwardingError, UpstreamBody, forward_passthrough, target_url,
 };
 use crate::matching::{ConditionFailure, MatchInput, case_matches, case_mismatch};
 use crate::request::RequestEnvelope;
@@ -599,6 +600,7 @@ impl From<crate::http::HttpResponsePlan> for ForwardResponse {
             status: response.status,
             headers: response.headers.into_iter().collect(),
             body,
+            stream: None,
         }
     }
 }
@@ -758,27 +760,49 @@ impl SessionView {
                 started.is_some(),
             )
             .await;
-        if let (Some((started, body)), Some(explained)) = (started, explained) {
-            let failed;
-            let response = match &outcome {
-                HttpExecutionOutcome::Response { response, .. } => response,
-                HttpExecutionOutcome::ForwardingError { source, .. } => {
-                    failed = source.response();
-                    &failed
-                }
-            };
-            self.emit(
-                Transport::Http,
-                started,
-                body,
-                explained,
-                CapturedResponse {
+        let (Some((started, body)), Some(explained)) = (started, explained) else {
+            return outcome;
+        };
+        let mut outcome = outcome;
+        let response = match &mut outcome {
+            HttpExecutionOutcome::Response { response, .. } => response,
+            HttpExecutionOutcome::ForwardingError { source, .. } => {
+                let response = source.response();
+                let captured = CapturedResponse {
                     status: response.status,
-                    headers: response.headers.clone(),
+                    headers: response.headers,
                     body: CapturedBody::raw(&response.body),
-                },
-            );
-        }
+                };
+                self.emit(Transport::Http, started, body, explained, captured);
+                return outcome;
+            }
+        };
+        let mut captured = CapturedResponse {
+            status: response.status,
+            headers: response.headers.clone(),
+            body: CapturedBody::raw(&response.body),
+        };
+        let Some(stream) = response.stream.take() else {
+            self.emit(Transport::Http, started, body, explained, captured);
+            return outcome;
+        };
+        // A streamed body is captured as it passes, and the event goes out once it ends or the
+        // client hangs up.
+        let view = self.clone();
+        let mut capture = crate::events::StreamCapture::new(move |streamed| {
+            captured.body = streamed;
+            view.emit(Transport::Http, started, body, explained, captured);
+        });
+        response.stream = Some(UpstreamBody(
+            stream
+                .0
+                .inspect(move |chunk| {
+                    if let Ok(chunk) = chunk {
+                        capture.push(chunk);
+                    }
+                })
+                .boxed(),
+        ));
         outcome
     }
 
@@ -1847,7 +1871,11 @@ cases:
         );
         assert_eq!(response.status, 202);
         assert_eq!(response.header("x-upstream"), Some("yes"));
-        assert_eq!(response.body, &b"accepted"[..]);
+        let body: Vec<bytes::Bytes> =
+            futures_util::TryStreamExt::try_collect(response.stream.unwrap().0)
+                .await
+                .unwrap();
+        assert_eq!(body.concat(), b"accepted");
 
         let request = received.recv().unwrap();
         handle.join().unwrap();

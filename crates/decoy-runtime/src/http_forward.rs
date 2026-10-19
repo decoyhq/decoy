@@ -3,6 +3,8 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use bytes::Bytes;
+use futures_util::StreamExt as _;
+use futures_util::stream::BoxStream;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use thiserror::Error;
 
@@ -18,12 +20,23 @@ pub struct ForwardRequest {
     pub body: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct ForwardResponse {
     pub status: u16,
     /// In order, repeats kept (e.g. several `set-cookie`).
     pub headers: Vec<(String, String)>,
     pub body: Bytes,
+    /// A passthrough's upstream body, streamed as it arrives (SSE, long-poll, downloads); `body`
+    /// is empty then.
+    pub stream: Option<UpstreamBody>,
+}
+
+pub struct UpstreamBody(pub BoxStream<'static, Result<Bytes, reqwest::Error>>);
+
+impl std::fmt::Debug for UpstreamBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("UpstreamBody")
+    }
 }
 
 impl ForwardResponse {
@@ -86,6 +99,7 @@ impl ForwardingError {
             body: serde_json::to_vec(&body)
                 .expect("JSON response serializes")
                 .into(),
+            stream: None,
         }
     }
 }
@@ -106,7 +120,9 @@ impl From<reqwest::Error> for ForwardingError {
 pub const VIA_HEADER: &str = "x-decoy-via";
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Longest upstream silence, before the headers or between body chunks. No deadline on the whole
+/// response, so SSE and downloads run while bytes keep coming. 60s, as nginx's `proxy_read_timeout`.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 fn instance_id() -> &'static str {
     static ID: OnceLock<String> = OnceLock::new();
@@ -129,7 +145,7 @@ fn client() -> Result<&'static reqwest::Client, ForwardingError> {
             reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .connect_timeout(CONNECT_TIMEOUT)
-                .timeout(REQUEST_TIMEOUT)
+                .read_timeout(IDLE_TIMEOUT)
                 .tls_certs_merge(bundled)
                 .build()
                 .map_err(|error| error.to_string())
@@ -204,12 +220,12 @@ pub async fn forward_passthrough(
 
     let status = response.status().as_u16();
     let headers = forwardable_response_headers(response.headers());
-    let body = response.bytes().await?;
 
     Ok(ForwardResponse {
         status,
         headers,
-        body,
+        body: Bytes::new(),
+        stream: Some(UpstreamBody(response.bytes_stream().boxed())),
     })
 }
 
@@ -451,7 +467,10 @@ mod tests {
             .map(|(_, value)| value.as_str())
             .collect();
         assert_eq!(cookies, ["a=1", "b=2"]);
-        assert_eq!(response.body, &br#"{"ok":true}"#[..]);
+        let body: Vec<Bytes> = futures_util::TryStreamExt::try_collect(response.stream.unwrap().0)
+            .await
+            .unwrap();
+        assert_eq!(body.concat(), br#"{"ok":true}"#);
 
         let request = received.recv().unwrap();
         handle.join().unwrap();

@@ -188,6 +188,58 @@ async fn a_passthrough_emits_the_upstream_url_and_status() {
     assert_eq!(event.response.body.bytes, b"real");
 }
 
+/// SSE, long-poll and downloads need the upstream body streamed, not buffered (#267).
+#[tokio::test]
+async fn a_passthrough_streams_the_upstream_body_and_emits_it_once_it_ends() {
+    use futures_util::StreamExt as _;
+
+    let (release, released) = tokio::sync::oneshot::channel::<()>();
+    let released = Arc::new(std::sync::Mutex::new(Some(released)));
+    let upstream = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_addr = upstream.local_addr().unwrap();
+    let app = axum::Router::new().fallback(move || {
+        let released = released.lock().unwrap().take().unwrap();
+        async move {
+            let first = futures_util::stream::once(async { Ok::<_, std::io::Error>("first") });
+            let rest = futures_util::stream::once(async move {
+                let _ = released.await;
+                Ok("rest")
+            });
+            axum::body::Body::from_stream(first.chain(rest))
+        }
+    });
+    tokio::spawn(async move { axum::serve(upstream, app).await });
+    let route = format!(
+        "id: real\ntransport: http\nmatch: {{ method: GET, path: /real }}\ncases:\n  any:\n    behaviors:\n      upstream: {{ kind: passthrough, target: {{ baseUrl: 'http://{upstream_addr}' }} }}\n"
+    );
+    let running = start(&[&route], "- id: default\n  routes: [real:any:upstream]\n").await;
+    let mut events = running.server.subscribe();
+
+    let within = std::time::Duration::from_secs(5);
+    let mut response = tokio::time::timeout(within, reqwest::get(format!("{}/real", running.base)))
+        .await
+        .expect("headers arrive before the upstream body ends")
+        .unwrap();
+    let first = tokio::time::timeout(within, response.chunk())
+        .await
+        .expect("first chunk streams");
+    assert_eq!(first.unwrap().as_deref(), Some(&b"first"[..]));
+
+    release.send(()).unwrap();
+    let mut rest = Vec::new();
+    while let Some(chunk) = response.chunk().await.unwrap() {
+        rest.extend_from_slice(&chunk);
+    }
+    assert_eq!(rest, b"rest");
+
+    let event = tokio::time::timeout(within, next_request(&mut events))
+        .await
+        .unwrap();
+    assert_eq!(event.response.status, 200);
+    assert_eq!(event.response.body.bytes, b"firstrest");
+    assert_eq!(event.response.body.size, 9);
+}
+
 #[tokio::test]
 async fn a_failed_passthrough_emits_the_error_response_decoy_answered() {
     let closed = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

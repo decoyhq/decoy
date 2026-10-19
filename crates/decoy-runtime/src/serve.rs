@@ -575,7 +575,10 @@ fn control_response(control: ControlApiResponse) -> Response<Body> {
 }
 
 fn response_from_forward_response(plan: ForwardResponse) -> Response<Body> {
-    let mut response = Response::new(Body::from(plan.body));
+    let mut response = Response::new(match plan.stream {
+        Some(stream) => Body::from_stream(stream.0),
+        None => Body::from(plan.body),
+    });
     *response.status_mut() = StatusCode::from_u16(plan.status).unwrap_or(StatusCode::OK);
 
     for (name, value) in plan.headers {
