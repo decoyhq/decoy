@@ -1,0 +1,16 @@
+{
+  "name": "@decoyhq-examples/testplane-ts-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node app/serve.mjs",
+    "test:e2e": "testplane",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@decoyhq/testplane": "workspace:*",
+    "@types/node": "catalog:",
+    "testplane": "catalog:"
+  }
+}

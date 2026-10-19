@@ -15,6 +15,7 @@ coverage/
 .rstest/
 test-results/
 playwright-report/
+.testplane/
 
 # --- env & secrets ---
 .env

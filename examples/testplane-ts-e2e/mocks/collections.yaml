@@ -1,0 +1,10 @@
+- id: happy-path
+  routes:
+    - users-by-id:any:generated # fallback: listed first, checked last
+    - users-by-id:user-1:ada
+    - profile:any:upstream
+
+- id: no-users
+  from: happy-path
+  routes:
+    - users-by-id:user-1:missing

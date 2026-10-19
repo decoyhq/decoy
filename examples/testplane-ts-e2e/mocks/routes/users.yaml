@@ -1,0 +1,31 @@
+id: users-by-id
+transport: http
+match:
+  method: GET
+  path: /api/users/{id}
+cases:
+  any:
+    behaviors:
+      generated: # templated from the request: works for every id
+        body:
+          id: '${ pathParams.id }'
+          name: 'User ${ pathParams.id }'
+  user-1:
+    match:
+      pathParams:
+        id: '1'
+    behaviors:
+      ada:
+        status: 200
+        body:
+          id: '1'
+          name: Ada Lovelace
+      grace:
+        status: 200
+        body:
+          id: '1'
+          name: Grace Hopper
+      missing:
+        status: 404
+        body:
+          error: user not found
