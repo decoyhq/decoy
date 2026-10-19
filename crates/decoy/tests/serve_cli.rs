@@ -270,6 +270,57 @@ cases:
     upstream.join().unwrap();
 }
 
+/// Scratch and distroless images ship no CA store; passthrough must still work there.
+#[tokio::test]
+async fn passthrough_works_without_a_system_ca_store() {
+    let (upstream_url, captured, upstream) = spawn_upstream();
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "users.yml",
+        r#"
+id: users
+transport: http
+match:
+  method: GET
+  path: /users
+cases:
+  any:
+    behaviors:
+      forward:
+        kind: passthrough
+"#,
+    );
+    fixture.write_collections(
+        r#"
+- id: default
+  routes:
+    - users:any:forward
+"#,
+    );
+    let empty = TempDir::new().unwrap();
+    let port = unused_port();
+    let _server = Server(
+        Command::new(env!("CARGO_BIN_EXE_decoy"))
+            .args(fixture.args(port, &["--passthrough-base-url", &upstream_url]))
+            .current_dir(fixture.temp.path())
+            .env("SSL_CERT_FILE", empty.path().join("none.pem"))
+            .env("SSL_CERT_DIR", empty.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    wait_for_server(port).await;
+
+    let response = reqwest::get(format!("http://127.0.0.1:{port}/users"))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 202);
+    captured.recv().unwrap();
+    upstream.join().unwrap();
+}
+
 #[tokio::test]
 async fn serve_reads_native_config_file_and_uses_first_collection_by_default() {
     let fixture = Fixture::new();

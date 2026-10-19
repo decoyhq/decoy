@@ -63,6 +63,8 @@ pub enum ForwardingError {
     Timeout(#[source] reqwest::Error),
     #[error("passthrough request failed: {0}")]
     Request(#[source] reqwest::Error),
+    #[error("passthrough client could not be built: {0}")]
+    Client(String),
 }
 
 impl ForwardingError {
@@ -109,19 +111,28 @@ fn instance_id() -> &'static str {
 }
 
 /// One pooled client for every passthrough, with timeouts so a hung upstream can't hang Decoy.
-fn client() -> &'static reqwest::Client {
-    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        // reqwest brings no crypto provider and panics without one; use `ring`, as the TLS
-        // listeners do. Err means one is installed already.
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(CONNECT_TIMEOUT)
-            .timeout(REQUEST_TIMEOUT)
-            .build()
-            .expect("the passthrough client config is valid")
-    })
+fn client() -> Result<&'static reqwest::Client, ForwardingError> {
+    static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
+    CLIENT
+        .get_or_init(|| {
+            // reqwest brings no crypto provider and panics without one; use `ring`, as the TLS
+            // listeners do. Err means one is installed already.
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            // The OS store can be empty (scratch, distroless), and the platform verifier refuses
+            // to build then; bundled Mozilla roots keep it non-empty.
+            let bundled = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+                .iter()
+                .filter_map(|cert| reqwest::Certificate::from_der(cert).ok());
+            reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .connect_timeout(CONNECT_TIMEOUT)
+                .timeout(REQUEST_TIMEOUT)
+                .tls_certs_merge(bundled)
+                .build()
+                .map_err(|error| error.to_string())
+        })
+        .as_ref()
+        .map_err(|error| ForwardingError::Client(error.clone()))
 }
 
 const ALWAYS_STRIPPED_REQUEST_HEADERS: &[&str] = &[
@@ -181,7 +192,7 @@ pub async fn forward_passthrough(
             }
         })?,
     );
-    let response = client()
+    let response = client()?
         .request(reqwest_method(&request.method), url)
         .headers(headers)
         .body(request.body)
@@ -318,7 +329,7 @@ mod tests {
     /// Tests get reqwest's own fallback provider from dev-dependencies; the binary doesn't.
     #[test]
     fn the_client_installs_ring_for_the_binary() {
-        client();
+        client().unwrap();
         let provider = rustls::crypto::CryptoProvider::get_default().expect("a provider");
         assert_eq!(
             provider.cipher_suites,
