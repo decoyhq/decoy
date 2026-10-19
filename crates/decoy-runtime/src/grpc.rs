@@ -681,6 +681,7 @@ cases:
                         field: "message.id".to_owned(),
                         expected: json!("a-1"),
                         actual: json!("a-2"),
+                        error: None,
                     })
                 ),
                 candidate("get:any:ghost", Rejection::MissingBehavior),

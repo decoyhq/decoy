@@ -203,5 +203,6 @@ active route entry, checked bottom-to-top, did not match:
 
 `reason` is one of `method`, `path` (with the Route's `expected` value), `condition` (the first
 failed Case condition: `field`, `expected`, and the request's `actual`, `null` when absent; `field`
-is `match` for a whole-Case predicate), `decode` (a gRPC request the Route's Pipeline could not
+is `match` for a whole-Case predicate, and a predicate that failed to evaluate adds its `error`),
+`decode` (a gRPC request the Route's Pipeline could not
 decode, with the `error`), `transport`, `missingRoute`, `missingCase`, or `missingBehavior`. Decoy never forwards a request unless a Passthrough Behavior is selected.

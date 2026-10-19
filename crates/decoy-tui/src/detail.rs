@@ -2,6 +2,7 @@
 //! reads well. Color only marks headings and verdicts, and `NO_COLOR` drops it.
 
 use decoy_runtime::events::{CapturedBody, Match, Outcome, RequestEvent};
+use decoy_runtime::matching::ConditionFailure;
 use decoy_runtime::schema::Transport;
 use decoy_runtime::{Candidate, Rejection};
 use ratatui::style::{Color, Modifier, Style};
@@ -200,6 +201,11 @@ fn rejection(rejection: &Rejection, record: &RequestEvent) -> String {
             let path = record.url.split('?').next().unwrap_or_default();
             format!("path: expected {expected}, got {path}")
         }
+        Rejection::Condition(ConditionFailure {
+            field,
+            error: Some(error),
+            ..
+        }) => format!("{field}: predicate failed: {error}"),
         Rejection::Condition(failure) => format!(
             "{}: expected {}, got {}",
             failure.field,
@@ -365,6 +371,21 @@ mod snapshots {
     }
 
     #[test]
+    fn a_predicate_that_errored_shows_the_error() {
+        let failure = ConditionFailure {
+            field: "body".into(),
+            expected: json!("${ abs(body.name) }"),
+            actual: json!(false),
+            error: Some("invalid type for abs".into()),
+        };
+        let record = base(1, Outcome::Hit(matched("users-by-id:user-123:success")));
+        assert_eq!(
+            rejection(&Rejection::Condition(failure), &record),
+            "body: predicate failed: invalid type for abs"
+        );
+    }
+
+    #[test]
     fn a_hit_with_skipped_candidates() {
         let mut hit = matched("users-by-id:user-123:success");
         hit.skipped = vec![
@@ -374,6 +395,7 @@ mod snapshots {
                     field: "headers.x-role".into(),
                     expected: json!("admin"),
                     actual: json!(null),
+                    error: None,
                 }),
             ),
             candidate(
@@ -413,6 +435,7 @@ mod snapshots {
                             field: "pathParams.id".into(),
                             expected: json!("1"),
                             actual: json!("999"),
+                            error: None,
                         }),
                     ),
                     candidate("flags:any:on", Rejection::MissingCase),

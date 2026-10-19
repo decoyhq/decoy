@@ -70,11 +70,14 @@ pub fn validate_case_match(transport: &Transport, case_match: &Value) -> Result<
 
 /// The first Case condition a request fails: the field (`pathParams.id`, `body.user.name`, or
 /// `match` for a whole-Case predicate), the pattern, and what the request had (`null` if absent).
+/// A predicate that failed to evaluate also carries its `error`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ConditionFailure {
     pub field: String,
     pub expected: Value,
     pub actual: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 impl ConditionFailure {
@@ -83,16 +86,25 @@ impl ConditionFailure {
             field: field.into(),
             expected: expected.clone(),
             actual,
+            error: None,
         }
     }
+}
 
-    fn predicate(field: &str, predicate: &str) -> Self {
-        Self::new(
-            field,
-            &Value::String(predicate.to_owned()),
-            Value::Bool(false),
-        )
-    }
+/// `None` when the predicate holds; else a failure whose `actual` is `false`, plus the error if
+/// evaluating it failed.
+fn predicate_failure<F: Failure>(field: &str, predicate: &str, request: &Rcvar) -> Option<F> {
+    let held = predicate_holds(predicate, request);
+    (held != Ok(true)).then(|| {
+        F::build(|| ConditionFailure {
+            error: held.err(),
+            ..ConditionFailure::new(
+                field,
+                &Value::String(predicate.to_owned()),
+                Value::Bool(false),
+            )
+        })
+    })
 }
 
 /// What a failed condition reports: the whole [`ConditionFailure`], or `()` when only the verdict
@@ -142,8 +154,7 @@ fn case_failure<F: Failure>(case_match: &Value, input: &MatchInput) -> Option<F>
     let fields = match case_match {
         Value::Null => return None,
         Value::String(predicate) => {
-            return (!predicate_holds(predicate, request()))
-                .then(|| F::build(|| ConditionFailure::predicate("match", predicate)));
+            return predicate_failure("match", predicate, request());
         }
         Value::Object(fields) => fields,
         other => {
@@ -156,8 +167,9 @@ fn case_failure<F: Failure>(case_match: &Value, input: &MatchInput) -> Option<F>
     fields
         .iter()
         .find_map(|(field, pattern)| match (field.as_str(), pattern) {
-            (_, Value::String(text)) if is_predicate(text) => (!predicate_holds(text, request()))
-                .then(|| F::build(|| ConditionFailure::predicate(field, text))),
+            (_, Value::String(text)) if is_predicate(text) => {
+                predicate_failure(field, text, request())
+            }
             ("pathParams", _) => strings_mismatch(field, pattern, |key| {
                 input.path_params.get(key).into_iter().collect()
             }),
@@ -206,8 +218,7 @@ fn grpc_case_failure<F: Failure>(
     let fields = match case_match {
         Value::Null => return None,
         Value::String(predicate) => {
-            return (!predicate_holds(predicate, request()))
-                .then(|| F::build(|| ConditionFailure::predicate("match", predicate)));
+            return predicate_failure("match", predicate, request());
         }
         Value::Object(fields) => fields,
         other => {
@@ -219,8 +230,9 @@ fn grpc_case_failure<F: Failure>(
     fields
         .iter()
         .find_map(|(field, pattern)| match (field.as_str(), pattern) {
-            (_, Value::String(text)) if is_predicate(text) => (!predicate_holds(text, request()))
-                .then(|| F::build(|| ConditionFailure::predicate(field, text))),
+            (_, Value::String(text)) if is_predicate(text) => {
+                predicate_failure(field, text, request())
+            }
             ("message", _) => value_mismatch(field, pattern, &envelope["message"]),
             ("metadata", _) => strings_mismatch(field, pattern, |key| {
                 envelope["metadata"]
@@ -605,11 +617,49 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn a_predicate_that_errors_reports_the_error() {
+        let request = envelope("/", &[], json!({ "name": "ann" }));
+        let failure = mismatch(json!({ "body": "${ abs(body.name) }" }), &request).unwrap();
+        assert_eq!(failure.field, "body");
+        assert_eq!(failure.actual, json!(false));
+        assert!(
+            failure
+                .error
+                .as_ref()
+                .is_some_and(|error| error.contains("abs")),
+            "{failure:?}"
+        );
+        // A predicate that is merely false has no error.
+        let failure = mismatch(json!("${ body.name == 'bob' }"), &request).unwrap();
+        assert_eq!(failure.error, None);
+    }
+
+    #[test]
+    fn a_grpc_predicate_that_errors_reports_the_error() {
+        let envelope = json!({ "message": { "name": "ann" } });
+        for (case_match, field) in [
+            (json!("${ abs(message.name) }"), "match"),
+            (json!({ "message": "${ abs(message.name) }" }), "message"),
+        ] {
+            let failure = grpc_mismatch(&case_match, &envelope).unwrap();
+            assert_eq!(failure.field, field);
+            assert!(
+                failure
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.contains("abs")),
+                "{failure:?}"
+            );
+        }
+    }
+
     fn failure(field: &str, expected: Value, actual: Value) -> Option<ConditionFailure> {
         Some(ConditionFailure {
             field: field.to_owned(),
             expected,
             actual,
+            error: None,
         })
     }
 
