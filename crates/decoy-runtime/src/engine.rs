@@ -209,7 +209,7 @@ impl Catalog {
         request: &HttpRequest,
         metadata: &RequestMetadata,
     ) -> ResolveOutcome<'_> {
-        self.resolve_http_with_overrides(collection_id, request, &BTreeMap::new(), metadata, true)
+        self.resolve_http_with_overrides(collection_id, request, &[], metadata, true)
     }
 
     pub async fn execute_http(
@@ -217,7 +217,7 @@ impl Catalog {
         collection_id: &str,
         request: HttpExecutionRequest,
     ) -> HttpExecutionOutcome {
-        self.execute_http_with_overrides(collection_id, &BTreeMap::new(), request, false)
+        self.execute_http_with_overrides(collection_id, &[], request, false)
             .await
             .0
     }
@@ -226,7 +226,7 @@ impl Catalog {
     async fn execute_http_with_overrides(
         &self,
         collection_id: &str,
-        overrides: &BTreeMap<(String, String), String>,
+        overrides: &[Activation],
         request: HttpExecutionRequest,
         explain: bool,
     ) -> (HttpExecutionOutcome, Option<Outcome>) {
@@ -330,26 +330,34 @@ impl Catalog {
         }
     }
 
-    /// The Collection's activations with Session overrides appended; the last one wins.
-    pub(crate) fn activations(
-        &self,
+    /// The Collection's activations with Session overrides applied: an override replaces its
+    /// `route+case` entry in place, or is appended after the Collection in call order.
+    pub(crate) fn activations<'a>(
+        &'a self,
         collection_id: &str,
-        overrides: &BTreeMap<(String, String), String>,
-    ) -> Result<Vec<Activation>, String> {
-        let mut activations = match self.resolved.get(collection_id) {
-            Some(resolved) => resolved.clone()?,
-            None => self
-                .collections
-                .resolve(collection_id)
-                .map_err(|error| error.to_string())?,
-        };
-        for ((route, case), behavior) in overrides {
-            activations.push(Activation {
-                route: route.clone(),
-                case: case.clone(),
-                behavior: behavior.clone(),
-            });
-        }
+        overrides: &'a [Activation],
+    ) -> Result<Vec<&'a Activation>, String> {
+        let collection = self
+            .resolved
+            .get(collection_id)
+            .ok_or_else(|| {
+                CollectionError::UnknownCollection {
+                    id: collection_id.to_owned(),
+                }
+                .to_string()
+            })?
+            .as_ref()
+            .map_err(Clone::clone)?;
+        let same = |a: &Activation, b: &Activation| a.route == b.route && a.case == b.case;
+        let mut activations: Vec<&Activation> = collection
+            .iter()
+            .map(|entry| overrides.iter().find(|o| same(o, entry)).unwrap_or(entry))
+            .collect();
+        activations.extend(
+            overrides
+                .iter()
+                .filter(|o| !collection.iter().any(|entry| same(o, entry))),
+        );
         Ok(activations)
     }
 
@@ -365,7 +373,7 @@ impl Catalog {
         &self,
         collection_id: &str,
         request: &HttpRequest,
-        overrides: &BTreeMap<(String, String), String>,
+        overrides: &[Activation],
         metadata: &RequestMetadata,
         explain: bool,
     ) -> ResolveOutcome<'_> {
@@ -384,7 +392,7 @@ impl Catalog {
         // The envelope's JSON, built once per request; only `pathParams` changes per candidate.
         let mut json = OnceCell::<serde_json::Value>::new();
 
-        for activation in activations.iter().rev() {
+        for activation in activations.iter().copied().rev() {
             let Some(route) = self.routes.get(&activation.route) else {
                 reject(&mut candidates, activation, || Rejection::MissingRoute);
                 continue;
@@ -571,7 +579,8 @@ pub struct Selection {
     collection: String,
     /// `useCollection` picked `collection`; otherwise it follows the default across reloads.
     collection_picked: bool,
-    route_overrides: BTreeMap<(String, String), String>,
+    /// In call order; see [`Catalog::activations`] for how they apply.
+    route_overrides: Vec<Activation>,
 }
 
 impl Selection {
@@ -579,7 +588,7 @@ impl Selection {
         Self {
             collection: collection.into(),
             collection_picked: false,
-            route_overrides: BTreeMap::new(),
+            route_overrides: Vec::new(),
         }
     }
 
@@ -589,13 +598,24 @@ impl Selection {
             overrides: self
                 .route_overrides
                 .iter()
-                .map(|((route, case_id), behavior)| RouteOverrideSnapshot {
-                    route: route.clone(),
-                    case_id: case_id.clone(),
-                    behavior: behavior.clone(),
+                .map(|activation| RouteOverrideSnapshot {
+                    route: activation.route.clone(),
+                    case_id: activation.case.clone(),
+                    behavior: activation.behavior.clone(),
                 })
                 .collect(),
         }
+    }
+
+    /// A repeated `route+case` moves to the end: among appended overrides the last call wins.
+    fn use_route(&mut self, route: String, case: String, behavior: String) {
+        self.route_overrides
+            .retain(|o| o.route != route || o.case != case);
+        self.route_overrides.push(Activation {
+            route,
+            case,
+            behavior,
+        });
     }
 }
 
@@ -843,8 +863,7 @@ impl Controller {
         behavior: impl Into<String>,
     ) {
         self.selection_mut(session)
-            .route_overrides
-            .insert((route.into(), case.into()), behavior.into());
+            .use_route(route.into(), case.into(), behavior.into());
         self.emit(session, SessionChange::UseRoute);
     }
 
@@ -860,9 +879,7 @@ impl Controller {
         let behavior = behavior.into();
         self.catalog
             .validate_behavior_address(&route, &case, &behavior)?;
-        self.selection_mut(session)
-            .route_overrides
-            .insert((route, case), behavior);
+        self.selection_mut(session).use_route(route, case, behavior);
         self.emit(session, SessionChange::UseRoute);
         Ok(self.selection(session).snapshot())
     }
@@ -910,7 +927,7 @@ impl Controller {
                 selection.collection.clone_from(&self.default_collection);
                 selection.collection_picked = false;
             }
-            selection.route_overrides.retain(|(route, case), behavior| {
+            selection.route_overrides.retain(|Activation { route, case, behavior }| {
                 let exists = self
                     .catalog
                     .validate_behavior_address(route, case, behavior)
@@ -1342,6 +1359,77 @@ cases:
             panic!("expected reset match")
         };
         assert_eq!(activation.address(), "get-user:user-123:missing");
+    }
+
+    fn matched_address(controller: &Controller, path: &str) -> String {
+        let request = HttpRequest {
+            method: HttpMethod::Get,
+            path: path.to_owned(),
+            ..Default::default()
+        };
+        let ResolveOutcome::Matched { activation, .. } = controller.resolve_http("s", &request)
+        else {
+            panic!("expected a match for {path}")
+        };
+        activation.address()
+    }
+
+    #[test]
+    fn use_route_replaces_the_collection_entry_in_place() {
+        let mut controller = Controller::new(
+            catalog(
+                r#"
+- id: local
+  routes:
+    - get-user:any:fallback
+    - get-user:user-123:missing
+"#,
+            ),
+            "local",
+        );
+
+        controller.use_route("s", "get-user", "any", "fallback");
+
+        // The more specific entry below it in the Collection still wins.
+        assert_eq!(
+            matched_address(&controller, "/users/123"),
+            "get-user:user-123:missing"
+        );
+        assert_eq!(
+            matched_address(&controller, "/users/7"),
+            "get-user:any:fallback"
+        );
+    }
+
+    #[test]
+    fn use_route_outside_the_collection_appends_and_the_last_call_wins() {
+        let mut controller = Controller::new(
+            catalog(
+                r#"
+- id: local
+  routes: []
+"#,
+            ),
+            "local",
+        );
+
+        controller.use_route("s", "get-user", "user-123", "success");
+        assert_eq!(
+            matched_address(&controller, "/users/123"),
+            "get-user:user-123:success"
+        );
+
+        controller.use_route("s", "get-user", "any", "fallback");
+        assert_eq!(
+            matched_address(&controller, "/users/123"),
+            "get-user:any:fallback"
+        );
+
+        controller.use_route("s", "get-user", "user-123", "missing");
+        assert_eq!(
+            matched_address(&controller, "/users/123"),
+            "get-user:user-123:missing"
+        );
     }
 
     #[test]
