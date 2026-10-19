@@ -10,7 +10,7 @@ expression: "styled(&render(&mut app, 120, 16))"
 [DIM]session e2e-worker-1 collection errors (control api)[/]
 warning: predicate `${ abs(path) }` failed, treated as false (logged once)
 › hello
-[DIM]commands start with /[/]
+[DIM]commands start with /; free text is reserved (try /help)[/]
 
 
 

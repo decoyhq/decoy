@@ -1,0 +1,18 @@
+---
+source: crates/decoy-tui/src/ui.rs
+expression: "popup(\"/route users-by-id:\")"
+---
+
+
+
+
+
+
+╭──────────────╮
+│ any     case │
+│ user-1  case │
+╰──────────────╯
+╭──────────────────────────────────────────────────────────────────────────────╮
+│› /route users-by-id:                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ http://127.0.0.1:4010 · session default · collection happy-path · 0 overrides

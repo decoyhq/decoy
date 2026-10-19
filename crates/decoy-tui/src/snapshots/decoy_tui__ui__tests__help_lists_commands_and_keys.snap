@@ -1,0 +1,24 @@
+---
+source: crates/decoy-tui/src/ui.rs
+expression: "after(&[\"/help\"], |_| {})"
+---
+› /help
+  /collection <id>                 switch the active Session's Collection
+  /route <route:case:behavior>     pick the Behavior for a Route's Case in the active Session
+  /reset                           clear the active Session's overrides, keep its Collection
+  /session <id>                    switch the Session commands target
+  /sessions                        list the Sessions that hold a Selection
+  /status                          show the active Session's Collection and overrides
+  /help                            list commands and keys
+  /quit                            stop the server and exit
+  keys: ↑↓ pick · Tab/→ complete · Enter run · Esc close · ↑↓ history (no popup)
+        PgUp/PgDn/Home/End or wheel scroll · drag select + copy · Shift+drag terminal selection
+        Ctrl+U clear line · Ctrl+C clear, twice quits · Ctrl+D quit on empty input
+
+
+
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│› type / for commands                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ http://127.0.0.1:4010 · session default · collection happy-path · 0 overrides

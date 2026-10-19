@@ -6,7 +6,10 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
 
-use crate::app::App;
+use crate::app::{App, overrides};
+
+/// Completion rows shown at once; the popup scrolls past that.
+const POPUP_ROWS: usize = 8;
 
 impl App {
     pub fn draw(&mut self, frame: &mut Frame) {
@@ -20,6 +23,62 @@ impl App {
         self.draw_log(frame, log_area);
         self.draw_input(frame, input_area);
         self.draw_status(frame, status_area);
+        self.draw_popup(frame, log_area);
+    }
+
+    /// The completion popup, over the bottom of the log just above the input.
+    fn draw_popup(&self, frame: &mut Frame, area: Rect) {
+        let items = self.completions();
+        if items.is_empty() || area.height < 3 {
+            return;
+        }
+        let theme = self.theme();
+        let label_width = items
+            .iter()
+            .map(|item| item.label.chars().count())
+            .max()
+            .unwrap_or(0);
+        let about_width = items
+            .iter()
+            .map(|item| item.about.chars().count())
+            .max()
+            .unwrap_or(0);
+        let height = (items.len().min(POPUP_ROWS) as u16 + 2).min(area.height);
+        let width = ((label_width + about_width + 6) as u16).min(area.width);
+        let rect = Rect::new(area.x, area.bottom() - height, width, height);
+        let rows = usize::from(height - 2);
+        let selected = self.popup.min(items.len() - 1);
+        let first = selected.saturating_sub(rows - 1);
+        let lines: Vec<Line> = items
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(rows)
+            .map(|(index, item)| {
+                let style = if index == selected {
+                    theme.style(
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::REVERSED),
+                    )
+                } else {
+                    Style::default()
+                };
+                Line::from(vec![
+                    Span::styled(format!(" {:<label_width$} ", item.label), style),
+                    Span::styled(format!(" {}", item.about), theme.dim()),
+                ])
+            })
+            .collect();
+        frame.render_widget(Clear, rect);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::bordered()
+                    .border_type(BorderType::Rounded)
+                    .border_style(theme.dim()),
+            ),
+            rect,
+        );
     }
 
     fn draw_log(&mut self, frame: &mut Frame, area: Rect) {
@@ -142,14 +201,13 @@ impl App {
             Some(hint) => Line::styled(format!(" {hint}"), theme.fg(Color::Yellow)),
             None => {
                 let selection = self.selection();
-                let overrides = selection.overrides.len();
                 Line::styled(
                     format!(
-                        " {} · session {} · collection {} · {overrides} override{}",
+                        " {} · session {} · collection {} · {}",
                         self.listen,
                         self.session,
                         selection.collection,
-                        if overrides == 1 { "" } else { "s" },
+                        overrides(selection.overrides.len()),
                     ),
                     theme.dim(),
                 )
@@ -395,5 +453,73 @@ mod tests {
         app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 5, 0));
         let effects = app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 5, 0));
         assert_eq!((effects, app.selected), (vec![], None));
+    }
+
+    fn popup(input: &str) -> String {
+        let mut app = app();
+        typed(&mut app, input);
+        plain(&render(&mut app, 80, 14))
+    }
+
+    #[test]
+    fn popup_lists_commands() {
+        insta::assert_snapshot!(popup("/"));
+    }
+
+    #[test]
+    fn popup_at_the_route_segment() {
+        insta::assert_snapshot!(popup("/route "));
+    }
+
+    #[test]
+    fn popup_at_the_case_segment() {
+        insta::assert_snapshot!(popup("/route users-by-id:"));
+    }
+
+    #[test]
+    fn popup_at_the_behavior_segment() {
+        let mut app = app();
+        typed(&mut app, "/route users-by-id:user-1:");
+        app.handle_event(key(KeyCode::Down, KeyModifiers::NONE));
+        insta::assert_snapshot!(styled(&render(&mut app, 80, 10)));
+    }
+
+    fn after(commands: &[&str], setup: impl FnOnce(&mut App)) -> String {
+        let mut app = app();
+        setup(&mut app);
+        for command in commands {
+            typed(&mut app, command);
+            app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+            app.handle_event(key(KeyCode::Enter, KeyModifiers::NONE));
+        }
+        plain(&render(&mut app, 100, 20))
+    }
+
+    #[test]
+    fn status_lists_the_collection_and_every_override() {
+        insta::assert_snapshot!(after(&["/status"], |app| {
+            app.handle_event(session_event(
+                "default",
+                SessionChange::UseRoute,
+                &["users-by-id:user-1:missing", "orders:any:ok"],
+            ));
+        }));
+    }
+
+    #[test]
+    fn sessions_lists_who_holds_a_selection() {
+        insta::assert_snapshot!(after(&["/session fresh", "/sessions"], |app| {
+            app.handle_event(session_event("default", SessionChange::UseCollection, &[]));
+            app.handle_event(session_event(
+                "e2e-1",
+                SessionChange::UseRoute,
+                &["orders:any:ok"],
+            ));
+        }));
+    }
+
+    #[test]
+    fn help_lists_commands_and_keys() {
+        insta::assert_snapshot!(after(&["/help"], |_| {}));
     }
 }

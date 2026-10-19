@@ -1,0 +1,24 @@
+---
+source: crates/decoy-tui/src/ui.rs
+expression: "after(&[\"/status\"], |app|\n{\n    app.handle_event(session_event(\"default\", SessionChange::UseRoute,\n    &[\"users-by-id:user-1:missing\", \"orders:any:ok\"],));\n})"
+---
+session default route users-by-id:user-1:missing, orders:any:ok (control api)
+› /status
+session default · collection errors · 2 overrides
+  users-by-id:user-1:missing
+  orders:any:ok
+
+
+
+
+
+
+
+
+
+
+
+╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
+│› type / for commands                                                                             │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────╯
+ http://127.0.0.1:4010 · session default · collection errors · 2 overrides

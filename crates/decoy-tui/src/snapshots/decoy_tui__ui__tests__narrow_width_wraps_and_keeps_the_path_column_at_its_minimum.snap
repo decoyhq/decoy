@@ -15,7 +15,7 @@ session e2e-worker-1 collection errors (control api)
 warning: predicate `${ abs(path) }` failed, treated as false
 (logged once)
 › hello
-commands start with /
+commands start with /; free text is reserved (try /help)
 
 
 ╭──────────────────────────────────────────────────────────╮
