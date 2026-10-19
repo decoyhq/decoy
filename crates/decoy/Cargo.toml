@@ -23,3 +23,7 @@ serde_json = "1"
 tempfile = "3"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "time"] }
 tonic = { version = "0.14", features = ["tls-ring"] }
+
+# musl's malloc is slow under multithreaded load (#267).
+[target.'cfg(all(target_os = "linux", target_env = "musl"))'.dependencies]
+mimalloc = "0.1"

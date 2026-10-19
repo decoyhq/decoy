@@ -39,6 +39,8 @@ x64) through an optional dependency. No install scripts run. Pre-releases are on
 
 Every release has archives for the same platforms plus `SHA256SUMS`:
 `decoy-<version>-<target>.tar.gz` (`.zip` on Windows). Unpack and put `decoy` on your `PATH`.
+Linux binaries are built against musl and use mimalloc, which is much faster under concurrent load
+than musl's allocator but holds more memory (about 30 MB idle).
 
 ## From source
 
