@@ -291,6 +291,7 @@ impl Server {
         let response = self
             .http()
             .post(format!("{}/__decoy__/control/{verb}", self.base_url()))
+            .header("content-type", "application/json")
             .header("x-mock-session", session)
             .body(body.to_owned())
             .send()

@@ -26,7 +26,7 @@ impl ControlApiRequest {
         Self {
             method: "POST".to_owned(),
             path: path.into(),
-            headers: BTreeMap::new(),
+            headers: BTreeMap::from([("content-type".to_owned(), "application/json".to_owned())]),
             body: Some(body.into()),
         }
     }
@@ -77,6 +77,8 @@ struct ControlErrorBody {
 pub enum ControlApiError {
     #[error("control endpoint `{method} {path}` is not defined")]
     UnknownEndpoint { method: String, path: String },
+    #[error("control requests must be `content-type: application/json`")]
+    NotJson,
     #[error("failed to parse control JSON body: {0}")]
     InvalidJson(#[from] serde_json::Error),
     #[error(transparent)]
@@ -87,6 +89,7 @@ impl ControlApiError {
     fn status(&self) -> u16 {
         match self {
             Self::UnknownEndpoint { .. } => 404,
+            Self::NotJson => 415,
             Self::InvalidJson(_) | Self::Control(_) => 400,
         }
     }
@@ -102,6 +105,8 @@ impl ControlApiError {
 /// - `POST /__decoy__/control/reset` with an empty or absent body
 /// - `POST /__decoy__/control/endSession` with an empty or absent body: frees the Session
 ///
+/// Every `POST`, bodiless ones too, needs `content-type: application/json`: a cross-site page can
+/// send `text/plain` or no type without a CORS preflight, so this keeps it from changing Selection.
 /// The target Session is selected with `x-mock-session`; absent or empty headers use the default
 /// Session. Successful responses return the resulting Selection snapshot.
 pub fn handle_control_request(
@@ -135,6 +140,13 @@ fn dispatch(
 ) -> Result<SelectionSnapshot, ControlApiError> {
     let session = session_id(&request.headers);
     let route = route_key(&request.method, &request.path);
+    if route
+        .as_deref()
+        .is_some_and(|route| route.starts_with("POST "))
+        && !is_json(&request.headers)
+    {
+        return Err(ControlApiError::NotJson);
+    }
 
     match route.as_deref() {
         Some("POST /control/useCollection") => {
@@ -187,6 +199,15 @@ fn parse_optional_body_json(body: Option<String>) -> Result<(), serde_json::Erro
     }
 
     serde_json::from_str::<serde_json::Value>(&body).map(|_| ())
+}
+
+/// `application/json`, with or without parameters such as `; charset=utf-8`.
+fn is_json(headers: &BTreeMap<String, String>) -> bool {
+    headers
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case("content-type"))
+        .and_then(|(_, value)| value.split(';').next())
+        .is_some_and(|media| media.trim().eq_ignore_ascii_case("application/json"))
 }
 
 pub fn session_id(headers: &BTreeMap<String, String>) -> String {
@@ -338,6 +359,43 @@ cases:
             selected(&controller, DEFAULT_SESSION),
             "get-user:user-123:missing"
         );
+    }
+
+    #[test]
+    fn native_control_api_takes_only_json_posts() {
+        let mut controller = controller();
+        let post = |content_type: Option<&str>| {
+            let mut request = ControlApiRequest::post(
+                "/__decoy__/control/useCollection",
+                r#"{"collection":"not-found"}"#,
+            );
+            request.headers.remove("content-type");
+            if let Some(content_type) = content_type {
+                request
+                    .headers
+                    .insert("content-type".to_owned(), content_type.to_owned());
+            }
+            request
+        };
+
+        // A cross-site form or `fetch` can send these without a CORS preflight.
+        for content_type in [Some("text/plain"), None] {
+            let response = handle_control_request(&mut controller, post(content_type));
+            assert_eq!(response.status, 415, "{content_type:?}");
+            assert_eq!(
+                selected(&controller, DEFAULT_SESSION),
+                "get-user:user-123:success"
+            );
+        }
+        let mut reset = ControlApiRequest::post("/__decoy__/control/reset", "");
+        reset.headers.clear();
+        assert_eq!(handle_control_request(&mut controller, reset).status, 415);
+
+        let response = handle_control_request(
+            &mut controller,
+            post(Some("Application/JSON; charset=utf-8")),
+        );
+        assert_eq!(response.status, 200, "{}", response.body);
     }
 
     #[test]

@@ -13,7 +13,7 @@ use crate::control_api::{
 };
 use crate::engine::{Catalog, Controller, HttpExecutionOutcome, HttpExecutionRequest};
 use crate::grpc::{GrpcRequest, GrpcResponse, RESOURCE_EXHAUSTED, UNIMPLEMENTED};
-use crate::http::{HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig};
+use crate::http::{RequestMetadata, ResponsePlan, RuntimeConfig};
 use crate::http_forward::ForwardResponse;
 use crate::protos::load_descriptor_pool;
 use crate::schema::{HttpMethod, PassthroughTarget};
@@ -466,7 +466,12 @@ async fn respond(
     }
 
     let Some(method) = http_method(&request_method) else {
-        return response_from_plan(ResponsePlan::fail_closed_miss("unsupported http method"));
+        let ResponsePlan::Response(miss) =
+            ResponsePlan::fail_closed_miss("unsupported http method")
+        else {
+            unreachable!("fail-closed miss is a response")
+        };
+        return response_from_forward_response(miss.into());
     };
     let view = controller.read().await.session_view(&session);
     let outcome = view
@@ -506,11 +511,16 @@ fn grpc_response(response: GrpcResponse) -> Response<Body> {
         trailers.insert("grpc-message", value);
     }
     for (name, value) in response.metadata {
-        if let (Ok(name), Ok(value)) = (
+        match (
             HeaderName::from_bytes(name.as_bytes()),
             HeaderValue::from_str(&value),
         ) {
-            trailers.insert(name, value);
+            (Ok(name), Ok(value)) => {
+                trailers.insert(name, value);
+            }
+            _ => crate::events::warn(format!(
+                "dropped response metadata `{name}`: invalid name or value"
+            )),
         }
     }
     let mut frames = Vec::new();
@@ -562,15 +572,6 @@ fn control_response(control: ControlApiResponse) -> Response<Body> {
     response
 }
 
-fn response_from_plan(plan: ResponsePlan) -> Response<Body> {
-    match plan {
-        ResponsePlan::Response(response) => http_response(response),
-        ResponsePlan::Passthrough(_) => response_from_plan(ResponsePlan::fail_closed_miss(
-            "passthrough behavior is not implemented by native serve yet",
-        )),
-    }
-}
-
 fn response_from_forward_response(plan: ForwardResponse) -> Response<Body> {
     let mut response = Response::new(Body::from(plan.body));
     *response.status_mut() = StatusCode::from_u16(plan.status).unwrap_or(StatusCode::OK);
@@ -601,31 +602,6 @@ fn json_response(status: StatusCode, value: serde_json::Value) -> Response<Body>
         axum::http::header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),
     );
-    response
-}
-
-fn http_response(plan: HttpResponsePlan) -> Response<Body> {
-    let body = match plan.body {
-        Some(body) => Body::from(body.into_bytes()),
-        None => Body::empty(),
-    };
-    let mut response = Response::new(body);
-    *response.status_mut() = StatusCode::from_u16(plan.status).unwrap_or(StatusCode::OK);
-
-    for (name, value) in plan.headers {
-        match (
-            HeaderName::from_bytes(name.as_bytes()),
-            HeaderValue::from_str(&value),
-        ) {
-            (Ok(name), Ok(value)) => {
-                response.headers_mut().insert(name, value);
-            }
-            _ => crate::events::warn(format!(
-                "dropped response header `{name}`: invalid name or value"
-            )),
-        }
-    }
-
     response
 }
 

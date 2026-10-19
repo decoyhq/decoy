@@ -628,6 +628,7 @@ cases:
         .post(format!(
             "http://127.0.0.1:{extra}/__decoy__/control/useCollection"
         ))
+        .header("content-type", "application/json")
         .header("x-mock-session", "s")
         .body(r#"{"collection":"alt"}"#)
         .send()
@@ -803,6 +804,7 @@ async fn end_session_forgets_the_sessions_selection() {
     let control = |verb: &'static str, body: &'static str| {
         client
             .post(format!("http://127.0.0.1:{port}/__decoy__/control/{verb}"))
+            .header("content-type", "application/json")
             .header("x-mock-session", "s")
             .body(body)
             .send()
@@ -1200,6 +1202,7 @@ impl ControlServer {
         let mut request = self
             .client
             .post(format!("http://127.0.0.1:{}{path}", self.port))
+            .header("content-type", "application/json")
             .body(body.to_owned());
         if let Some(session) = session {
             request = request.header("x-mock-session", session);
@@ -1307,6 +1310,24 @@ async fn serve_control_rejects_malformed_reset_json_without_mutating_selection()
     assert_eq!(status, 400);
     assert!(body.contains("failed to parse control JSON body"), "{body}");
     assert_eq!(server.get_user(None).await, 500);
+}
+
+#[tokio::test]
+async fn serve_control_rejects_cross_site_simple_posts() {
+    let server = ControlServer::start().await;
+    let response = server
+        .client
+        .post(format!(
+            "http://127.0.0.1:{}/__decoy__/control/useCollection",
+            server.port
+        ))
+        .header("content-type", "text/plain")
+        .body(r#"{"collection":"not-found"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 415);
+    assert_eq!(server.get_user(None).await, 200);
 }
 
 #[tokio::test]

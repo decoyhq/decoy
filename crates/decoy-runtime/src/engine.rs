@@ -99,6 +99,10 @@ pub enum Rejection {
         expected: String,
     },
     Condition(ConditionFailure),
+    /// The request did not decode with the Route's Pipeline.
+    Decode {
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -184,6 +188,7 @@ impl Catalog {
     }
 
     /// Resolves with the full explanation; serving uses `execute_http`, which skips it on hits.
+    #[cfg(test)]
     pub fn resolve_http(&self, collection_id: &str, request: &HttpRequest) -> ResolveOutcome<'_> {
         self.resolve_http_with_metadata(collection_id, request, &RequestMetadata::default())
     }
@@ -235,6 +240,7 @@ impl Catalog {
             })
     }
 
+    #[cfg(test)]
     pub fn resolve_http_with_metadata(
         &self,
         collection_id: &str,
@@ -868,6 +874,7 @@ impl Controller {
         self.events.clone()
     }
 
+    #[cfg(test)]
     pub fn use_collection(&mut self, session: &str, collection: impl Into<String>) {
         let selection = self.selection_mut(session);
         selection.collection = collection.into();
@@ -998,6 +1005,7 @@ impl Controller {
         self.selection(session).snapshot()
     }
 
+    #[cfg(test)]
     pub fn resolve_http(&self, session: &str, request: &HttpRequest) -> ResolveOutcome<'_> {
         let selection = self.selection(session);
         self.catalog.resolve_http_with_overrides(

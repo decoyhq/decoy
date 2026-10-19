@@ -17,6 +17,8 @@ Liveness: `GET /__decoy__/health` returns `200 {"status":"ok"}` while the runtim
 
 Callers identify the Session to mutate with the canonical `x-mock-session` header. Missing or blank values target the default Session.
 
+Every control `POST`, bodiless `reset` and `endSession` included, needs `content-type: application/json` (parameters such as `; charset=utf-8` are fine) and otherwise gets HTTP `415`. A cross-site page can send `text/plain` or no content type without a CORS preflight; requiring JSON forces a preflight, which fails because Decoy sends no CORS headers, so the page can't change Selection.
+
 Successful responses return HTTP `200` with the resulting Selection snapshot as JSON. Invalid JSON, unknown Collections, and unknown Behavior addresses return HTTP `400` with `{ "error": "<clear message>" }`. Unknown control paths return HTTP `404` with the same error envelope.
 
 ## Rationale

@@ -60,9 +60,9 @@ cases:
 Switch Scenarios at runtime through the Control API, per Session (`x-mock-session` header):
 
 ```sh
-curl -X POST localhost:8080/__decoy__/control/useCollection -d '{"collection":"user-missing"}'
+curl -X POST localhost:8080/__decoy__/control/useCollection -H 'content-type: application/json' -d '{"collection":"user-missing"}'
 curl -i localhost:8080/users/123   # 404
-curl -X POST localhost:8080/__decoy__/control/useCollection -d '{"collection":"happy-path"}'
+curl -X POST localhost:8080/__decoy__/control/useCollection -H 'content-type: application/json' -d '{"collection":"happy-path"}'
 ```
 
 Verbs: `useCollection`, `useRoute` (override one Behavior), `reset` (drop overrides), `endSession`

@@ -206,6 +206,7 @@ fn rejection(rejection: &Rejection, record: &RequestEvent) -> String {
             compact(&failure.expected),
             compact(&failure.actual)
         ),
+        Rejection::Decode { error } => format!("request did not decode: {error}"),
     }
 }
 

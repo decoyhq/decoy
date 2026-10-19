@@ -328,6 +328,7 @@ async fn a_grpc_miss_emits_its_status_message_as_a_header() {
 async fn control(running: &Running, verb: &str, body: &str, session: &str) {
     let response = reqwest::Client::new()
         .post(format!("{}/__decoy__/control/{verb}", running.base))
+        .header("content-type", "application/json")
         .header("x-mock-session", session)
         .body(body.to_owned())
         .send()
