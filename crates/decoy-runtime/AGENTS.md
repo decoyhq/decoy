@@ -12,6 +12,7 @@ The layout below is the target; code still in flat files moves there in behaviou
 | outbound adapter | `http/forward.rs`                                                                  | passthrough to a real upstream                        |
 | inbound adapter  | `server/`, `control_api.rs`                                                        | axum ingress, lifecycle, reload, Control API dispatch |
 | load and model   | `schema`, `config`, `startup`, `collections`, `matching`, `expression`, `template` | decoy.yaml, Route files, Cases, JMESPath              |
+| shared (flat)    | `events`, `request`, `protos`, `tls`, `watch`                                      | event capture, request envelope, protos, TLS, watch   |
 
 ## Rules
 
@@ -24,6 +25,7 @@ The layout below is the target; code still in flat files moves there in behaviou
 - Errors: one `thiserror` enum per module where the error crosses a layer or is matched on.
   Load-time validation reasons may stay `String`. No `anyhow` in this crate.
 - `Display` text of errors reaches miss bodies and the Control API `{error}` envelope. Changing it is
-  a behaviour change; `tests/serve_cli.rs`, `tests/events.rs`, `tests/grpc_cli.rs` are the guard.
+  a behaviour change; `crates/decoy/tests/serve_cli.rs`, `crates/decoy/tests/grpc_cli.rs` and
+  `crates/decoy-runtime/tests/events.rs` are the guard.
 - Keep public paths re-exported from `lib.rs` stable; `decoy` and `decoy-tui` use them.
 - Move code in its own PR: `git mv` first, no logic edits, no test assertion changes.

@@ -9,9 +9,9 @@ Accepted. The move to this layout lands as a series of behaviour-preserving PRs 
 ## Context
 
 `decoy-runtime` grew file by file. `engine.rs` mixes pure resolution, I/O (delays, passthrough),
-wire conversion, Session state, and event capture. `grpc.rs` and `serve.rs` have the same mix. The
-core imports constants from the Control API, and adding WebSocket and SSE (#218) would make every
-file bigger still.
+wire conversion, per-Session Selection, and event capture. `grpc.rs` and `serve.rs` have the same
+mix. The core imports constants from the Control API, and adding WebSocket and SSE (#218) would make
+every file bigger still.
 
 ## Decision
 
@@ -24,7 +24,7 @@ file bigger still.
     `http/forward.rs` is the outbound passthrough adapter.
   - `server/` (axum ingress, lifecycle, reload) and `control_api.rs`: inbound adapters.
   - Loading and model (`schema`, `config`, `startup`, `collections`, `matching`, `expression`,
-    `template`) stay flat.
+    `template`) stay flat, as do the shared `events`, `request`, `protos`, `tls` and `watch`.
 - **Dependency rule.** `engine/` never imports `server`, `control_api`, transport folders' I/O, axum,
   hyper, or reqwest. Transport folders never import the Controller. Adapters depend inward only.
 - **Typed errors where an error crosses a layer or drives a decision**, via `thiserror`, one enum
