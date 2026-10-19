@@ -14,15 +14,27 @@ export interface DecoyRouter {
   endSession(): Promise<void>
 }
 
-/** A Router bound to one Session of the Decoy runtime at `url`. Errors reject at the call site. */
-export function createRouter(url: string, sessionId: string): DecoyRouter {
-  const control = async (verb: string, body?: object, signal?: AbortSignal): Promise<void> => {
-    const response = await fetch(`${url}/__decoy__/control/${verb}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', [SESSION_HEADER]: sessionId },
-      body: body === undefined ? undefined : JSON.stringify(body),
-      signal,
-    })
+/**
+ * A Router bound to one Session of the Decoy runtime at `url`. Errors reject at the call site; a
+ * call Decoy does not answer within `timeoutMs` rejects too.
+ */
+export function createRouter(url: string, sessionId: string, timeoutMs = 10_000): DecoyRouter {
+  const control = async (
+    verb: string,
+    body?: object,
+    signal = AbortSignal.timeout(timeoutMs),
+  ): Promise<void> => {
+    let response: Response
+    try {
+      response = await fetch(`${url}/__decoy__/control/${verb}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', [SESSION_HEADER]: sessionId },
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal,
+      })
+    } catch (error) {
+      throw new Error(`Decoy ${verb} at ${url} failed: ${String(error)}`, { cause: error })
+    }
     if (!response.ok) {
       throw new Error(`Decoy ${verb} failed (${response.status}): ${await errorMessage(response)}`)
     }

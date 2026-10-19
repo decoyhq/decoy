@@ -12,7 +12,7 @@ export interface DecoyResponse {
 
 export type DecoyFetch = (
   url: string,
-  init: { method: string; headers: Record<string, string>; data?: Buffer; maxRedirects: number },
+  init: { method: string; headers: Record<string, string>; data?: Buffer },
 ) => Promise<DecoyResponse>
 
 export interface RoutableRoute extends Pick<Route, 'fulfill' | 'abort'> {
@@ -24,8 +24,40 @@ export interface RoutableContext {
   route(url: string | RegExp, handler: (route: Route) => Promise<void>): Promise<unknown>
 }
 
-/** Headers the fetch to Decoy must compute itself rather than copy from the browser request. */
-const HOP_HEADERS = new Set(['host', 'content-length', 'connection'])
+/**
+ * Headers the fetch to Decoy must compute itself rather than copy from the browser request; Node's
+ * `fetch` rejects the hop-by-hop ones.
+ */
+const HOP_HEADERS = new Set([
+  'host',
+  'content-length',
+  'connection',
+  'keep-alive',
+  'transfer-encoding',
+  'upgrade',
+  'expect',
+])
+
+/**
+ * Forwards with Node's `fetch`, which keeps no cookie jar: a Set-Cookie from Decoy reaches only the
+ * browser (for the original origin), and a request without cookies reaches Decoy without cookies.
+ * `context.request` would share the browser context's jar, keyed by Decoy's host.
+ */
+export const fetchWithoutCookies: DecoyFetch = async (url, { method, headers, data }) => {
+  const response = await fetch(url, { method, headers, body: data, redirect: 'manual' })
+  const body = Buffer.from(await response.arrayBuffer())
+  const responseHeaders = Object.fromEntries(response.headers)
+  const cookies = response.headers.getSetCookie()
+  if (cookies.length > 0) {
+    // Playwright's `fulfill` splits `set-cookie` on newlines, as `APIResponse.headers()` joins it.
+    responseHeaders['set-cookie'] = cookies.join('\n')
+  }
+  return {
+    status: () => response.status,
+    headers: () => responseHeaders,
+    body: () => Promise.resolve(body),
+  }
+}
 
 /** Install browser-context routing that sends every `urls` pattern to Decoy at `decoyUrl`. */
 export async function routeToDecoy(
@@ -68,7 +100,6 @@ export async function forwardToDecoy(
       method: request.method(),
       headers,
       data: request.postDataBuffer() ?? undefined,
-      maxRedirects: 0,
     })
   } catch {
     await route.abort('connectionrefused')

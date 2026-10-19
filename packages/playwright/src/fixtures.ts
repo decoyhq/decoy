@@ -9,7 +9,7 @@ import type {
 } from '@playwright/test'
 import { createRouter, type DecoyRouter } from './control'
 import { type DecoyOptions, isHealthy, resolveOptions } from './options'
-import { routeToDecoy } from './routing'
+import { fetchWithoutCookies, routeToDecoy } from './routing'
 
 /** Option fixtures, for typing config: `defineConfig<DecoyTestOptions>({ use: { decoyOptions } })`. */
 export interface DecoyTestOptions {
@@ -47,13 +47,7 @@ export function createDecoyFixtures(): Fixtures<
       if (decoyOptions?.urls !== undefined) {
         const { url } = resolveOptions(decoyOptions)
         const router = await decoySession(decoyOptions, testInfo)
-        await routeToDecoy(
-          context,
-          (target, init) => context.request.fetch(target, init),
-          url,
-          decoyOptions.urls,
-          router.sessionId,
-        )
+        await routeToDecoy(context, fetchWithoutCookies, url, decoyOptions.urls, router.sessionId)
       }
       await use(context)
       await endDecoySession(testInfo)
