@@ -9,8 +9,8 @@ expression: "popup(\"/\")"
 │ /session     switch the Session commands target                         │
 │ /sessions    list the Sessions that hold a Selection                    │
 │ /status      show the active Session's Collection and overrides         │
+│ /show        open one request in the detail panel                       │
 │ /help        list commands and keys                                     │
-│ /quit        stop the server and exit                                   │
 ╰─────────────────────────────────────────────────────────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │› /                                                                           │

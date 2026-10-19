@@ -1,0 +1,37 @@
+---
+source: crates/decoy-tui/src/detail.rs
+expression: text(&record)
+---
+Request
+  transport   http
+  method      GET
+  url         /users/999
+  session     default
+  headers
+    (none)
+  body
+    (empty)
+
+Match
+  MISS        no active route case matched request
+  collection  happy-path
+  candidates (evaluation order)
+    ✗ orders:create:ok
+        method: expected POST, got GET
+    ✗ users-by-id:user-1:ada
+        pathParams.id: expected "1", got "999"
+    ✗ flags:any:on
+        case not in the route
+
+Response
+  status      501
+  headers
+    (none)
+  body
+    {
+      "error": "mock miss"
+    }
+
+Timing
+  at          12:01:03
+  duration    4ms

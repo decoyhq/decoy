@@ -7,6 +7,6 @@ expression: "plain(&render(&mut app(), 80, 8))"
 
 
 ╭──────────────────────────────────────────────────────────────────────────────╮
-│› type / for commands                                                         │
+│› type / for commands · Ctrl+O recent requests                                │
 ╰──────────────────────────────────────────────────────────────────────────────╯
  http://127.0.0.1:4010 · session default · collection happy-path · 0 overrides

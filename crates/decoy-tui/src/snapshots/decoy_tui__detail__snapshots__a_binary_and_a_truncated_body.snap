@@ -1,0 +1,30 @@
+---
+source: crates/decoy-tui/src/detail.rs
+expression: "short.join(\"\\n\")"
+---
+Request
+  transport   http
+  method      PUT
+  url         /upload
+  session     default
+  headers
+    (none)
+  body
+    <binary, 4 bytes>
+
+Match
+  hit         upload:any:ok
+  candidates (evaluation order)
+    ✓ upload:any:ok
+  passed      (none)
+
+Response
+  status      200
+  headers
+    (none)
+  body
+    …truncated 20 bytes
+
+Timing
+  at          12:01:03
+  duration    1.5ms

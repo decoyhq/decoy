@@ -7,9 +7,14 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
 
 use crate::app::{App, overrides};
+use crate::log::{Entry, RequestLine};
 
 /// Completion rows shown at once; the popup scrolls past that.
 const POPUP_ROWS: usize = 8;
+/// Request rows the picker shows at once.
+const PICKER_ROWS: usize = 12;
+/// The narrowest terminal that fits the detail panel beside the log.
+const DETAIL_BESIDE: u16 = 120;
 
 impl App {
     pub fn draw(&mut self, frame: &mut Frame) {
@@ -19,11 +24,102 @@ impl App {
             Constraint::Length(1),
         ])
         .areas(frame.area());
+        let main = log_area;
+        // The detail panel sits beside the log on wide terminals and over it on narrow ones.
+        let (log_area, detail_area) = match self.detail {
+            Some(_) if main.width >= DETAIL_BESIDE => {
+                let [log, detail] =
+                    Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
+                        .areas(main);
+                (log, Some(detail))
+            }
+            Some(_) => (main, Some(main)),
+            None => (main, None),
+        };
         self.log_area = log_area;
+        self.detail_area = detail_area;
         self.draw_log(frame, log_area);
+        if let Some(area) = detail_area {
+            self.draw_detail(frame, area);
+        }
         self.draw_input(frame, input_area);
         self.draw_status(frame, status_area);
-        self.draw_popup(frame, log_area);
+        match self.picker {
+            Some(row) => self.draw_picker(frame, main, row),
+            None => self.draw_popup(frame, main),
+        }
+    }
+
+    fn draw_detail(&mut self, frame: &mut Frame, area: Rect) {
+        let theme = self.theme();
+        let Some(detail) = self.detail.as_ref() else {
+            return;
+        };
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(theme.dim())
+            .title(Line::styled(
+                detail.title.clone(),
+                Style::default().add_modifier(Modifier::BOLD),
+            ))
+            .title_bottom(Line::styled(
+                " Esc close · PgUp/PgDn or wheel scroll ",
+                theme.dim(),
+            ));
+        let paragraph = Paragraph::new(detail.lines.clone()).wrap(Wrap { trim: false });
+        let last_page = (paragraph.line_count(area.width.saturating_sub(2)) as u16)
+            .saturating_sub(area.height.saturating_sub(2));
+        let scroll = detail.scroll.min(last_page);
+        frame.render_widget(Clear, area);
+        frame.render_widget(paragraph.block(block).scroll((scroll, 0)), area);
+        if let Some(detail) = self.detail.as_mut() {
+            detail.scroll = scroll;
+        }
+    }
+
+    /// Recent requests over the bottom of the log, the newest last, just above the input.
+    fn draw_picker(&self, frame: &mut Frame, area: Rect, row: usize) {
+        let theme = self.theme();
+        let height = (self.records.len().min(PICKER_ROWS) as u16 + 2).min(area.height);
+        if height < 3 {
+            return;
+        }
+        let rect = Rect::new(area.x, area.bottom() - height, area.width, height);
+        let rows = usize::from(height - 2);
+        // Rows counted from the newest; show a window that contains the highlighted one.
+        let first = row.saturating_sub(rows - 1);
+        let columns = self.log.columns(rect.width.saturating_sub(2));
+        let mut lines: Vec<Line> = self
+            .records
+            .iter()
+            .rev()
+            .enumerate()
+            .skip(first)
+            .take(rows)
+            .map(|(index, record)| {
+                let line = theme.line(&Entry::Request(RequestLine::from(&**record)), columns);
+                if index == row {
+                    line.patch_style(Style::default().add_modifier(Modifier::REVERSED))
+                } else {
+                    line
+                }
+            })
+            .collect();
+        lines.reverse();
+        frame.render_widget(Clear, rect);
+        frame.render_widget(
+            Paragraph::new(lines).block(
+                Block::bordered()
+                    .border_type(BorderType::Rounded)
+                    .border_style(theme.fg(Color::Cyan))
+                    .title(format!(" recent requests ({}) ", self.records.len()))
+                    .title_bottom(Line::styled(
+                        " ↑↓ move · Enter details · Esc close ",
+                        theme.dim(),
+                    )),
+            ),
+            rect,
+        );
     }
 
     /// The completion popup, over the bottom of the log just above the input.
@@ -184,7 +280,7 @@ impl App {
             ),
         );
         let text = if self.input.is_empty() {
-            Span::styled("type / for commands", theme.dim())
+            Span::styled("type / for commands · Ctrl+O recent requests", theme.dim())
         } else {
             Span::raw(self.input.clone())
         };
@@ -521,5 +617,173 @@ mod tests {
     #[test]
     fn help_lists_commands_and_keys() {
         insta::assert_snapshot!(after(&["/help"], |_| {}));
+    }
+
+    /// The id of the request the detail panel shows.
+    fn open_id(app: &App) -> Option<u64> {
+        let title = &app.detail.as_ref()?.title;
+        title
+            .trim_start()
+            .strip_prefix('#')?
+            .split(' ')
+            .next()?
+            .parse()
+            .ok()
+    }
+
+    fn three_requests() -> App {
+        let mut app = app();
+        app.handle_event(hit(1));
+        app.handle_event(miss(2));
+        app.handle_event(passthrough(3));
+        app
+    }
+
+    #[test]
+    fn show_a_click_and_the_picker_open_the_same_detail() {
+        let mut app = three_requests();
+        typed(&mut app, "/show 2");
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_event(key(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!(open_id(&app), Some(2));
+        let shown = plain(&render(&mut app, 100, 30));
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.detail.is_none());
+
+        render(&mut app, 100, 30);
+        // Row 0 shows `› /show 2`; the requests are rows 0-2 before it was echoed.
+        let row = app.rows.iter().find(|(_, index)| *index == 1).unwrap().0.y;
+        app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 5, row));
+        app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 5, row));
+        assert_eq!(open_id(&app), Some(2));
+        assert_eq!(plain(&render(&mut app, 100, 30)), shown);
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+
+        app.handle_event(ctrl('o'));
+        app.handle_event(key(KeyCode::Up, KeyModifiers::NONE));
+        app.handle_event(key(KeyCode::Enter, KeyModifiers::NONE));
+        assert_eq!((app.picker, open_id(&app)), (None, Some(2)));
+        assert_eq!(plain(&render(&mut app, 100, 30)), shown);
+        insta::assert_snapshot!(shown);
+    }
+
+    #[test]
+    fn the_picker_lists_recent_requests_newest_last() {
+        let mut app = three_requests();
+        app.handle_event(ctrl('o'));
+        app.handle_event(key(KeyCode::Up, KeyModifiers::NONE));
+        let screen = styled(&render(&mut app, 100, 12));
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.picker.is_none() && app.detail.is_none());
+        insta::assert_snapshot!(screen);
+    }
+
+    #[test]
+    fn the_picker_says_when_there_is_nothing_to_pick() {
+        let mut app = app();
+        app.handle_event(ctrl('o'));
+        assert_eq!(app.picker, None);
+        assert_eq!(app.hint.as_deref(), Some("no requests yet"));
+    }
+
+    #[test]
+    fn the_detail_sits_beside_the_log_when_wide() {
+        let mut app = three_requests();
+        typed(&mut app, "/show 1");
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_event(key(KeyCode::Enter, KeyModifiers::NONE));
+        insta::assert_snapshot!(plain(&render(&mut app, 140, 24)));
+    }
+
+    #[test]
+    fn page_down_scrolls_the_detail_and_stops_at_its_end() {
+        let mut app = three_requests();
+        typed(&mut app, "/show 1");
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_event(key(KeyCode::Enter, KeyModifiers::NONE));
+        render(&mut app, 80, 16);
+        for _ in 0..10 {
+            app.handle_event(key(KeyCode::PageDown, KeyModifiers::NONE));
+            render(&mut app, 80, 16);
+        }
+        let screen = plain(&render(&mut app, 80, 16));
+        assert!(screen.contains("duration"), "{screen}");
+        assert!(app.detail.as_ref().unwrap().scroll > 0);
+        app.handle_event(mouse(MouseEventKind::ScrollUp, 10, 3));
+        assert!(app.detail.as_ref().unwrap().scroll > 0);
+        assert_eq!(
+            app.scroll, 0,
+            "the wheel over the panel leaves the log alone"
+        );
+    }
+
+    #[test]
+    fn an_open_detail_outlives_its_record() {
+        let mut app = three_requests();
+        typed(&mut app, "/show 1");
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_event(key(KeyCode::Enter, KeyModifiers::NONE));
+        for id in 4..=crate::app::RETAIN as u64 + 4 {
+            app.handle_event(hit(id));
+        }
+        assert!(app.record(1).is_none());
+        let screen = plain(&render(&mut app, 100, 20));
+        assert!(screen.contains("╭ #1 GET /users/123"), "{screen}");
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        assert!(app.detail.is_none());
+    }
+
+    #[test]
+    fn the_picker_keeps_its_keys_while_log_lines_are_selected() {
+        let mut app = three_requests();
+        render(&mut app, 100, 12);
+        app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 5, 0));
+        app.handle_event(mouse(MouseEventKind::Drag(MouseButton::Left), 5, 1));
+        app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 5, 1));
+        assert!(app.selected.is_some());
+        app.handle_event(ctrl('o'));
+        assert_eq!(
+            app.handle_event(key(KeyCode::Enter, KeyModifiers::NONE)),
+            []
+        );
+        assert_eq!(open_id(&app), Some(3));
+        assert!(app.picker.is_none());
+    }
+
+    #[test]
+    fn clicks_do_nothing_while_the_picker_is_open() {
+        let mut app = three_requests();
+        render(&mut app, 100, 12);
+        app.handle_event(ctrl('o'));
+        render(&mut app, 100, 12);
+        app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 5, 1));
+        app.handle_event(mouse(MouseEventKind::Up(MouseButton::Left), 5, 1));
+        assert!(app.detail.is_none());
+        assert_eq!(app.picker, Some(0));
+    }
+
+    #[test]
+    fn show_tells_an_unissued_id_from_an_expired_one() {
+        let mut app = three_requests();
+        typed(&mut app, "/show 99");
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_event(key(KeyCode::Enter, KeyModifiers::NONE));
+        let screen = plain(&render(&mut app, 100, 12));
+        assert!(screen.contains("#99: no such request"), "{screen}");
+    }
+
+    #[test]
+    fn an_evicted_request_reads_as_expired() {
+        let mut app = app();
+        for id in 1..=crate::app::RETAIN as u64 + 1 {
+            app.handle_event(hit(id));
+        }
+        typed(&mut app, "/show #1");
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        app.handle_event(key(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(app.detail.is_none());
+        let screen = plain(&render(&mut app, 100, 8));
+        assert!(screen.contains("#1 expired"), "{screen}");
+        insta::assert_snapshot!(screen);
     }
 }

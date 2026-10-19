@@ -35,6 +35,11 @@ pub const COMMANDS: &[Spec] = &[
         about: "show the active Session's Collection and overrides",
     },
     Spec {
+        name: "/show",
+        args: "<id>",
+        about: "open one request in the detail panel",
+    },
+    Spec {
         name: "/help",
         args: "",
         about: "list commands and keys",
@@ -61,6 +66,7 @@ pub enum Command {
     Session(String),
     Sessions,
     Status,
+    Show(u64),
     Help,
     Quit,
 }
@@ -94,6 +100,7 @@ pub fn parse(input: &str) -> Result<Command, String> {
         "/session" => Command::Session(arg.to_owned()),
         "/sessions" => Command::Sessions,
         "/status" => Command::Status,
+        "/show" => Command::Show(arg.trim_start_matches('#').parse().map_err(|_| usage())?),
         "/help" => Command::Help,
         "/quit" => Command::Quit,
         _ => unreachable!("every COMMANDS entry is parsed above"),
@@ -123,6 +130,9 @@ mod tests {
         );
         assert_eq!(parse("/sessions"), Ok(Command::Sessions));
         assert_eq!(parse("/status"), Ok(Command::Status));
+        assert_eq!(parse("/show 12"), Ok(Command::Show(12)));
+        assert_eq!(parse("/show #12"), Ok(Command::Show(12)));
+        assert_eq!(parse("/show x"), Err("usage: /show <id>".into()));
         assert_eq!(parse("/help"), Ok(Command::Help));
         assert_eq!(parse("/quit"), Ok(Command::Quit));
     }

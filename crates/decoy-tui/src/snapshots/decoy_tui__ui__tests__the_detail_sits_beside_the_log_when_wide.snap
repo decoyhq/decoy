@@ -1,0 +1,28 @@
+---
+source: crates/decoy-tui/src/ui.rs
+expression: "plain(&render(&mut app, 140, 24))"
+---
+#1 12:01:03 GET     /users/123   → users-by-id:user-123:success 200 4ms      ╭ #1 GET /users/123 ──────────────────────────────────────────╮
+#2 12:01:03 POST    /orders?pag… MISS no active route matched 404 4ms        │Request                                                      │
+#3 12:01:03 GET     /avatars/ad… → upstream http://cdn.local/avatars/ada.png │  transport   http                                           │
+200 31ms                                                                     │  method      GET                                            │
+› /show 1                                                                    │  url         /users/123                                     │
+                                                                             │  session     default                                        │
+                                                                             │  headers                                                    │
+                                                                             │    (none)                                                   │
+                                                                             │  body                                                       │
+                                                                             │    (empty)                                                  │
+                                                                             │                                                             │
+                                                                             │Match                                                        │
+                                                                             │  hit         users-by-id:user-123:success                   │
+                                                                             │  candidates (evaluation order)                              │
+                                                                             │    ✓ users-by-id:user-123:success                           │
+                                                                             │  passed      (none)                                         │
+                                                                             │                                                             │
+                                                                             │Response                                                     │
+                                                                             │  status      200                                            │
+                                                                             ╰ Esc close · PgUp/PgDn or wheel scroll ──────────────────────╯
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│› type / for commands · Ctrl+O recent requests                                                                                            │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+ http://127.0.0.1:4010 · session default · collection happy-path · 0 overrides

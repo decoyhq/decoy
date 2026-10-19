@@ -1,0 +1,16 @@
+---
+source: crates/decoy-tui/src/ui.rs
+expression: screen
+---
+[DIM]#1 12:01:03 [/]GET     /users/123                     [DIM]→ [/][Green]users-by-id:user-123:success[/] 200[DIM] 4ms[/]
+[DIM]#2 12:01:03 [/]POST    /orders?page=2&limit=50&sort=… [Red BOLD]MISS[/][Red] no active route matched[/] 404[DIM] 4ms[/]
+[DIM]#3 12:01:03 [/]GET     /avatars/ada.png               [Yellow]→ upstream http://cdn.local/avatars/ada.png[/] 200
+[Cyan]╭ recent requests (3) ─────────────────────────────────────────────────────────────────────────────╮[/]
+[Cyan]│[/][DIM]#1 12:01:03 [/]GET     /users/123                   [DIM]→ [/][Green]users-by-id:user-123:success[/] 200[DIM] 4ms[/]           [Cyan]│[/]
+[Cyan]│[/][DIM | REVERSED]#2 12:01:03 [/][REVERSED]POST    /orders?page=2&limit=50&sor… [/][Red BOLD | REVERSED]MISS[/][Red REVERSED] no active route matched[/][REVERSED] 404[/][DIM | REVERSED] 4ms[/]             [Cyan]│[/]
+[Cyan]│[/][DIM]#3 12:01:03 [/]GET     /avatars/ada.png             [Yellow]→ upstream http://cdn.local/avatars/ada.png[/] 200[DIM] 3[/][Cyan]│[/]
+[Cyan]╰[/][Cyan DIM] ↑↓ move · Enter details · Esc close [/][Cyan]─────────────────────────────────────────────────────────────╯[/]
+[Cyan]╭──────────────────────────────────────────────────────────────────────────────────────────────────╮[/]
+[Cyan]│[/][Cyan BOLD]› [/][DIM]type / for commands · Ctrl+O recent requests[/]                                                    [Cyan]│[/]
+[Cyan]╰──────────────────────────────────────────────────────────────────────────────────────────────────╯[/]
+[DIM] http://127.0.0.1:4010 · session default · collection happy-path · 0 overrides                      [/]

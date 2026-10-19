@@ -1,0 +1,38 @@
+---
+source: crates/decoy-tui/src/detail.rs
+expression: text(&record)
+---
+Request
+  transport   http
+  method      GET
+  url         /users/123?expand=1
+  session     default
+  headers
+    accept: application/json
+  body
+    (empty)
+
+Match
+  hit         users-by-id:user-123:success
+  candidates (evaluation order)
+    ✗ users-by-id:admin:success
+        headers.x-role: expected "admin", got (none)
+    ✗ orders:any:ok
+        path: expected /orders, got /users/123
+    ✓ users-by-id:user-123:success
+  passed      {"pathParams":{"id":"123"}}
+  pathParams  {"id":"123"}
+
+Response
+  status      200
+  headers
+    content-type: application/json
+  body
+    {
+      "id": "123",
+      "name": "Ada"
+    }
+
+Timing
+  at          12:01:03
+  duration    4ms
