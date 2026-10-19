@@ -503,6 +503,33 @@ mod tests {
         assert_eq!(collection(&harness).await, "calm");
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_saved_config_file_reloads_under_watch() {
+        let mut harness = Harness::new(16).await;
+        let config = (harness.reloader.load_config)().unwrap();
+        let paths = decoy_runtime::watch::WatchedPaths::of(&config, None);
+        harness.watching = Some(ConfigWatcher::new(paths, Box::new(|| None), true).unwrap());
+
+        let collections = harness.dir.path().join("collections.yaml");
+        let controller = harness.controller.clone();
+        let keys = harness.keys.clone();
+        tokio::spawn(async move {
+            std::fs::write(
+                collections,
+                "- id: calm\n  routes: [users-by-id:user-1:ada]\n",
+            )
+            .unwrap();
+            while controller.read().await.default_collection() != "calm" {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            keys.send(ctrl_d()).unwrap();
+        });
+        let quit = tokio::time::timeout(std::time::Duration::from_secs(10), harness.run());
+        assert!(quit.await.expect("no reload").unwrap().is_none());
+        let screen = harness.screen();
+        assert!(screen.contains("reloaded"), "{screen}");
+    }
+
     #[tokio::test]
     async fn a_server_that_stops_ends_the_loop_with_its_result() {
         let mut harness = Harness::new(16).await;
