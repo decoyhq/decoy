@@ -54,7 +54,10 @@ impl Fixture {
     async fn reload(&self) -> Result<Reloaded, String> {
         self.server
             .reloader()
-            .reload(|| Ok(config(self.temp.path())))
+            .reload({
+                let dir = self.temp.path().to_owned();
+                move || Ok(config(&dir))
+            })
             .await
             .map_err(|error| error.to_string())
     }

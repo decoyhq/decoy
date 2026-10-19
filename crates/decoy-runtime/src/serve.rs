@@ -239,11 +239,16 @@ impl Reloader {
     /// so the last one always applies the newest files.
     pub async fn reload(
         &self,
-        read_config: impl FnOnce() -> Result<ServeConfig, ServeError>,
+        read_config: impl FnOnce() -> Result<ServeConfig, ServeError> + Send + 'static,
     ) -> Result<Reloaded, ServeError> {
         let _running = self.running.lock().await;
-        let config = read_config()?;
-        let startup = load(&config)?;
+        // File IO and the proto compile block, so keep them off the async workers.
+        let (config, startup) = tokio::task::spawn_blocking(move || {
+            let config = read_config()?;
+            let startup = load(&config)?;
+            Ok::<_, ServeError>((config, startup))
+        })
+        .await??;
         let mut warnings = Vec::new();
         if ListenerFields::of(&config) != *self.listeners {
             warnings.push("listener changes need restart".to_owned());
