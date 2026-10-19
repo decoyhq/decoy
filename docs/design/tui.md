@@ -31,8 +31,11 @@ prototype showed it reads like `tail -f` with an input line, so it was dropped.
   and the request picker open as overlays above it), status bar.
 - The app owns the log. It follows new lines. Wheel, PgUp/PgDn and Home scroll back, with a
   `↓ N new · End to follow` badge; End/Esc follow again. The last 10k lines are kept.
-- Mouse capture is on: a click on a request line opens its detail, a drag selects lines and copies
-  them through OSC 52. Shift+drag still gives the terminal's own selection.
+- Esc does one thing per press, first match wins: clear a selection, close the completion popup,
+  close the detail panel, follow the log.
+- Mouse capture is on: a click on a request line opens its detail, as `/show` would (an evicted
+  record reads `#<id> expired`), a drag selects lines and copies them through OSC 52. Shift+drag
+  still gives the terminal's own selection.
 - A request gets its line once its response finishes. Long-lived connections (WS/SSE) get
   separate `open` / `close` lines.
 - Reference implementation: Codex CLI (`codex-rs/tui`), which defaults to the alternate screen
@@ -95,7 +98,7 @@ Sessions are implicit (`Controller` creates a Selection on its first mutation).
 ## Request detail
 
 `/show <id>`, Ctrl+O picker → Enter, or a click on a request line opens the record in a scrollable
-panel: beside the log at ≥120 columns, over it when narrower; Esc closes it. The content is plain
+panel: beside the log at ≥120 columns, over it when narrower; Esc closes it (see Rendering for Esc order). The content is plain
 indented text with stable labels, so a copied detail reads well as text.
 
 - Request: method, URL, headers, body, Session.
