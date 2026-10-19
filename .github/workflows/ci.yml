@@ -202,14 +202,14 @@ jobs:
           files: rust.lcov
           flags: rust
 
-  # The JS package tests on Windows and macOS (they cover the win32 process branches), plus the
-  # runtime crate's tests; Linux runs both in `ci` and `rust`.
+  # The JS package tests on Windows and macOS (they cover the win32 process branches); Linux runs
+  # them in `ci`. Not in `required` yet: packages/cli binary.test.ts expects POSIX paths on Windows.
   unit-os:
     needs: changes
-    if: needs.changes.outputs.js == 'true' || needs.changes.outputs.rust == 'true'
+    if: needs.changes.outputs.js == 'true'
     name: unit (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -236,22 +236,11 @@ jobs:
           restore-keys: pnpm-${{ runner.os }}-
 
       - name: Install dependencies
-        if: needs.changes.outputs.js == 'true'
         run: pnpm install --frozen-lockfile --ignore-scripts
 
       # --no-bail: report every package's failures, not just the first.
       - name: Test JS packages
-        if: needs.changes.outputs.js == 'true'
         run: pnpm -r --no-bail run test
-
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
-        with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Test decoy-runtime
-        if: ${{ !cancelled() && needs.changes.outputs.rust == 'true' }}
-        run: cargo test --locked -p decoy-runtime
 
   # Builds `decoy` once for every e2e job below (examples start it with `cargo run`).
   build-decoy:
