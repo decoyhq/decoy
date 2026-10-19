@@ -5,10 +5,11 @@
 use std::cell::OnceCell;
 use std::collections::BTreeMap;
 
+use jmespath::Rcvar;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::expression::{predicate_holds, validate_predicate};
+use crate::expression::{predicate_holds, to_rcvar, validate_predicate};
 use crate::request::RequestEnvelope;
 use crate::schema::{HttpMethod, Transport};
 
@@ -18,9 +19,9 @@ pub struct MatchInput<'a> {
     pub path: &'a str,
     pub path_params: &'a BTreeMap<String, String>,
     pub envelope: &'a RequestEnvelope,
-    /// The envelope's JSON, built on first predicate and shared across candidates; when set, its
-    /// `pathParams` must be this input's.
-    pub json: &'a OnceCell<Value>,
+    /// The envelope for JMESPath, built on first predicate and shared across candidates; when
+    /// set, its `pathParams` must be this input's.
+    pub json: &'a OnceCell<Rcvar>,
 }
 
 const HTTP_FIELDS: [&str; 5] = ["pathParams", "query", "headers", "cookies", "body"];
@@ -131,9 +132,11 @@ pub fn case_matches(case_match: &Value, input: &MatchInput) -> bool {
 fn case_failure<F: Failure>(case_match: &Value, input: &MatchInput) -> Option<F> {
     let request = || {
         input.json.get_or_init(|| {
-            input
-                .envelope
-                .to_json(input.method, input.path, input.path_params)
+            to_rcvar(
+                &input
+                    .envelope
+                    .to_json(input.method, input.path, input.path_params),
+            )
         })
     };
     let fields = match case_match {
@@ -179,21 +182,31 @@ fn case_failure<F: Failure>(case_match: &Value, input: &MatchInput) -> Option<F>
 }
 
 /// gRPC Case matching over the message envelope `{ service, method, metadata, message }`:
-/// `message` is a deep partial match like HTTP `body`, `metadata` matches like `headers`.
-pub fn grpc_case_mismatch(case_match: &Value, envelope: &Value) -> Option<ConditionFailure> {
-    grpc_case_failure(case_match, envelope)
+/// `message` is a deep partial match like HTTP `body`, `metadata` matches like `headers`. `jmes`
+/// caches `envelope` converted for predicates, shared across candidates.
+pub fn grpc_case_mismatch(
+    case_match: &Value,
+    envelope: &Value,
+    jmes: &OnceCell<Rcvar>,
+) -> Option<ConditionFailure> {
+    grpc_case_failure(case_match, envelope, jmes)
 }
 
 /// [`grpc_case_mismatch`] as a verdict only, building no failure.
-pub fn grpc_case_matches(case_match: &Value, envelope: &Value) -> bool {
-    grpc_case_failure::<()>(case_match, envelope).is_none()
+pub fn grpc_case_matches(case_match: &Value, envelope: &Value, jmes: &OnceCell<Rcvar>) -> bool {
+    grpc_case_failure::<()>(case_match, envelope, jmes).is_none()
 }
 
-fn grpc_case_failure<F: Failure>(case_match: &Value, envelope: &Value) -> Option<F> {
+fn grpc_case_failure<F: Failure>(
+    case_match: &Value,
+    envelope: &Value,
+    jmes: &OnceCell<Rcvar>,
+) -> Option<F> {
+    let request = || jmes.get_or_init(|| to_rcvar(envelope));
     let fields = match case_match {
         Value::Null => return None,
         Value::String(predicate) => {
-            return (!predicate_holds(predicate, envelope))
+            return (!predicate_holds(predicate, request()))
                 .then(|| F::build(|| ConditionFailure::predicate("match", predicate)));
         }
         Value::Object(fields) => fields,
@@ -206,7 +219,7 @@ fn grpc_case_failure<F: Failure>(case_match: &Value, envelope: &Value) -> Option
     fields
         .iter()
         .find_map(|(field, pattern)| match (field.as_str(), pattern) {
-            (_, Value::String(text)) if is_predicate(text) => (!predicate_holds(text, envelope))
+            (_, Value::String(text)) if is_predicate(text) => (!predicate_holds(text, request()))
                 .then(|| F::build(|| ConditionFailure::predicate(field, text))),
             ("message", _) => value_mismatch(field, pattern, &envelope["message"]),
             ("metadata", _) => strings_mismatch(field, pattern, |key| {
@@ -600,9 +613,9 @@ mod tests {
     }
 
     fn grpc_mismatch(case_match: &Value, envelope: &Value) -> Option<ConditionFailure> {
-        let failure = grpc_case_mismatch(case_match, envelope);
+        let failure = grpc_case_mismatch(case_match, envelope, &OnceCell::new());
         assert_eq!(
-            grpc_case_matches(case_match, envelope),
+            grpc_case_matches(case_match, envelope, &OnceCell::new()),
             failure.is_none(),
             "{case_match}"
         );

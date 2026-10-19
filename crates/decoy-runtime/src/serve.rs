@@ -13,7 +13,7 @@ use crate::control_api::{
 };
 use crate::engine::{Catalog, Controller, HttpExecutionOutcome, HttpExecutionRequest};
 use crate::grpc::{GrpcRequest, GrpcResponse, RESOURCE_EXHAUSTED, UNIMPLEMENTED};
-use crate::http::{BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig};
+use crate::http::{HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig};
 use crate::http_forward::ForwardResponse;
 use crate::protos::load_descriptor_pool;
 use crate::schema::{HttpMethod, PassthroughTarget};
@@ -239,11 +239,16 @@ impl Reloader {
     /// so the last one always applies the newest files.
     pub async fn reload(
         &self,
-        read_config: impl FnOnce() -> Result<ServeConfig, ServeError>,
+        read_config: impl FnOnce() -> Result<ServeConfig, ServeError> + Send + 'static,
     ) -> Result<Reloaded, ServeError> {
         let _running = self.running.lock().await;
-        let config = read_config()?;
-        let startup = load(&config)?;
+        // File IO and the proto compile block, so keep them off the async workers.
+        let (config, startup) = tokio::task::spawn_blocking(move || {
+            let config = read_config()?;
+            let startup = load(&config)?;
+            Ok::<_, ServeError>((config, startup))
+        })
+        .await??;
         let mut warnings = Vec::new();
         if ListenerFields::of(&config) != *self.listeners {
             warnings.push("listener changes need restart".to_owned());
@@ -601,8 +606,7 @@ fn json_response(status: StatusCode, value: serde_json::Value) -> Response<Body>
 
 fn http_response(plan: HttpResponsePlan) -> Response<Body> {
     let body = match plan.body {
-        Some(BodyPlan::Json(value)) => Body::from(serde_json::to_vec(&value).expect("json body")),
-        Some(BodyPlan::Text(text)) => Body::from(text),
+        Some(body) => Body::from(body.into_bytes()),
         None => Body::empty(),
     };
     let mut response = Response::new(body);

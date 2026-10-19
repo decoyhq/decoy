@@ -1,6 +1,7 @@
 //! `${ }` templating in response Behaviors: every string at any depth of `status`, `headers`, and
 //! `body` is rendered against the request; keys are not. See the spec in issue #215.
 
+use jmespath::Rcvar;
 use serde_json::{Map, Value};
 
 use crate::expression::{Segment, evaluate, segments, validate_expression};
@@ -76,11 +77,14 @@ pub(crate) fn validate_string(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The request envelope for templates, converted for JMESPath only if an expression needs it.
+pub type Request<'a> = &'a dyn Fn() -> Rcvar;
+
 /// Render a templated response against the request envelope. A templated `status` must come out
 /// as an integer 100–599.
 pub fn render_response(
     response: &ResponseBehavior,
-    request: &Value,
+    request: Request,
 ) -> Result<ResponseBehavior, String> {
     let status = match &response.status {
         Some(status) => {
@@ -118,7 +122,7 @@ pub fn render_response(
 /// is a valid status or message is checked when it is encoded.
 pub fn render_grpc_response(
     response: &ResponseBehavior,
-    request: &Value,
+    request: Request,
 ) -> Result<ResponseBehavior, String> {
     let render = |value: &Option<Value>| {
         value
@@ -143,7 +147,7 @@ fn status_code(code: Option<u64>) -> Option<u16> {
         .and_then(|code| u16::try_from(code).ok())
 }
 
-fn render_value(value: &Value, request: &Value) -> Result<Value, String> {
+fn render_value(value: &Value, request: Request) -> Result<Value, String> {
     match value {
         Value::String(text) => render_string(text, request),
         Value::Array(items) => items
@@ -161,19 +165,24 @@ fn render_value(value: &Value, request: &Value) -> Result<Value, String> {
 }
 
 /// Exactly one `${ }` keeps the result's JSON type; anything else interpolates into text.
-fn render_string(text: &str, request: &Value) -> Result<Value, String> {
-    match segments(text)?.as_slice() {
-        [Segment::Expression(source)] => evaluate(source, request),
-        _ => render_text(text, request).map(Value::String),
+fn render_string(text: &str, request: Request) -> Result<Value, String> {
+    let segments = segments(text)?;
+    match segments.as_slice() {
+        [Segment::Expression(source)] => evaluate(source, &request()),
+        _ => interpolate(segments, request).map(Value::String),
     }
 }
 
-fn render_text(text: &str, request: &Value) -> Result<String, String> {
-    segments(text)?
+fn render_text(text: &str, request: Request) -> Result<String, String> {
+    interpolate(segments(text)?, request)
+}
+
+fn interpolate(segments: Vec<Segment>, request: Request) -> Result<String, String> {
+    segments
         .into_iter()
         .map(|segment| match segment {
             Segment::Text(text) => Ok(text),
-            Segment::Expression(source) => Ok(match evaluate(&source, request)? {
+            Segment::Expression(source) => Ok(match evaluate(&source, &request())? {
                 Value::Null => String::new(),
                 Value::String(text) => text,
                 other => other.to_string(),
@@ -205,16 +214,16 @@ mod tests {
         }
     }
 
-    fn request() -> Value {
-        json!({
+    fn request() -> Rcvar {
+        crate::expression::to_rcvar(&json!({
             "pathParams": { "id": "42" },
             "query": { "n": "3" },
             "body": { "name": "Ada", "age": 36, "admin": true, "tags": ["a"], "nested": { "k": 1 } }
-        })
+        }))
     }
 
     fn render_body(body: Value) -> Value {
-        render_response(&response(None, &[], body), &request())
+        render_response(&response(None, &[], body), &request)
             .unwrap()
             .body
             .unwrap()
@@ -278,7 +287,7 @@ mod tests {
                 &[("x-user", "user-${ pathParams.id }")],
                 json!(null),
             ),
-            &request(),
+            &request,
         )
         .unwrap();
         assert_eq!(rendered.status, Some(json!(201)));
@@ -286,7 +295,7 @@ mod tests {
 
         let from_string = render_response(
             &response(Some(json!("20${ query.n }")), &[], json!(null)),
-            &request(),
+            &request,
         )
         .unwrap();
         assert_eq!(from_string.status, Some(json!(203)));
@@ -296,7 +305,7 @@ mod tests {
     fn templated_status_must_be_a_valid_code() {
         let error = render_response(
             &response(Some(json!("${ body.name }")), &[], json!(null)),
-            &request(),
+            &request,
         )
         .unwrap_err();
         assert!(error.contains("not 100–599"), "{error}");

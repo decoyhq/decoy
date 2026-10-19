@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use decoy_runtime::config::{ServeCliOptions, ServeConfig};
@@ -98,7 +99,7 @@ async fn tui(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Re-reads the config from the same flags and files, for a reload.
 fn config_reader(args: ServeArgs) -> decoy_tui::LoadConfig {
-    Box::new(move || serve_config(args.clone()).map_err(|error| error.to_string().into()))
+    Arc::new(move || serve_config(args.clone()).map_err(|error| error.to_string().into()))
 }
 
 /// `--watch`: one signal per burst of changes to the files `config` was read from.
@@ -141,7 +142,8 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
         let read_config = config_reader(args);
         tokio::spawn(async move {
             while watcher.changed().await.is_some() {
-                match reloader.reload(&read_config).await {
+                let read_config = Arc::clone(&read_config);
+                match reloader.reload(move || read_config()).await {
                     Ok(reloaded) => {
                         eprintln!("decoy serve: reloaded: {}", reloaded.summary());
                         for warning in reloaded.warnings {

@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use bytes::Bytes;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use thiserror::Error;
 
@@ -22,7 +23,7 @@ pub struct ForwardResponse {
     pub status: u16,
     /// In order, repeats kept (e.g. several `set-cookie`).
     pub headers: Vec<(String, String)>,
-    pub body: Vec<u8>,
+    pub body: Bytes,
 }
 
 impl ForwardResponse {
@@ -82,7 +83,9 @@ impl ForwardingError {
         ForwardResponse {
             status,
             headers: vec![("content-type".to_owned(), "application/json".to_owned())],
-            body: serde_json::to_vec(&body).expect("JSON response serializes"),
+            body: serde_json::to_vec(&body)
+                .expect("JSON response serializes")
+                .into(),
         }
     }
 }
@@ -201,7 +204,7 @@ pub async fn forward_passthrough(
 
     let status = response.status().as_u16();
     let headers = forwardable_response_headers(response.headers());
-    let body = response.bytes().await?.to_vec();
+    let body = response.bytes().await?;
 
     Ok(ForwardResponse {
         status,
@@ -448,7 +451,7 @@ mod tests {
             .map(|(_, value)| value.as_str())
             .collect();
         assert_eq!(cookies, ["a=1", "b=2"]);
-        assert_eq!(response.body, br#"{"ok":true}"#);
+        assert_eq!(response.body, &br#"{"ok":true}"#[..]);
 
         let request = received.recv().unwrap();
         handle.join().unwrap();

@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use bytes::Bytes;
 use prost_reflect::DescriptorPool;
 use serde_json::Value;
 
@@ -34,6 +35,20 @@ pub struct HttpResponsePlan {
 pub enum BodyPlan {
     Json(Value),
     Text(String),
+    /// Serialized once at load: a Behavior without templates.
+    Bytes(Bytes),
+}
+
+impl BodyPlan {
+    pub fn into_bytes(self) -> Bytes {
+        match self {
+            Self::Json(value) => serde_json::to_vec(&value)
+                .expect("JSON response body serializes")
+                .into(),
+            Self::Text(text) => text.into(),
+            Self::Bytes(bytes) => bytes,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

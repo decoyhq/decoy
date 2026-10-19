@@ -9,6 +9,7 @@ mod log;
 mod ui;
 
 use std::io::Write;
+use std::sync::Arc;
 
 use base64::Engine;
 use crossterm::event::{
@@ -32,7 +33,7 @@ pub use app::{App, Effect, Event, Options, Verb};
 const BATCH: usize = 1024;
 
 /// Re-reads the config from the same flags and files the server started with, for `/reload`.
-pub type LoadConfig = Box<dyn Fn() -> Result<ServeConfig, ServeError> + Send + Sync>;
+pub type LoadConfig = Arc<dyn Fn() -> Result<ServeConfig, ServeError> + Send + Sync>;
 
 /// Runs the TUI over a started `server` until the user quits or the server stops, then restores
 /// the terminal and waits for the server to drain. `quit` must resolve the shutdown future the
@@ -228,8 +229,9 @@ struct Reloader {
 
 impl Reloader {
     async fn reload(&self) -> Result<decoy_runtime::Reloaded, String> {
+        let load_config = Arc::clone(&self.load_config);
         self.reloader
-            .reload(&self.load_config)
+            .reload(move || load_config())
             .await
             .map_err(|error| error.to_string())
     }
@@ -301,7 +303,7 @@ mod tests {
             std::fs::write(dir.path().join("routes/users.yaml"), USERS).unwrap();
             std::fs::write(dir.path().join("collections.yaml"), COLLECTIONS).unwrap();
             let config_dir = dir.path().to_owned();
-            let load_config: LoadConfig = Box::new(move || {
+            let load_config: LoadConfig = Arc::new(move || {
                 let options = decoy_runtime::config::ServeCliOptions {
                     routes: Some(config_dir.join("routes")),
                     collections: Some(config_dir.join("collections.yaml")),

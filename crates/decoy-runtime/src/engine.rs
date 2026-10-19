@@ -2,6 +2,7 @@ use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use jmespath::Rcvar;
 use thiserror::Error;
 
 use crate::collections::{Activation, CollectionError, CollectionsFile};
@@ -9,8 +10,9 @@ use crate::events::{
     CapturedBody, CapturedResponse, Event, Match, Outcome, RequestEvent, SessionChange,
     SessionEvent, SessionSource,
 };
+use crate::expression::{set_field, to_rcvar};
 use crate::grpc::{GrpcRequest, GrpcResponse};
-use crate::http::{BodyPlan, RequestMetadata, ResponsePlan, RuntimeConfig};
+use crate::http::{BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig};
 use crate::http_forward::{
     ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough, target_url,
 };
@@ -105,6 +107,9 @@ pub struct Catalog {
     collections: CollectionsFile,
     /// Each Collection resolved once (inheritance, validation) instead of on every request.
     resolved: BTreeMap<String, Result<Vec<Activation>, String>>,
+    /// HTTP Response Behaviors without templates, planned once with the body serialized:
+    /// route → case → behavior.
+    static_plans: BTreeMap<String, BTreeMap<String, BTreeMap<String, HttpResponsePlan>>>,
     runtime: RuntimeConfig,
 }
 
@@ -143,10 +148,37 @@ impl Catalog {
                 (id.to_owned(), activations)
             })
             .collect();
+        let static_plans = by_id
+            .values()
+            .filter(|route| matches!(route.route_match, RouteMatch::Http(_)))
+            .map(|route| {
+                let cases = route.cases.iter().map(|(case_id, case)| {
+                    let behaviors = case.behaviors.iter().filter_map(|(name, behavior)| {
+                        let Behavior::Response(response) = behavior else {
+                            return None;
+                        };
+                        if has_templates(response) {
+                            return None;
+                        }
+                        let metadata = RequestMetadata::default();
+                        let ResponsePlan::Response(mut plan) =
+                            ResponsePlan::from_behavior(route, behavior, &runtime, &metadata)
+                        else {
+                            unreachable!("a Response Behavior plans a response")
+                        };
+                        plan.body = plan.body.map(|body| BodyPlan::Bytes(body.into_bytes()));
+                        Some((name.clone(), plan))
+                    });
+                    (case_id.clone(), behaviors.collect())
+                });
+                (route.id.clone(), cases.collect())
+            })
+            .collect();
         Ok(Self {
             routes: by_id,
             collections,
             resolved,
+            static_plans,
             runtime,
         })
     }
@@ -389,8 +421,9 @@ impl Catalog {
         };
 
         let mut candidates = explain.then(Vec::new);
-        // The envelope's JSON, built once per request; only `pathParams` changes per candidate.
-        let mut json = OnceCell::<serde_json::Value>::new();
+        // The envelope for JMESPath, built once per request; only `pathParams` changes per
+        // candidate.
+        let mut json = OnceCell::<Rcvar>::new();
 
         for activation in activations.iter().copied().rev() {
             let Some(route) = self.routes.get(&activation.route) else {
@@ -423,7 +456,7 @@ impl Catalog {
             };
 
             if let Some(json) = json.get_mut() {
-                json["pathParams"] = serde_json::json!(path_params);
+                set_field(json, "pathParams", &serde_json::json!(path_params));
             }
             let input = MatchInput {
                 method: &request.method,
@@ -448,14 +481,22 @@ impl Catalog {
                 continue;
             };
 
+            let static_plan = self
+                .static_plans
+                .get(&activation.route)
+                .and_then(|cases| cases.get(&activation.case))
+                .and_then(|behaviors| behaviors.get(&activation.behavior));
             let plan = match behavior {
-                Behavior::Response(response) if has_templates(response) => {
+                _ if let Some(plan) = static_plan => ResponsePlan::Response(plan.clone()),
+                Behavior::Response(response) => {
                     let envelope = json.get_or_init(|| {
-                        request
-                            .envelope
-                            .to_json(&request.method, &request.path, &path_params)
+                        to_rcvar(&request.envelope.to_json(
+                            &request.method,
+                            &request.path,
+                            &path_params,
+                        ))
                     });
-                    match render_response(response, envelope) {
+                    match render_response(response, &|| envelope.clone()) {
                         Ok(rendered) => ResponsePlan::from_behavior(
                             route,
                             &Behavior::Response(rendered),
@@ -546,19 +587,12 @@ fn split_path(path: &str) -> Vec<&str> {
 
 impl From<crate::http::HttpResponsePlan> for ForwardResponse {
     fn from(response: crate::http::HttpResponsePlan) -> Self {
-        let body = response.body.map(response_body_bytes).unwrap_or_default();
+        let body = response.body.map(BodyPlan::into_bytes).unwrap_or_default();
         Self {
             status: response.status,
             headers: response.headers.into_iter().collect(),
             body,
         }
-    }
-}
-
-fn response_body_bytes(body: BodyPlan) -> Vec<u8> {
-    match body {
-        BodyPlan::Json(value) => serde_json::to_vec(&value).expect("JSON response body serializes"),
-        BodyPlan::Text(text) => text.into_bytes(),
     }
 }
 
@@ -1206,7 +1240,8 @@ cases:
                     "content-type".to_owned(),
                     "application/json".to_owned()
                 )]),
-                body: Some(BodyPlan::Json(serde_json::json!({ "kind": "fallback" }))),
+                // Static, so served as the bytes serialized at load.
+                body: Some(BodyPlan::Bytes(r#"{"kind":"fallback"}"#.into())),
             })
         );
     }
@@ -1722,7 +1757,7 @@ cases:
         );
         assert_eq!(response.status, 202);
         assert_eq!(response.header("x-upstream"), Some("yes"));
-        assert_eq!(response.body, b"accepted");
+        assert_eq!(response.body, &b"accepted"[..]);
 
         let request = received.recv().unwrap();
         handle.join().unwrap();
@@ -1758,7 +1793,7 @@ cases:
         );
         assert_eq!(response.status, 200);
         assert_eq!(response.header("content-type"), Some("application/json"));
-        assert_eq!(response.body, br#"{"id":"123"}"#);
+        assert_eq!(response.body, &br#"{"id":"123"}"#[..]);
     }
 
     #[tokio::test]
@@ -2035,7 +2070,7 @@ cases:
         else {
             panic!("expected a response")
         };
-        assert_eq!(response.body, br#"{"id":"42"}"#);
+        assert_eq!(response.body, &br#"{"id":"42"}"#[..]);
     }
 
     #[tokio::test]
@@ -2081,6 +2116,6 @@ cases:
         else {
             panic!("expected a response")
         };
-        assert_eq!(response.body, br#"{"name":"7"}"#);
+        assert_eq!(response.body, &br#"{"name":"7"}"#[..]);
     }
 }
