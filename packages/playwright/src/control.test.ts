@@ -41,6 +41,31 @@ describe('createRouter', () => {
     expect(router.sessionId).toBe('session-a')
   })
 
+  test('useRoute takes one Behavior address `route:case:behavior`', async () => {
+    const decoy = await fake()
+    await createRouter(decoy.url, 's').useRoute('get-user:user-123:broken')
+
+    expect(decoy.calls).toEqual([
+      {
+        path: '/__decoy__/control/useRoute',
+        session: 's',
+        body: '{"route":"get-user","case":"user-123","behavior":"broken"}',
+      },
+    ])
+  })
+
+  test('useRoute rejects a malformed Behavior address without calling Decoy', async () => {
+    const decoy = await fake()
+    const router = createRouter(decoy.url, 's')
+
+    for (const address of ['get-user:user-123', 'get-user::broken', 'a:b:c:d', '']) {
+      await expect(router.useRoute(address)).rejects.toThrow(
+        `Invalid Behavior address \`${address}\`: expected \`route:case:behavior\``,
+      )
+    }
+    expect(decoy.calls).toEqual([])
+  })
+
   test('rejects at the call site with the Control API error', async () => {
     const decoy = await fake(() => ({
       status: 400,

@@ -7,6 +7,7 @@ export interface DecoyRouter {
   /** Switch this Session to another Collection. */
   useCollection(collection: string): Promise<void>
   /** Override one Behavior address (`route:case:behavior`) for this Session. */
+  useRoute(address: string): Promise<void>
   useRoute(route: string, caseId: string, behavior: string): Promise<void>
   /** Drop this Session's route overrides. */
   reset(): Promise<void>
@@ -43,7 +44,16 @@ export function createRouter(url: string, sessionId: string, timeoutMs = 10_000)
   return {
     sessionId,
     useCollection: (collection) => control('useCollection', { collection }),
-    useRoute: (route, caseId, behavior) => control('useRoute', { route, case: caseId, behavior }),
+    useRoute: async (route: string, caseId?: string, behavior?: string) => {
+      if (caseId === undefined || behavior === undefined) {
+        const parts = route.split(':')
+        if (parts.length !== 3 || parts.some((part) => part === '')) {
+          throw new Error(`Invalid Behavior address \`${route}\`: expected \`route:case:behavior\``)
+        }
+        ;[route, caseId, behavior] = parts as [string, string, string]
+      }
+      await control('useRoute', { route, case: caseId, behavior })
+    },
     reset: () => control('reset'),
     // Runs in test teardown: an unreachable Decoy must not turn a passed test into a timeout.
     endSession: () => control('endSession', undefined, AbortSignal.timeout(2000)),
