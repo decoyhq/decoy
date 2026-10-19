@@ -175,7 +175,7 @@ jobs:
     if: github.ref_type == 'tag'
     permissions:
       contents: read
-    uses: ./.github/workflows/install-script.yml
+    uses: $/.github/workflows/install-script.yml
     with:
       version: ${{ needs.version.outputs.version }}
 
