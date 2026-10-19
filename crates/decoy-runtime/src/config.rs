@@ -273,11 +273,24 @@ impl ServeConfig {
                 .as_ref()
                 .and_then(|config| config.collection.clone())
         });
+        let passthrough_name = if options.passthrough_base_url.is_some() {
+            "--passthrough-base-url"
+        } else {
+            "passthroughBaseUrl"
+        };
         let passthrough_base_url = options.passthrough_base_url.or_else(|| {
             file_config
                 .as_ref()
                 .and_then(|config| config.passthrough_base_url.clone())
         });
+        if let Some(url) = &passthrough_base_url
+            && !url::Url::parse(url).is_ok_and(|parsed| matches!(parsed.scheme(), "http" | "https"))
+        {
+            return Err(ConfigError::InvalidPassthroughBaseUrl {
+                name: passthrough_name,
+                url: url.clone(),
+            });
+        }
         let max_body_bytes = file_config
             .as_ref()
             .and_then(|config| config.max_body_bytes)
@@ -369,6 +382,8 @@ pub enum ConfigError {
     },
     #[error("`{name}` sets `tls: true`, but no top-level `tls` cert is configured")]
     TlsWithoutCert { name: String },
+    #[error("`{name}` `{url}` must be an absolute http or https URL")]
+    InvalidPassthroughBaseUrl { name: &'static str, url: String },
     #[error("missing required serve {name}; pass --{name} or set it in --config")]
     MissingValue { name: &'static str },
 }
@@ -537,6 +552,29 @@ collection: config-collection
             },
             base,
         )
+    }
+
+    #[test]
+    fn passthrough_base_url_must_be_an_http_url() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        let load = |url: &str| {
+            fs::write(
+                base.join("decoy.yaml"),
+                format!("routes: r\ncollections: c.yaml\npassthroughBaseUrl: \"{url}\"\n"),
+            )
+            .unwrap();
+            load_raw(base)
+        };
+
+        assert!(load("https://api.example.test/v1").is_ok());
+        for url in ["localhost:3000", "ftp://files.example.test", "http://"] {
+            assert_eq!(
+                load(url).unwrap_err().to_string(),
+                format!("`passthroughBaseUrl` `{url}` must be an absolute http or https URL"),
+                "{url}"
+            );
+        }
     }
 
     #[test]

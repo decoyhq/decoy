@@ -396,7 +396,7 @@ async fn respond(
     let request_method = request.method().clone();
     let secure = request.extensions().get::<Secure>().is_some();
     let metadata = RequestMetadata {
-        original_base_url: original_base_url(&headers, secure),
+        original_base_url: original_base_url(&headers, request.uri(), secure),
     };
     let max_body_bytes = request
         .extensions()
@@ -648,12 +648,19 @@ fn request_headers(headers: &axum::http::HeaderMap) -> BTreeMap<String, String> 
     joined
 }
 
-fn original_base_url(headers: &BTreeMap<String, String>, secure: bool) -> Option<String> {
+/// `Host` for HTTP/1; HTTP/2 sends `:authority`, which lands in the request URI instead.
+fn original_base_url(
+    headers: &BTreeMap<String, String>,
+    uri: &axum::http::Uri,
+    secure: bool,
+) -> Option<String> {
     let scheme = if secure { "https" } else { "http" };
     headers
         .iter()
         .find(|(key, _)| key.eq_ignore_ascii_case("host"))
-        .map(|(_, value)| format!("{scheme}://{value}"))
+        .map(|(_, value)| value.as_str())
+        .or_else(|| uri.authority().map(|authority| authority.as_str()))
+        .map(|host| format!("{scheme}://{host}"))
 }
 
 fn http_method(method: &axum::http::Method) -> Option<HttpMethod> {
@@ -672,6 +679,16 @@ fn http_method(method: &axum::http::Method) -> Option<HttpMethod> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http2_base_url_comes_from_the_uri_authority() {
+        let uri: axum::http::Uri = "https://api.example.test:8443/users".parse().unwrap();
+
+        assert_eq!(
+            original_base_url(&BTreeMap::new(), &uri, true).as_deref(),
+            Some("https://api.example.test:8443")
+        );
+    }
 
     #[test]
     fn split_http2_cookies_rejoin_with_semicolons() {
