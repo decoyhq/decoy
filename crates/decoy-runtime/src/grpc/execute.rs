@@ -108,7 +108,8 @@ fn respond(
     let jmes = OnceCell::new();
     let rendered = render_grpc_response(response, &|| {
         jmes.get_or_init(|| to_rcvar(envelope)).clone()
-    })?;
+    })
+    .map_err(|error| error.to_string())?;
     let status = match &rendered.status {
         None => OK,
         Some(status) => status_code(status)?,
