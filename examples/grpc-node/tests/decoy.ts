@@ -11,11 +11,16 @@ export async function startDecoy(): Promise<() => void> {
   if (await healthy()) {
     return () => undefined
   }
-  const child: ChildProcess = spawn(
-    'cargo',
-    ['run', '--quiet', '-p', 'decoy', '--', 'serve', '--config', 'mocks/decoy.yaml'],
-    { cwd: exampleDir, stdio: ['ignore', 'ignore', 'inherit'] },
-  )
+  // DECOY_BINARY_PATH: a prebuilt `decoy` (as in CI); otherwise build and run it with cargo.
+  const bin = process.env.DECOY_BINARY_PATH
+  const serve = ['serve', '--config', 'mocks/decoy.yaml']
+  const [command, ...args] = bin
+    ? [bin, ...serve]
+    : ['cargo', 'run', '--quiet', '-p', 'decoy', '--', ...serve]
+  const child: ChildProcess = spawn(command, args, {
+    cwd: exampleDir,
+    stdio: ['ignore', 'ignore', 'inherit'],
+  })
   // The first run compiles the decoy binary.
   const deadline = Date.now() + 180_000
   while (!(await healthy())) {

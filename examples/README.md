@@ -17,4 +17,6 @@ pnpm test:e2e                          # every example's test:e2e
 pnpm --filter ./examples/<name> dev    # boot one example by hand
 ```
 
-CI runs one job per example; browser examples install Chromium in their own job.
+`test:e2e` starts Decoy with `cargo run -p decoy`; set `DECOY_BINARY_PATH` to a prebuilt `decoy`
+(e.g. `target/debug/decoy`) to run that instead. CI runs one job per example, with
+`DECOY_BINARY_PATH` set to a binary built once; browser examples install Chromium in their own job.

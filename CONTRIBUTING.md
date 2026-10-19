@@ -29,7 +29,8 @@ Examples (`examples/*`) are the e2e tier and run their own `test:e2e` per worksp
 
 `task e2e` builds the packages and the `decoy` binary, then runs every example's `test:e2e`.
 Examples boot Decoy with `cargo run` against the built `@decoyhq/*` packages, so the Rust
-toolchain must be installed. Browser examples also need Chromium once (`pnpm install` skips the
+toolchain must be installed. Set `DECOY_BINARY_PATH` to a prebuilt `decoy` (e.g.
+`target/debug/decoy`) to skip cargo, as CI does. Browser examples also need Chromium once (`pnpm install` skips the
 download):
 
 ```sh

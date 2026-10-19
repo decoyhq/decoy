@@ -16,7 +16,8 @@ export default defineConfig<DecoyTestOptions>({
   use: {
     baseURL: 'http://127.0.0.1:4173',
     decoyOptions: {
-      command: 'cargo run --quiet -p decoy -- serve --config mocks/decoy.yaml',
+      // DECOY_BINARY_PATH: a prebuilt `decoy` (as in CI); otherwise build and run it with cargo.
+      command: `${process.env.DECOY_BINARY_PATH ? JSON.stringify(process.env.DECOY_BINARY_PATH) : 'cargo run --quiet -p decoy --'} serve --config mocks/decoy.yaml`,
       urls: '**/api/**',
       collection: 'happy-path',
       // The first run compiles the decoy binary.
