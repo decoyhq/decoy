@@ -104,7 +104,9 @@ impl Catalog {
                                     route.id
                                 )
                             });
-                            reject(&mut candidates, activation, || Rejection::Decode { error });
+                            reject(&mut candidates, activation, || Rejection::Decode {
+                                error: error.to_string(),
+                            });
                             continue;
                         }
                     };

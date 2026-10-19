@@ -3,6 +3,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use prost::Message as _;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
 use serde_json::Value;
+use thiserror::Error;
 
 use super::DEFAULT_PIPELINE;
 use super::schema::request_json_options;
@@ -10,6 +11,39 @@ use crate::schema::{PipelineStep, Route};
 
 pub(super) fn pipeline(route: &Route) -> &[PipelineStep] {
     route.pipeline.as_deref().unwrap_or(&DEFAULT_PIPELINE)
+}
+
+/// Why a gRPC message didn't decode or encode. The text reaches grpc-message and miss reasons.
+#[derive(Debug, Error)]
+pub enum GrpcCodecError {
+    #[error("gRPC frame shorter than its 5-byte header")]
+    ShortFrame,
+    #[error("compressed gRPC messages are not supported")]
+    Compressed,
+    #[error(
+        "gRPC frame declares {declared} bytes but carries {carried}; unary calls take one message"
+    )]
+    FrameLength { declared: usize, carried: usize },
+    #[error("not a valid {message}: {error}")]
+    InvalidMessage {
+        message: String,
+        error: prost::DecodeError,
+    },
+    #[error("{0}")]
+    ToJson(serde_json::Error),
+    #[error("step `{0:?}` needs bytes, got JSON")]
+    NeedsBytes(PipelineStep),
+    #[error("response does not fit {message}: {error}")]
+    DoesNotFit {
+        message: String,
+        error: serde_json::Error,
+    },
+    #[error("step `Protobuf` needs JSON, got bytes")]
+    NeedsJson,
+    #[error("message is not base64: {0}")]
+    NotBase64(base64::DecodeError),
+    #[error("expected a base64 string, got {0}")]
+    NotAString(Value),
 }
 
 /// Bytes as they flow through a Pipeline: steps turn one into the other.
@@ -24,20 +58,25 @@ pub(super) fn decode(
     body: &[u8],
     steps: &[PipelineStep],
     input: &MessageDescriptor,
-) -> Result<Value, String> {
+) -> Result<Value, GrpcCodecError> {
     let mut data = Data::Bytes(body.to_vec());
     for step in steps {
         data = match (step, data) {
             (PipelineStep::GrpcFrame, Data::Bytes(bytes)) => Data::Bytes(unframe(&bytes)?),
             (PipelineStep::Protobuf, Data::Bytes(bytes)) => {
-                let message = DynamicMessage::decode(input.clone(), bytes.as_slice())
-                    .map_err(|error| format!("not a valid {}: {error}", input.full_name()))?;
+                let message =
+                    DynamicMessage::decode(input.clone(), bytes.as_slice()).map_err(|error| {
+                        GrpcCodecError::InvalidMessage {
+                            message: input.full_name().to_owned(),
+                            error,
+                        }
+                    })?;
                 let value = message
                     .serialize_with_options(serde_json::value::Serializer, &request_json_options())
-                    .map_err(|error| error.to_string())?;
+                    .map_err(GrpcCodecError::ToJson)?;
                 Data::Json(value)
             }
-            (step, Data::Json(_)) => return Err(format!("step `{step:?}` needs bytes, got JSON")),
+            (step, Data::Json(_)) => return Err(GrpcCodecError::NeedsBytes(*step)),
         };
     }
     Ok(match data {
@@ -52,50 +91,51 @@ pub(super) fn encode(
     message: Value,
     steps: &[PipelineStep],
     output: &MessageDescriptor,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, GrpcCodecError> {
     let mut data = Data::Json(message);
     for step in steps.iter().rev() {
         data = match (step, data) {
             (PipelineStep::Protobuf, Data::Json(value)) => {
                 let message =
                     DynamicMessage::deserialize(output.clone(), value).map_err(|error| {
-                        format!("response does not fit {}: {error}", output.full_name())
+                        GrpcCodecError::DoesNotFit {
+                            message: output.full_name().to_owned(),
+                            error,
+                        }
                     })?;
                 Data::Bytes(message.encode_to_vec())
             }
             (PipelineStep::GrpcFrame, data) => Data::Bytes(frame(&bytes(data)?)),
             (PipelineStep::Protobuf, Data::Bytes(_)) => {
-                return Err("step `Protobuf` needs JSON, got bytes".to_owned());
+                return Err(GrpcCodecError::NeedsJson);
             }
         };
     }
     bytes(data)
 }
 
-fn bytes(data: Data) -> Result<Vec<u8>, String> {
+fn bytes(data: Data) -> Result<Vec<u8>, GrpcCodecError> {
     match data {
         Data::Bytes(bytes) => Ok(bytes),
-        Data::Json(Value::String(text)) => BASE64
-            .decode(text)
-            .map_err(|error| format!("message is not base64: {error}")),
-        Data::Json(other) => Err(format!("expected a base64 string, got {other}")),
+        Data::Json(Value::String(text)) => BASE64.decode(text).map_err(GrpcCodecError::NotBase64),
+        Data::Json(other) => Err(GrpcCodecError::NotAString(other)),
     }
 }
 
 /// One uncompressed length-prefixed message.
-pub(super) fn unframe(bytes: &[u8]) -> Result<Vec<u8>, String> {
+pub(super) fn unframe(bytes: &[u8]) -> Result<Vec<u8>, GrpcCodecError> {
     let [compressed, a, b, c, d, rest @ ..] = bytes else {
-        return Err("gRPC frame shorter than its 5-byte header".to_owned());
+        return Err(GrpcCodecError::ShortFrame);
     };
     if *compressed != 0 {
-        return Err("compressed gRPC messages are not supported".to_owned());
+        return Err(GrpcCodecError::Compressed);
     }
     let length = u32::from_be_bytes([*a, *b, *c, *d]) as usize;
     if rest.len() != length {
-        return Err(format!(
-            "gRPC frame declares {length} bytes but carries {}; unary calls take one message",
-            rest.len()
-        ));
+        return Err(GrpcCodecError::FrameLength {
+            declared: length,
+            carried: rest.len(),
+        });
     }
     Ok(rest.to_vec())
 }
