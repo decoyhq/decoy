@@ -12,7 +12,6 @@ pub mod expression;
 pub mod grpc;
 pub mod grpc_schema;
 pub mod http;
-pub mod http_forward;
 pub mod matching;
 pub mod protos;
 pub mod request;
@@ -29,14 +28,14 @@ pub use control_api::{
     handle_control_request, try_handle_control_request,
 };
 pub use engine::{
-    Candidate, Catalog, ControlError, Controller, HttpExecutionOutcome, HttpExecutionRequest,
-    HttpRequest, MissDiagnostic, Rejection, ResolveOutcome, RouteOverrideSnapshot, Selection,
-    SelectionSnapshot,
+    Candidate, Catalog, ControlError, Controller, MissDiagnostic, Rejection, RouteOverrideSnapshot,
+    Selection, SelectionSnapshot,
 };
+pub use http::forward::{ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough};
 pub use http::{
-    BodyPlan, HttpResponsePlan, PassthroughPlan, RequestMetadata, ResponsePlan, RuntimeConfig,
+    BodyPlan, HttpExecutionOutcome, HttpExecutionRequest, HttpRequest, HttpResponsePlan,
+    PassthroughPlan, RequestMetadata, ResolveOutcome, ResponsePlan, RuntimeConfig,
 };
-pub use http_forward::{ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough};
 pub use request::RequestEnvelope;
 pub use schema::{
     Behavior, BehaviorKind, Case, GrpcRouteMatch, HttpMethod, HttpRouteMatch, Route, RouteMatch,

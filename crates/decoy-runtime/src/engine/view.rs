@@ -3,10 +3,11 @@ use std::sync::Arc;
 
 use futures_util::StreamExt as _;
 
-use super::{Catalog, HttpExecutionOutcome, HttpExecutionRequest, Selection};
+use super::{Catalog, Selection};
 use crate::events::{CapturedBody, CapturedResponse, Event, Outcome, RequestEvent};
 use crate::grpc::{GrpcRequest, GrpcResponse};
-use crate::http_forward::UpstreamBody;
+use crate::http::forward::UpstreamBody;
+use crate::http::{HttpExecutionOutcome, HttpExecutionRequest};
 use crate::schema::Transport;
 
 /// What one request needs: the shared Catalog and a copy of its Session's Selection, taken under

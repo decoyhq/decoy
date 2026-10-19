@@ -6,9 +6,9 @@ use std::net::TcpListener;
 use std::sync::mpsc;
 use std::thread;
 
-use super::{Candidate, Catalog, HttpExecutionRequest, HttpRequest, Rejection};
+use super::{Candidate, Catalog, Rejection};
 use crate::collections::CollectionsFile;
-use crate::http::{RequestMetadata, RuntimeConfig};
+use crate::http::{HttpExecutionRequest, HttpRequest, RequestMetadata, RuntimeConfig};
 use crate::schema::{HttpMethod, PassthroughTarget, Route};
 
 #[derive(Debug)]

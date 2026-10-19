@@ -4,12 +4,12 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use super::{Catalog, DEFAULT_SESSION, Selection, SelectionSnapshot, SessionView};
-#[cfg(test)]
-use super::{HttpRequest, ResolveOutcome};
 use crate::collections::Activation;
 use crate::events::{Event, SessionChange, SessionEvent, SessionSource};
 #[cfg(test)]
 use crate::http::RequestMetadata;
+#[cfg(test)]
+use crate::http::{HttpRequest, ResolveOutcome};
 
 #[derive(Debug, Error)]
 pub enum ControlError {

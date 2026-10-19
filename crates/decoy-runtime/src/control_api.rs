@@ -231,8 +231,9 @@ mod tests {
 
     use super::*;
     use crate::collections::CollectionsFile;
-    use crate::engine::{Catalog, HttpRequest, ResolveOutcome};
+    use crate::engine::Catalog;
     use crate::http::RuntimeConfig;
+    use crate::http::{HttpRequest, ResolveOutcome};
     use crate::schema::{HttpMethod, Route};
 
     fn route() -> Route {
