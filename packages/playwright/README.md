@@ -37,15 +37,18 @@ test('empty state', async ({ page, decoy }) => {
 
 - `setup` starts `command` unless Decoy already answers `GET /__decoy__/health` at `url`.
   Reuse follows Playwright `webServer`: allowed locally, refused when `CI` is set. The returned
-  teardown stops Decoy only if `setup` started it.
+  teardown stops Decoy only if `setup` started it. A Decoy that `setup` started in an earlier run
+  that never tore down (a hard-killed runner) is stopped and started fresh, not reused.
 - Fixtures never start Decoy. Each test gets its own Session: Decoy's health is checked and
   `collection` applied once, before routed requests or test code run.
 - The `decoy` fixture is this Session's Router: `sessionId`, `useCollection`, `useRoute`,
-  `reset`, `endSession`. Each call hits the Control API immediately and rejects with Decoy's error.
+  `reset`, `endSession`. Each call hits the Control API immediately and rejects with Decoy's error,
+  or after 10s without an answer.
   It fails if `decoyOptions` is unset. When the test ends, the fixtures end its Session in Decoy.
 - Decoy is off unless `decoyOptions` is set.
 - With `urls`, every test's browser context sends matching requests to Decoy, with no need to
   request the `decoy` fixture. Method, path/query, headers, and body are kept; `x-mock-session` is
   set to the test's Session. Decoy's response (including a fail-closed miss) goes back to the
-  browser as-is; if Decoy is unreachable the request is aborted, never sent to the real network.
+  browser as-is (Set-Cookie included, for the page's origin; forwarding keeps no cookies of its
+  own); if Decoy is unreachable the request is aborted, never sent to the real network.
   Other requests continue normally.

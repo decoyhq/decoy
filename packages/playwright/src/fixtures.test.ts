@@ -63,7 +63,6 @@ describe('context fixture', () => {
         patterns.push(pattern)
         return Promise.resolve()
       },
-      request: { fetch: () => Promise.reject(new Error('not routed in this test')) },
     }
     const info = { titlePath: ['context'] }
     const { context: contextFixture } = createDecoyFixtures() as unknown as {

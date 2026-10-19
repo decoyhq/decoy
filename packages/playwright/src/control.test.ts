@@ -1,3 +1,4 @@
+import { createServer } from 'node:http'
 import { afterEach, describe, expect, test } from '@rstest/core'
 import { startFakeDecoy } from '../fixtures/fake-decoy-server'
 import { createRouter } from './control'
@@ -57,5 +58,20 @@ describe('createRouter', () => {
   test('reports a non-envelope error body as-is', async () => {
     const decoy = await fake(() => ({ status: 500, body: 'boom' }))
     await expect(createRouter(decoy.url, 's').reset()).rejects.toThrow('reset failed (500): boom')
+  })
+
+  test('gives up on a Decoy that never answers, naming the verb and url', async () => {
+    const server = createServer(() => undefined)
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+    closers.push(async () => {
+      server.closeAllConnections()
+      await new Promise((done) => server.close(done))
+    })
+    const address = server.address()
+    const url = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`
+
+    await expect(createRouter(url, 's', 50).reset()).rejects.toThrow(
+      `Decoy reset at ${url} failed:`,
+    )
   })
 })

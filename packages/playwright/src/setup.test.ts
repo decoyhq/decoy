@@ -115,6 +115,28 @@ describe('setup', () => {
     expect(await isHealthy(url)).toBe(false)
   })
 
+  test('replaces a Decoy that a hard-killed run started instead of reusing it', async () => {
+    const port = await freePort()
+    const url = `http://127.0.0.1:${port}`
+    const options = config({
+      url,
+      command: `node ${FAKE_DECOY} ${port}`,
+      reuseExistingServer: true,
+    })
+    const servingPid = async () =>
+      ((await (await fetch(`${url}/__decoy__/health`)).json()) as { pid: number }).pid
+
+    // The first run never tears down, as when its runner is killed.
+    await setup(options)
+    const orphan = await servingPid()
+
+    const teardown = await setup(options)
+    expect(await servingPid()).not.toBe(orphan)
+
+    await teardown()
+    expect(await isHealthy(url)).toBe(false)
+  })
+
   test('starts one Decoy per distinct url across projects', async () => {
     const [first, second] = [await freePort(), await freePort()]
     const options = (port: number) => ({

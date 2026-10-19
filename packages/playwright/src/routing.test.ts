@@ -1,7 +1,9 @@
+import { createServer, type IncomingHttpHeaders } from 'node:http'
 import { describe, expect, test } from '@rstest/core'
 import {
   type DecoyFetch,
   type DecoyResponse,
+  fetchWithoutCookies,
   forwardToDecoy,
   type RoutableRoute,
   routeToDecoy,
@@ -73,7 +75,6 @@ describe('forwardToDecoy', () => {
       'x-mock-session': 'session-1',
     })
     expect(calls[0]?.init.data?.toString()).toBe('{"name":"Ada"}')
-    expect(calls[0]?.init.maxRedirects).toBe(0)
   })
 
   test('fulfills the browser with Decoy status, headers, and body, misses included', async () => {
@@ -122,5 +123,32 @@ describe('routeToDecoy', () => {
     await routeToDecoy(context, fetch, 'http://127.0.0.1:8080', ['/a/', /\/graphql$/], 's')
 
     expect(patterns).toEqual(['**/api/**', '/a/', /\/graphql$/])
+  })
+})
+
+describe('fetchWithoutCookies', () => {
+  test('keeps no cookie jar, passes every Set-Cookie and binary bodies, follows no redirect', async () => {
+    const seen: IncomingHttpHeaders[] = []
+    const server = createServer((req, res) => {
+      seen.push(req.headers)
+      res.writeHead(302, { location: '/elsewhere', 'set-cookie': ['a=1; Path=/', 'b=2; Path=/'] })
+      res.end(Buffer.from([0, 255, 1]))
+    })
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+    const address = server.address()
+    const decoyUrl = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`
+    try {
+      const first = fakeRoute({ url: 'http://localhost:3000/login' })
+      await forwardToDecoy(first.route, decoyUrl, 's', fetchWithoutCookies)
+      const second = fakeRoute({ url: 'http://localhost:3000/me' })
+      await forwardToDecoy(second.route, decoyUrl, 's', fetchWithoutCookies)
+
+      expect(first.result.fulfilled?.status).toBe(302)
+      expect(first.result.fulfilled?.headers?.['set-cookie']).toBe('a=1; Path=/\nb=2; Path=/')
+      expect([...(first.result.fulfilled?.body as Buffer)]).toEqual([0, 255, 1])
+      expect(seen.map((headers) => headers.cookie)).toEqual([undefined, undefined])
+    } finally {
+      await new Promise((done) => server.close(done))
+    }
   })
 })
