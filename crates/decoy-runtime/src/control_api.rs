@@ -140,11 +140,17 @@ fn dispatch(
 ) -> Result<SelectionSnapshot, ControlApiError> {
     let session = session_id(&request.headers);
     let route = route_key(&request.method, &request.path);
-    if route
-        .as_deref()
-        .is_some_and(|route| route.starts_with("POST "))
-        && !is_json(&request.headers)
-    {
+    // Only the known verbs; an unknown `/__decoy__` path stays a 404 whatever its content type.
+    let known_post = matches!(
+        route.as_deref(),
+        Some(
+            "POST /control/useCollection"
+                | "POST /control/useRoute"
+                | "POST /control/reset"
+                | "POST /control/endSession"
+        )
+    );
+    if known_post && !is_json(&request.headers) {
         return Err(ControlApiError::NotJson);
     }
 
@@ -390,6 +396,9 @@ cases:
         let mut reset = ControlApiRequest::post("/__decoy__/control/reset", "");
         reset.headers.clear();
         assert_eq!(handle_control_request(&mut controller, reset).status, 415);
+        let mut unknown = ControlApiRequest::post("/__decoy__/control/nope", "");
+        unknown.headers.clear();
+        assert_eq!(handle_control_request(&mut controller, unknown).status, 404);
 
         let response = handle_control_request(
             &mut controller,

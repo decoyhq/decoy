@@ -511,11 +511,13 @@ fn grpc_response(response: GrpcResponse) -> Response<Body> {
         trailers.insert("grpc-message", value);
     }
     for (name, value) in response.metadata {
+        // A rendered template value skips the startup check; a tab is a valid header but not gRPC.
+        let valid = crate::grpc_schema::valid_metadata_value(&value);
         match (
             HeaderName::from_bytes(name.as_bytes()),
             HeaderValue::from_str(&value),
         ) {
-            (Ok(name), Ok(value)) => {
+            (Ok(name), Ok(value)) if valid => {
                 trailers.insert(name, value);
             }
             _ => crate::events::warn(format!(
@@ -684,6 +686,32 @@ mod tests {
         assert_eq!(joined["cookie"], "a=1; b=2");
         assert_eq!(joined["x-latin1"], "caf\u{fffd}");
         assert_eq!(joined["accept"], "text/html, */*");
+    }
+
+    #[tokio::test]
+    async fn grpc_response_drops_metadata_grpc_does_not_allow() {
+        use http_body_util::BodyExt;
+
+        let response = grpc_response(GrpcResponse {
+            metadata: BTreeMap::from([
+                ("x-ok".to_owned(), "fine".to_owned()),
+                ("x-tab".to_owned(), "a\tb".to_owned()),
+                ("bad name".to_owned(), "x".to_owned()),
+            ]),
+            ..GrpcResponse::error(0, "")
+        });
+        let trailers = response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .trailers()
+            .cloned()
+            .unwrap();
+
+        assert_eq!(trailers["x-ok"], "fine");
+        assert!(!trailers.contains_key("x-tab"));
+        assert_eq!(trailers.len(), 2, "{trailers:?}"); // grpc-status + x-ok
     }
 
     #[tokio::test]

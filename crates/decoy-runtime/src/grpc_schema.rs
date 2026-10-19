@@ -124,13 +124,17 @@ pub fn validate_response(response: &ResponseBehavior, decoded: bool) -> Result<(
     }
     for (name, value) in &response.metadata {
         // A templated value is checked once rendered, when the request comes in.
-        if !value.contains("${") {
-            axum::http::HeaderValue::from_str(value)
-                .map_err(|_| format!("metadata `{name}` has a value gRPC doesn't allow"))?;
+        if !value.contains("${") && !valid_metadata_value(value) {
+            return Err(format!("metadata `{name}` has a value gRPC doesn't allow"));
         }
         validate_string(value)?;
     }
     response.message.iter().try_for_each(validate_value)
+}
+
+/// gRPC ASCII metadata: printable `0x20..=0x7E` only, so no tab, which HTTP headers would allow.
+pub(crate) fn valid_metadata_value(value: &str) -> bool {
+    value.bytes().all(|byte| (0x20..=0x7e).contains(&byte))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -734,8 +738,10 @@ cases:
                 "id: r\ntransport: grpc\nmatch: {{ service: s, method: m }}\ncases:\n  any:\n    behaviors:\n      ok: {{ metadata: {{ x-reason: \"{value}\" }} }}\n"
             )
         };
-        let error = Route::from_yaml(&yaml("a\\nb")).unwrap_err().to_string();
-        assert!(error.contains("metadata `x-reason`"), "{error}");
+        for value in ["a\\nb", "a\\tb"] {
+            let error = Route::from_yaml(&yaml(value)).unwrap_err().to_string();
+            assert!(error.contains("metadata `x-reason`"), "{value}: {error}");
+        }
         // A templated value is checked once rendered.
         assert!(Route::from_yaml(&yaml("${ 'a' }")).is_ok());
     }
