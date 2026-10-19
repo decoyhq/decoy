@@ -1,6 +1,26 @@
 use std::net::SocketAddr;
 
+use thiserror::Error;
 use tokio::net::TcpListener;
+
+/// Why a listener didn't bind.
+#[derive(Debug, Error)]
+pub enum BindError {
+    #[error("cannot resolve `{name}` host `{host}`: {error}")]
+    Resolve {
+        name: String,
+        host: String,
+        error: std::io::Error,
+    },
+    #[error("cannot listen on `{name}` ({addr}): {error}")]
+    Listen {
+        name: String,
+        addr: SocketAddr,
+        error: std::io::Error,
+    },
+    #[error("`{name}` host `{host}` has no addresses")]
+    NoAddresses { name: String, host: String },
+}
 
 /// One bound socket: the config key it serves (`port` or `listeners.<name>`), TLS, address.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,7 +54,7 @@ pub(super) async fn bind(
     host: &str,
     port: u16,
     notices: &mut Vec<String>,
-) -> Result<Vec<TcpListener>, String> {
+) -> Result<Vec<TcpListener>, BindError> {
     let mut addrs: Vec<SocketAddr> = if host.eq_ignore_ascii_case("localhost") {
         vec![
             SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, port)),
@@ -43,7 +63,11 @@ pub(super) async fn bind(
     } else {
         tokio::net::lookup_host((host, port))
             .await
-            .map_err(|error| format!("cannot resolve `{name}` host `{host}`: {error}"))?
+            .map_err(|error| BindError::Resolve {
+                name: name.to_owned(),
+                host: host.to_owned(),
+                error,
+            })?
             .collect()
     };
     addrs.sort();
@@ -67,13 +91,26 @@ pub(super) async fn bind(
                 ) =>
             {
                 notices.push(format!("skipped `{name}` on {addr}: {error}"));
-                skipped = Some(format!("cannot listen on `{name}` ({addr}): {error}"));
+                skipped = Some(BindError::Listen {
+                    name: name.to_owned(),
+                    addr,
+                    error,
+                });
             }
-            Err(error) => return Err(format!("cannot listen on `{name}` ({addr}): {error}")),
+            Err(error) => {
+                return Err(BindError::Listen {
+                    name: name.to_owned(),
+                    addr,
+                    error,
+                });
+            }
         }
     }
     if bound.is_empty() {
-        return Err(skipped.unwrap_or_else(|| format!("`{name}` host `{host}` has no addresses")));
+        return Err(skipped.unwrap_or_else(|| BindError::NoAddresses {
+            name: name.to_owned(),
+            host: host.to_owned(),
+        }));
     }
     Ok(bound)
 }
@@ -91,5 +128,21 @@ mod tests {
             .map(|listener| listener.local_addr().unwrap().port())
             .collect();
         assert!(ports.iter().all(|port| *port == ports[0]), "{ports:?}");
+    }
+
+    #[tokio::test]
+    async fn a_taken_port_fails_with_the_listener_and_address() {
+        let taken = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = taken.local_addr().unwrap();
+        let error = bind("t", "127.0.0.1", addr.port(), &mut Vec::new())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, BindError::Listen { .. }), "{error:?}");
+        assert!(
+            error
+                .to_string()
+                .starts_with(&format!("cannot listen on `t` ({addr}): ")),
+            "{error}"
+        );
     }
 }
