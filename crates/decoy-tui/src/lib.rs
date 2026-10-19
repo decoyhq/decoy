@@ -145,6 +145,10 @@ fn joined(
 
 /// Returns the server's result when it stopped first, `None` when the user quit. Copies are
 /// written to `out`, the terminal's output.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each is a separate input or handle of the loop"
+)]
 async fn event_loop(
     terminal: &mut Terminal<impl Backend>,
     input: &mut (impl Stream<Item = std::io::Result<crossterm::event::Event>> + Unpin),
