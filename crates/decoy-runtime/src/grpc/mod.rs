@@ -619,6 +619,60 @@ cases:
     }
 
     #[test]
+    fn codec_error_messages_are_stable() {
+        // These reach grpc-message and miss reasons on the wire.
+        let pool = load_descriptor_pool(&ProtoSources {
+            roots: vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proto")],
+            descriptor_sets: vec![],
+        })
+        .unwrap();
+        let input = pool
+            .get_message_by_name("approvals.v1.GetApprovalRequest")
+            .unwrap();
+        let message = |error: &dyn std::fmt::Display| error.to_string();
+
+        assert_eq!(
+            message(&unframe(&[0, 0]).unwrap_err()),
+            "gRPC frame shorter than its 5-byte header"
+        );
+        assert_eq!(
+            message(&unframe(&[1, 0, 0, 0, 0]).unwrap_err()),
+            "compressed gRPC messages are not supported"
+        );
+        assert_eq!(
+            message(&unframe(&[0, 0, 0, 0, 2, 9]).unwrap_err()),
+            "gRPC frame declares 2 bytes but carries 1; unary calls take one message"
+        );
+        assert_eq!(
+            message(&decode(&[0xff], &[PipelineStep::Protobuf], &input).unwrap_err()),
+            "not a valid approvals.v1.GetApprovalRequest: failed to decode Protobuf message: invalid varint"
+        );
+        assert_eq!(
+            message(
+                &decode(
+                    &[],
+                    &[PipelineStep::Protobuf, PipelineStep::GrpcFrame],
+                    &input
+                )
+                .unwrap_err()
+            ),
+            "step `GrpcFrame` needs bytes, got JSON"
+        );
+        assert_eq!(
+            message(&encode(json!({ "nope": 1 }), &DEFAULT_PIPELINE, &input).unwrap_err()),
+            "response does not fit approvals.v1.GetApprovalRequest: unrecognized field name 'nope'"
+        );
+        assert_eq!(
+            message(&encode(json!(1), &[PipelineStep::GrpcFrame], &input).unwrap_err()),
+            "expected a base64 string, got 1"
+        );
+        assert_eq!(
+            message(&encode(json!("!"), &[PipelineStep::GrpcFrame], &input).unwrap_err()),
+            "message is not base64: Invalid symbol 33, offset 0."
+        );
+    }
+
+    #[test]
     fn parses_grpc_paths() {
         assert_eq!(
             GrpcRequest::parse_path("/approvals.v1.Approvals/GetApproval"),

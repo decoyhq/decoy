@@ -127,7 +127,8 @@ fn respond(
     }
     let message = rendered.message.unwrap_or_else(|| json!({}));
     Ok(GrpcResponse {
-        body: encode(message, pipeline(route), &method.output())?,
+        body: encode(message, pipeline(route), &method.output())
+            .map_err(|error| error.to_string())?,
         status: OK,
         status_message: String::new(),
         metadata: rendered.metadata,
