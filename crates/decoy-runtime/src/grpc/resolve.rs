@@ -56,10 +56,10 @@ impl Catalog {
     ) -> GrpcResolution<'_> {
         let activations = match self.activations(collection_id, overrides) {
             Ok(activations) => activations,
-            Err(reason) => {
+            Err(error) => {
                 return GrpcResolution::Miss(MissDiagnostic {
                     collection: collection_id.to_owned(),
-                    reason,
+                    reason: error.to_string(),
                     candidates: Vec::new(),
                 });
             }
