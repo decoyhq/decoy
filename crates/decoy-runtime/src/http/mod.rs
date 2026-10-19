@@ -10,7 +10,7 @@ use bytes::Bytes;
 use prost_reflect::DescriptorPool;
 use serde_json::Value;
 
-use crate::schema::{Behavior, PassthroughTarget, Route};
+use crate::schema::{Behavior, PassthroughTarget, ResponseBehavior, Route};
 
 pub use execute::{HttpExecutionOutcome, HttpExecutionRequest};
 pub use resolve::{HttpRequest, ResolveOutcome};
@@ -67,20 +67,18 @@ pub struct PassthroughPlan {
 
 pub const DEFAULT_MISS_STATUS: u16 = 501;
 
-impl ResponsePlan {
+impl HttpResponsePlan {
     /// A templated Behavior that failed to render at request time.
     pub fn template_error(address: &str, reason: &str) -> Self {
-        Self::Response(HttpResponsePlan {
+        Self {
             status: 500,
             headers: BTreeMap::from([("content-type".to_owned(), "application/json".to_owned())]),
             body: Some(BodyPlan::Json(serde_json::json!({
                 "error": format!("behavior `{address}` template failed: {reason}")
             }))),
-        })
+        }
     }
-}
 
-impl ResponsePlan {
     pub fn fail_closed_miss(message: impl Into<String>) -> Self {
         Self::fail_closed_miss_with_status(message, DEFAULT_MISS_STATUS)
     }
@@ -88,18 +86,14 @@ impl ResponsePlan {
     /// A resolve miss: the fail-closed body plus every evaluated candidate and its reason.
     pub fn explained_miss(miss: &crate::engine::MissDiagnostic) -> Self {
         let mut plan = Self::fail_closed_miss(miss.reason.clone());
-        if let Self::Response(HttpResponsePlan {
-            body: Some(BodyPlan::Json(body)),
-            ..
-        }) = &mut plan
-        {
+        if let Some(BodyPlan::Json(body)) = &mut plan.body {
             body["candidates"] = serde_json::json!(miss.candidates);
         }
         plan
     }
 
     pub fn fail_closed_miss_with_status(message: impl Into<String>, status: u16) -> Self {
-        Self::Response(HttpResponsePlan {
+        Self {
             status,
             headers: BTreeMap::from([
                 ("x-mock-miss".to_owned(), "true".to_owned()),
@@ -108,9 +102,24 @@ impl ResponsePlan {
             body: Some(BodyPlan::Json(serde_json::json!({
                 "error": message.into()
             }))),
-        })
+        }
     }
 
+    pub fn from_response(response: &ResponseBehavior) -> Self {
+        Self {
+            status: response
+                .status
+                .as_ref()
+                .and_then(Value::as_u64)
+                .and_then(|status| u16::try_from(status).ok())
+                .unwrap_or(200),
+            headers: response_headers(&response.headers, response.body.as_ref()),
+            body: response.body.clone().map(body_plan),
+        }
+    }
+}
+
+impl ResponsePlan {
     pub fn from_behavior(
         route: &Route,
         behavior: &Behavior,
@@ -118,16 +127,9 @@ impl ResponsePlan {
         request: &RequestMetadata,
     ) -> Self {
         match behavior {
-            Behavior::Response(response) => Self::Response(HttpResponsePlan {
-                status: response
-                    .status
-                    .as_ref()
-                    .and_then(Value::as_u64)
-                    .and_then(|status| u16::try_from(status).ok())
-                    .unwrap_or(200),
-                headers: response_headers(&response.headers, response.body.as_ref()),
-                body: response.body.clone().map(body_plan),
-            }),
+            Behavior::Response(response) => {
+                Self::Response(HttpResponsePlan::from_response(response))
+            }
             Behavior::Passthrough(passthrough) => Self::Passthrough(PassthroughPlan {
                 base_url: passthrough
                     .target
@@ -287,11 +289,11 @@ cases:
 
     #[test]
     fn fail_closed_miss_has_diagnostic_status_header_and_body() {
-        let plan = ResponsePlan::fail_closed_miss("no active route case matched request");
+        let plan = HttpResponsePlan::fail_closed_miss("no active route case matched request");
 
         assert_eq!(
             plan,
-            ResponsePlan::Response(HttpResponsePlan {
+            HttpResponsePlan {
                 status: 501,
                 headers: BTreeMap::from([
                     ("x-mock-miss".to_owned(), "true".to_owned()),
@@ -300,7 +302,7 @@ cases:
                 body: Some(BodyPlan::Json(serde_json::json!({
                     "error": "no active route case matched request"
                 }))),
-            })
+            }
         );
     }
 

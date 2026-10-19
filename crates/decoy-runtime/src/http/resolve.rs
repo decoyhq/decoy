@@ -7,7 +7,7 @@ use super::path::match_path;
 use crate::collections::Activation;
 use crate::engine::{Candidate, Catalog, MissDiagnostic, Rejection, reject};
 use crate::expression::{set_field, to_rcvar};
-use crate::http::{RequestMetadata, ResponsePlan};
+use crate::http::{HttpResponsePlan, RequestMetadata, ResponsePlan};
 use crate::matching::{MatchInput, case_matches, case_mismatch};
 use crate::request::RequestEnvelope;
 use crate::schema::{Behavior, HttpMethod, RouteMatch};
@@ -156,7 +156,10 @@ impl Catalog {
                             &self.runtime,
                             metadata,
                         ),
-                        Err(reason) => ResponsePlan::template_error(&activation.address(), &reason),
+                        Err(reason) => ResponsePlan::Response(HttpResponsePlan::template_error(
+                            &activation.address(),
+                            &reason,
+                        )),
                     }
                 }
                 behavior => ResponsePlan::from_behavior(route, behavior, &self.runtime, metadata),

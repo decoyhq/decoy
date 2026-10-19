@@ -11,7 +11,7 @@ use crate::control_api::{
 };
 use crate::engine::Controller;
 use crate::grpc::{GrpcRequest, GrpcResponse, RESOURCE_EXHAUSTED, UNIMPLEMENTED};
-use crate::http::{HttpExecutionRequest, RequestMetadata, ResponsePlan};
+use crate::http::{HttpExecutionRequest, HttpResponsePlan, RequestMetadata};
 use crate::schema::HttpMethod;
 use axum::Extension;
 use axum::body::{Body, to_bytes};
@@ -115,11 +115,7 @@ async fn respond(
     }
 
     let Some(method) = http_method(&request_method) else {
-        let ResponsePlan::Response(miss) =
-            ResponsePlan::fail_closed_miss("unsupported http method")
-        else {
-            unreachable!("fail-closed miss is a response")
-        };
+        let miss = HttpResponsePlan::fail_closed_miss("unsupported http method");
         return response_from_forward_response(miss.into());
     };
     let view = controller.read().await.session_view(&session);

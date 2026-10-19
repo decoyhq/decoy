@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use super::ControlError;
 use crate::collections::{Activation, CollectionError, CollectionsFile};
-use crate::http::{BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig};
+use crate::http::{BodyPlan, HttpResponsePlan, RuntimeConfig};
 use crate::schema::{Behavior, Route, RouteMatch};
 use crate::template::has_templates;
 
@@ -67,12 +67,7 @@ impl Catalog {
                         if has_templates(response) {
                             return None;
                         }
-                        let metadata = RequestMetadata::default();
-                        let ResponsePlan::Response(mut plan) =
-                            ResponsePlan::from_behavior(route, behavior, &runtime, &metadata)
-                        else {
-                            unreachable!("a Response Behavior plans a response")
-                        };
+                        let mut plan = HttpResponsePlan::from_response(response);
                         plan.body = plan.body.map(|body| BodyPlan::Bytes(body.into_bytes()));
                         Some((name.clone(), plan))
                     });

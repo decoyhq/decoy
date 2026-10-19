@@ -7,7 +7,7 @@ use super::resolve::{HttpRequest, ResolveOutcome};
 use crate::collections::Activation;
 use crate::engine::Catalog;
 use crate::events::{Match, Outcome};
-use crate::http::{BodyPlan, RequestMetadata, ResponsePlan};
+use crate::http::{BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan};
 use crate::request::RequestEnvelope;
 use crate::schema::HttpMethod;
 
@@ -140,12 +140,7 @@ impl Catalog {
             ResolveOutcome::Miss(miss) => (
                 HttpExecutionOutcome::Response {
                     activation: None,
-                    response: match ResponsePlan::explained_miss(&miss) {
-                        ResponsePlan::Response(response) => response.into(),
-                        ResponsePlan::Passthrough(_) => {
-                            unreachable!("fail-closed miss is a response")
-                        }
-                    },
+                    response: HttpResponsePlan::explained_miss(&miss).into(),
                 },
                 explain.then_some(Outcome::Miss(miss)),
             ),
