@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { describe, expect, test } from '@rstest/core'
 import { findBinary } from './binary'
 
@@ -9,13 +10,13 @@ const missing = (id: string): string => {
 describe('findBinary', () => {
   test('uses the platform package binary', () => {
     expect(findBinary({ platform: 'linux', arch: 'arm64', env: {}, resolve: installed })).toBe(
-      '/node_modules/@decoyhq/cli-linux-arm64/bin/decoy',
+      join('/node_modules/@decoyhq/cli-linux-arm64/bin/decoy'),
     )
   })
 
   test('uses decoy.exe on Windows', () => {
     expect(findBinary({ platform: 'win32', arch: 'x64', env: {}, resolve: installed })).toBe(
-      '/node_modules/@decoyhq/cli-win32-x64/bin/decoy.exe',
+      join('/node_modules/@decoyhq/cli-win32-x64/bin/decoy.exe'),
     )
   })
 

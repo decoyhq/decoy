@@ -115,6 +115,17 @@ jobs:
         with:
           auto-install: true
 
+      - name: Locate pnpm store
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
@@ -191,9 +202,81 @@ jobs:
           files: rust.lcov
           flags: rust
 
+  # The JS package tests on Windows and macOS (they cover the win32 process branches); Linux runs
+  # them in `ci`.
+  unit-os:
+    needs: changes
+    if: needs.changes.outputs.js == 'true'
+    name: unit (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup toolchain (proto reads .prototools)
+        uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
+        with:
+          auto-install: true
+
+      - name: Locate pnpm store
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # --no-bail: report every package's failures, not just the first.
+      - name: Test JS packages
+        run: pnpm -r --no-bail run test
+
+  # Builds `decoy` once for every e2e job below (examples start it with `cargo run`).
+  build-decoy:
+    needs: changes
+    if: needs.changes.outputs.e2e == 'true' && (needs.changes.outputs.has-examples == 'true' || needs.changes.outputs.has-browser-examples == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup toolchain (proto reads .prototools)
+        uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
+        with:
+          auto-install: true
+
+      # Restores main's build cache; only main saves, so PRs don't evict each other.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: e2e
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build decoy binary
+        run: cargo build --locked -p decoy
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: decoy
+          path: target/debug/decoy
+          if-no-files-found: error
+          retention-days: 1
+
   # One job per non-browser example, running just that example's `test:e2e`.
   example-e2e:
-    needs: changes
+    needs: [changes, build-decoy]
     if: needs.changes.outputs.e2e == 'true' && needs.changes.outputs.has-examples == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -212,11 +295,16 @@ jobs:
         with:
           auto-install: true
 
-      # Examples start Decoy with `cargo run`; one cache shared by every e2e job, saved on main.
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Locate pnpm store
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          shared-key: e2e
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
 
       # --ignore-scripts skips the root `prepare` build; the build step below runs it once.
       - name: Install dependencies
@@ -229,6 +317,26 @@ jobs:
       - name: Build @decoyhq packages
         run: pnpm build
 
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: decoy
+          path: ${{ runner.temp }}/decoy
+
+      # Examples start Decoy with `cargo run --quiet -p decoy -- …`; this `cargo` shim on PATH runs
+      # the prebuilt binary instead (artifacts drop the exec bit). Any other cargo call fails loudly.
+      - name: Use prebuilt decoy
+        run: |
+          bin="$RUNNER_TEMP/decoy"
+          chmod +x "$bin/decoy"
+          cat > "$bin/cargo" <<'SH'
+          #!/bin/sh
+          [ "$1 $2 $3 $4 $5" = "run --quiet -p decoy --" ] || { echo "cargo shim: unexpected 'cargo $*'" >&2; exit 1; }
+          shift 5
+          exec "$(dirname "$0")/decoy" "$@"
+          SH
+          chmod +x "$bin/cargo"
+          echo "$bin" >> "$GITHUB_PATH"
+
       - name: e2e
         env:
           EXAMPLE: ${{ matrix.example }}
@@ -238,7 +346,7 @@ jobs:
   # download (pnpm-workspace.yaml), so we install Chromium + its system deps here —
   # never in the default `pnpm test`.
   example-e2e-browser:
-    needs: changes
+    needs: [changes, build-decoy]
     if: needs.changes.outputs.e2e == 'true' && needs.changes.outputs.has-browser-examples == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -257,10 +365,16 @@ jobs:
         with:
           auto-install: true
 
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Locate pnpm store
+        id: pnpm-store
+        shell: bash
+        run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          shared-key: e2e
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          path: ${{ steps.pnpm-store.outputs.path }}
+          key: pnpm-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
@@ -270,9 +384,25 @@ jobs:
       - name: Build @decoyhq packages
         run: pnpm build
 
-      # Examples start native Decoy with `cargo run`; build it up front so startup is quick.
-      - name: Build decoy binary
-        run: cargo build --locked -p decoy
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: decoy
+          path: ${{ runner.temp }}/decoy
+
+      # Examples start Decoy with `cargo run --quiet -p decoy -- …`; this `cargo` shim on PATH runs
+      # the prebuilt binary instead (artifacts drop the exec bit). Any other cargo call fails loudly.
+      - name: Use prebuilt decoy
+        run: |
+          bin="$RUNNER_TEMP/decoy"
+          chmod +x "$bin/decoy"
+          cat > "$bin/cargo" <<'SH'
+          #!/bin/sh
+          [ "$1 $2 $3 $4 $5" = "run --quiet -p decoy --" ] || { echo "cargo shim: unexpected 'cargo $*'" >&2; exit 1; }
+          shift 5
+          exec "$(dirname "$0")/decoy" "$@"
+          SH
+          chmod +x "$bin/cargo"
+          echo "$bin" >> "$GITHUB_PATH"
 
       - name: Install Chromium (+ system deps)
         env:
@@ -287,7 +417,7 @@ jobs:
   # The one check the `main` ruleset requires, so jobs and example matrices can change freely.
   required:
     if: always()
-    needs: [changes, ci, rust, example-e2e, example-e2e-browser]
+    needs: [changes, ci, rust, unit-os, build-decoy, example-e2e, example-e2e-browser]
     permissions: {}
     runs-on: ubuntu-latest
     timeout-minutes: 5
