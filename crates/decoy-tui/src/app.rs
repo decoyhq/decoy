@@ -603,4 +603,103 @@ pub(crate) mod tests {
         app.handle_event(key(KeyCode::End, KeyModifiers::NONE));
         assert_eq!((app.scroll, app.unseen), (0, 0));
     }
+
+    #[test]
+    fn keys_and_the_wheel_scroll_between_the_oldest_line_and_following() {
+        let mut app = app();
+        app.log_area = Rect::new(0, 0, 80, 4);
+        for id in 1..=10 {
+            app.handle_event(hit(id));
+        }
+        app.handle_event(key(KeyCode::Home, KeyModifiers::NONE));
+        assert_eq!(app.scroll, 9);
+        app.handle_event(hit(11));
+        app.handle_event(key(KeyCode::PageDown, KeyModifiers::NONE));
+        assert_eq!((app.scroll, app.unseen), (7, 1));
+        app.handle_event(mouse(MouseEventKind::ScrollDown, 0, 0));
+        assert_eq!((app.scroll, app.unseen), (4, 1));
+        app.handle_event(mouse(MouseEventKind::ScrollDown, 0, 0));
+        app.handle_event(mouse(MouseEventKind::ScrollDown, 0, 0));
+        assert_eq!((app.scroll, app.unseen), (0, 0));
+        app.handle_event(key(KeyCode::PageUp, KeyModifiers::NONE));
+        app.handle_event(key(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(app.scroll, 0);
+    }
+
+    #[test]
+    fn dragging_past_the_pane_scrolls_it() {
+        let mut app = app();
+        app.log_area = Rect::new(0, 1, 80, 2);
+        for id in 1..=5 {
+            app.handle_event(hit(id));
+        }
+        app.rows = vec![(Rect::new(0, 1, 80, 1), 3), (Rect::new(0, 2, 80, 1), 4)];
+        app.handle_event(mouse(MouseEventKind::Down(MouseButton::Left), 0, 2));
+        // Above the pane: scrolls back, and the selection reaches the top row.
+        app.handle_event(mouse(MouseEventKind::Drag(MouseButton::Left), 0, 0));
+        assert_eq!((app.scroll, app.selected), (1, Some((4, 3))));
+        // Below it: scrolls forward again.
+        app.handle_event(mouse(MouseEventKind::Drag(MouseButton::Left), 0, 9));
+        assert_eq!((app.scroll, app.selected), (0, Some((4, 4))));
+    }
+
+    #[test]
+    fn a_full_log_drops_its_oldest_line_and_the_selection_moves_with_the_rest() {
+        let mut app = app();
+        for _ in 0..crate::log::CAP {
+            app.info("line");
+        }
+        app.selected = Some((1, 2));
+        app.info("one more");
+        assert_eq!(app.log.len(), crate::log::CAP);
+        assert_eq!(app.selected, Some((0, 1)));
+        app.info("and another");
+        assert_eq!(app.selected, None);
+    }
+
+    #[test]
+    fn paste_lands_in_the_input_on_one_line() {
+        let mut app = app();
+        app.handle_event(Event::Terminal(TermEvent::Paste("/session\r\ne2e".into())));
+        assert_eq!(app.input, "/session  e2e");
+        app.handle_event(Event::Terminal(TermEvent::FocusGained));
+        assert_eq!(app.input, "/session  e2e");
+    }
+
+    #[test]
+    fn ctrl_insert_copies_a_selection_like_ctrl_c() {
+        let mut app = app();
+        app.info("hello");
+        app.selected = Some((0, 0));
+        let effects = app.handle_event(key(KeyCode::Insert, KeyModifiers::CONTROL));
+        assert!(matches!(&effects[..], [Effect::Copy(text)] if text.contains("hello")));
+        assert_eq!(app.hint.as_deref(), Some("copied 1 line"));
+    }
+
+    #[test]
+    fn runtime_errors_lags_and_in_process_resets_get_their_own_lines() {
+        let mut app = app();
+        app.handle_event(Event::Runtime(RuntimeEvent::Log(LogEvent {
+            level: Level::Error,
+            message: "accept failed".into(),
+        })));
+        app.handle_event(Event::Lagged(3));
+        let Event::Runtime(RuntimeEvent::Session(mut reset)) =
+            session_event("e2e-1", SessionChange::Reset, &[])
+        else {
+            unreachable!()
+        };
+        reset.source = SessionSource::InProcess;
+        app.handle_event(Event::Runtime(RuntimeEvent::Session(reset)));
+        let entries: Vec<_> = (0..app.log.len())
+            .map(|i| app.log.get(i).unwrap())
+            .collect();
+        assert!(matches!(entries[0], Entry::Error(text) if text == "accept failed"));
+        assert!(
+            matches!(entries[1], Entry::Warn(text) if text == "the log fell behind; 3 events dropped")
+        );
+        assert!(
+            matches!(entries[2], Entry::Info(text) if text == "session e2e-1 overrides cleared")
+        );
+    }
 }

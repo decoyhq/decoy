@@ -266,4 +266,16 @@ mod tests {
         log.push(Entry::Info("x".into()));
         assert_eq!(log.columns(100).id, 2);
     }
+
+    #[test]
+    fn the_local_clock_shows_hours_minutes_and_seconds() {
+        let time = local_clock(SystemTime::now());
+        let digits: Vec<&str> = time.split(':').collect();
+        assert_eq!(digits.len(), 3, "{time}");
+        assert!(
+            digits
+                .iter()
+                .all(|part| part.len() == 2 && part.parse::<u8>().is_ok())
+        );
+    }
 }
