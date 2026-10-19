@@ -158,7 +158,7 @@ impl Catalog {
                         ),
                         Err(reason) => ResponsePlan::Response(HttpResponsePlan::template_error(
                             &activation.address(),
-                            &reason,
+                            &reason.to_string(),
                         )),
                     }
                 }

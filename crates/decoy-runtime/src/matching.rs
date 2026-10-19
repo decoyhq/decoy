@@ -38,7 +38,9 @@ pub fn validate_case_match(transport: &Transport, case_match: &Value) -> Result<
     };
     let fields = match case_match {
         Value::Null => return Ok(()),
-        Value::String(predicate) => return validate_predicate(predicate),
+        Value::String(predicate) => {
+            return validate_predicate(predicate).map_err(|error| error.to_string());
+        }
         Value::Object(fields) => fields,
         other => {
             return Err(format!(
@@ -55,7 +57,9 @@ pub fn validate_case_match(transport: &Transport, case_match: &Value) -> Result<
             ));
         }
         match pattern {
-            Value::String(text) if is_predicate(text) => validate_predicate(text)?,
+            Value::String(text) if is_predicate(text) => {
+                validate_predicate(text).map_err(|error| error.to_string())?;
+            }
             _ if field == free_form || pattern.is_object() => {}
             _ => {
                 return Err(format!(
@@ -97,7 +101,7 @@ fn predicate_failure<F: Failure>(field: &str, predicate: &str, request: &Rcvar) 
     let held = predicate_holds(predicate, request);
     (held != Ok(true)).then(|| {
         F::build(|| ConditionFailure {
-            error: held.err(),
+            error: held.err().map(|error| error.to_string()),
             ..ConditionFailure::new(
                 field,
                 &Value::String(predicate.to_owned()),

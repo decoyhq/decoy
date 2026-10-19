@@ -3,8 +3,9 @@
 
 use jmespath::Rcvar;
 use serde_json::{Map, Value};
+use thiserror::Error;
 
-use crate::expression::{Segment, evaluate, segments, validate_expression};
+use crate::expression::{ExprError, Segment, evaluate, segments, validate_expression};
 use crate::schema::ResponseBehavior;
 
 /// Whether rendering could change anything (`\${` escapes count, so they get unescaped).
@@ -69,12 +70,21 @@ pub(crate) fn validate_value(value: &Value) -> Result<(), String> {
 }
 
 pub(crate) fn validate_string(text: &str) -> Result<(), String> {
-    for segment in segments(text)? {
+    for segment in segments(text).map_err(|error| error.to_string())? {
         if let Segment::Expression(source) = segment {
-            validate_expression(&source)?;
+            validate_expression(&source).map_err(|error| error.to_string())?;
         }
     }
     Ok(())
+}
+
+/// Why a templated response didn't render. The text reaches the template-error body.
+#[derive(Debug, Error)]
+pub enum TemplateError {
+    #[error(transparent)]
+    Expr(#[from] ExprError),
+    #[error("templated status rendered {rendered}, not 100–599")]
+    Status { rendered: Value },
 }
 
 /// The request envelope for templates, converted for JMESPath only if an expression needs it.
@@ -85,15 +95,14 @@ pub type Request<'a> = &'a dyn Fn() -> Rcvar;
 pub fn render_response(
     response: &ResponseBehavior,
     request: Request,
-) -> Result<ResponseBehavior, String> {
+) -> Result<ResponseBehavior, TemplateError> {
     let status = match &response.status {
         Some(status) => {
             let rendered = render_value(status, request)?;
             let code = rendered
                 .as_u64()
                 .or_else(|| rendered.as_str()?.trim().parse().ok());
-            let code = status_code(code)
-                .ok_or_else(|| format!("templated status rendered {rendered}, not 100–599"))?;
+            let code = status_code(code).ok_or(TemplateError::Status { rendered })?;
             Some(Value::from(code))
         }
         None => None,
@@ -102,7 +111,7 @@ pub fn render_response(
         .headers
         .iter()
         .map(|(name, value)| Ok((name.clone(), render_text(value, request)?)))
-        .collect::<Result<_, String>>()?;
+        .collect::<Result<_, ExprError>>()?;
     let body = response
         .body
         .as_ref()
@@ -123,7 +132,7 @@ pub fn render_response(
 pub fn render_grpc_response(
     response: &ResponseBehavior,
     request: Request,
-) -> Result<ResponseBehavior, String> {
+) -> Result<ResponseBehavior, TemplateError> {
     let render = |value: &Option<Value>| {
         value
             .as_ref()
@@ -137,7 +146,7 @@ pub fn render_grpc_response(
             .metadata
             .iter()
             .map(|(name, value)| Ok((name.clone(), render_text(value, request)?)))
-            .collect::<Result<_, String>>()?,
+            .collect::<Result<_, ExprError>>()?,
         ..response.clone()
     })
 }
@@ -147,7 +156,7 @@ fn status_code(code: Option<u64>) -> Option<u16> {
         .and_then(|code| u16::try_from(code).ok())
 }
 
-fn render_value(value: &Value, request: Request) -> Result<Value, String> {
+fn render_value(value: &Value, request: Request) -> Result<Value, ExprError> {
     match value {
         Value::String(text) => render_string(text, request),
         Value::Array(items) => items
@@ -158,14 +167,14 @@ fn render_value(value: &Value, request: Request) -> Result<Value, String> {
         Value::Object(fields) => fields
             .iter()
             .map(|(key, item)| Ok((key.clone(), render_value(item, request)?)))
-            .collect::<Result<Map<_, _>, String>>()
+            .collect::<Result<Map<_, _>, ExprError>>()
             .map(Value::Object),
         other => Ok(other.clone()),
     }
 }
 
 /// Exactly one `${ }` keeps the result's JSON type; anything else interpolates into text.
-fn render_string(text: &str, request: Request) -> Result<Value, String> {
+fn render_string(text: &str, request: Request) -> Result<Value, ExprError> {
     let segments = segments(text)?;
     match segments.as_slice() {
         [Segment::Expression(source)] => evaluate(source, &request()),
@@ -173,11 +182,11 @@ fn render_string(text: &str, request: Request) -> Result<Value, String> {
     }
 }
 
-fn render_text(text: &str, request: Request) -> Result<String, String> {
+fn render_text(text: &str, request: Request) -> Result<String, ExprError> {
     interpolate(segments(text)?, request)
 }
 
-fn interpolate(segments: Vec<Segment>, request: Request) -> Result<String, String> {
+fn interpolate(segments: Vec<Segment>, request: Request) -> Result<String, ExprError> {
     segments
         .into_iter()
         .map(|segment| match segment {
@@ -308,7 +317,10 @@ mod tests {
             &request,
         )
         .unwrap_err();
-        assert!(error.contains("not 100–599"), "{error}");
+        assert_eq!(
+            error.to_string(),
+            r#"templated status rendered "Ada", not 100–599"#
+        );
     }
 
     #[test]

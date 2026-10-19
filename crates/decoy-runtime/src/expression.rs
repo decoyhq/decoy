@@ -14,6 +14,34 @@ use jmespath::{
     interpret,
 };
 use serde_json::Value;
+use thiserror::Error;
+
+/// Why an expression didn't scan, compile or evaluate. The text reaches miss bodies and template
+/// errors, so it is part of the wire contract.
+#[derive(Debug, Clone, PartialEq, Error)]
+pub enum ExprError {
+    #[error("unterminated `${{` in {input:?}")]
+    Unterminated { input: String },
+    #[error("predicate {predicate:?} must be exactly one `${{ <jmespath> }}` expression")]
+    NotOneExpression { predicate: String },
+    #[error("invalid JMESPath `{expression}`: {error}")]
+    Invalid {
+        expression: String,
+        error: Box<JmespathError>,
+    },
+    #[error("`{expression}` failed: {error}")]
+    Failed {
+        expression: String,
+        error: Box<JmespathError>,
+    },
+    /// The result didn't convert to JSON; `reason` is text because `serde_json::Error` isn't
+    /// `Clone` or `PartialEq`.
+    #[error("`{expression}` result: {reason}")]
+    Result { expression: String, reason: String },
+    /// A predicate failed to evaluate.
+    #[error("{0}")]
+    Predicate(Box<JmespathError>),
+}
 
 /// A YAML string split into literal text and `${ … }` expression sources.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,7 +53,7 @@ pub enum Segment {
 /// Split `input` into text and expressions. `\${` is a literal `${`; the closing `}` is found by
 /// brace depth outside string literals, so `${ {a: b} }` and `${ join('}', tags) }` work. An
 /// unterminated `${` is an error.
-pub fn segments(input: &str) -> Result<Vec<Segment>, String> {
+pub fn segments(input: &str) -> Result<Vec<Segment>, ExprError> {
     let mut segments = Vec::new();
     let mut text = String::new();
     let mut rest = input;
@@ -35,8 +63,9 @@ pub fn segments(input: &str) -> Result<Vec<Segment>, String> {
             text.push_str("${");
             rest = after;
         } else if let Some(after) = rest.strip_prefix("${") {
-            let end =
-                closing_brace(after).ok_or_else(|| format!("unterminated `${{` in {input:?}"))?;
+            let end = closing_brace(after).ok_or_else(|| ExprError::Unterminated {
+                input: input.to_owned(),
+            })?;
             if !text.is_empty() {
                 segments.push(Segment::Text(std::mem::take(&mut text)));
             }
@@ -81,12 +110,12 @@ fn closing_brace(source: &str) -> Option<usize> {
 }
 
 /// The single expression of a predicate string, which must be exactly `${ … }`.
-fn predicate_source(predicate: &str) -> Result<String, String> {
+fn predicate_source(predicate: &str) -> Result<String, ExprError> {
     match segments(predicate)?.as_slice() {
         [Segment::Expression(source)] => Ok(source.clone()),
-        _ => Err(format!(
-            "predicate {predicate:?} must be exactly one `${{ <jmespath> }}` expression"
-        )),
+        _ => Err(ExprError::NotOneExpression {
+            predicate: predicate.to_owned(),
+        }),
     }
 }
 
@@ -120,10 +149,11 @@ static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
     runtime
 });
 
-fn compile(source: &str) -> Result<jmespath::Expression<'static>, String> {
-    RUNTIME
-        .compile(source)
-        .map_err(|error| format!("invalid JMESPath `{source}`: {error}"))
+fn compile(source: &str) -> Result<jmespath::Expression<'static>, ExprError> {
+    RUNTIME.compile(source).map_err(|error| ExprError::Invalid {
+        expression: source.to_owned(),
+        error: Box::new(error),
+    })
 }
 
 type Cache = RefCell<HashMap<String, Rc<jmespath::Expression<'static>>>>;
@@ -137,15 +167,15 @@ thread_local! {
 }
 
 /// `compile`, once per source and thread: requests reuse the parsed expression.
-fn compiled(source: &str) -> Result<Rc<jmespath::Expression<'static>>, String> {
+fn compiled(source: &str) -> Result<Rc<jmespath::Expression<'static>>, ExprError> {
     cached(&COMPILED, source, || compile(source))
 }
 
 fn cached(
     cache: &'static LocalKey<Cache>,
     key: &str,
-    compile: impl FnOnce() -> Result<jmespath::Expression<'static>, String>,
-) -> Result<Rc<jmespath::Expression<'static>>, String> {
+    compile: impl FnOnce() -> Result<jmespath::Expression<'static>, ExprError>,
+) -> Result<Rc<jmespath::Expression<'static>>, ExprError> {
     if let Some(expression) = cache.with(|cache| cache.borrow().get(key).cloned()) {
         return Ok(expression);
     }
@@ -181,15 +211,20 @@ fn search(expression: &jmespath::Expression<'_>, envelope: &Rcvar) -> SearchResu
 }
 
 /// Check one expression source (without `${ }`) at startup.
-pub fn validate_expression(source: &str) -> Result<(), String> {
+pub fn validate_expression(source: &str) -> Result<(), ExprError> {
     compile(source).map(|_| ())
 }
 
 /// Evaluate one expression source against `envelope`.
-pub fn evaluate(source: &str, envelope: &Rcvar) -> Result<Value, String> {
-    let result = search(&*compiled(source)?, envelope)
-        .map_err(|error| format!("`{source}` failed: {error}"))?;
-    serde_json::to_value(&*result).map_err(|error| format!("`{source}` result: {error}"))
+pub fn evaluate(source: &str, envelope: &Rcvar) -> Result<Value, ExprError> {
+    let result = search(&*compiled(source)?, envelope).map_err(|error| ExprError::Failed {
+        expression: source.to_owned(),
+        error: Box::new(error),
+    })?;
+    serde_json::to_value(&*result).map_err(|error| ExprError::Result {
+        expression: source.to_owned(),
+        reason: error.to_string(),
+    })
 }
 
 fn string(text: String) -> Rcvar {
@@ -265,18 +300,20 @@ fn random_item(args: &[Rcvar], _: &mut Context<'_>) -> Result<Rcvar, JmespathErr
 }
 
 /// Check a predicate at startup so a bad one never reaches a request.
-pub fn validate_predicate(predicate: &str) -> Result<(), String> {
+pub fn validate_predicate(predicate: &str) -> Result<(), ExprError> {
     compile(&predicate_source(predicate)?).map(|_| ())
 }
 
 /// Evaluate a validated predicate against `envelope`. JMESPath truthiness: `null`, `false`, `""`,
 /// `[]`, and `{}` are false. An evaluation error (e.g. a function given the wrong type) is
 /// returned, and logged so the miss it causes isn't silent; the caller treats it as false.
-pub fn predicate_holds(predicate: &str, envelope: &Rcvar) -> Result<bool, String> {
+pub fn predicate_holds(predicate: &str, envelope: &Rcvar) -> Result<bool, ExprError> {
     let result = cached(&PREDICATES, predicate, || {
         compile(&predicate_source(predicate)?)
     })
-    .and_then(|expression| search(&expression, envelope).map_err(|error| error.to_string()));
+    .and_then(|expression| {
+        search(&expression, envelope).map_err(|error| ExprError::Predicate(Box::new(error)))
+    });
     match result {
         Ok(result) => Ok(result.is_truthy()),
         Err(error) => {
@@ -364,10 +401,39 @@ mod tests {
         assert!(validate_predicate("${ body.amount > `1000` }").is_ok());
         assert!(validate_predicate("body.amount").is_err());
         assert!(validate_predicate("x ${ body.amount }").is_err());
-        assert!(
-            validate_predicate("${ body.[ }")
+        assert!(matches!(
+            validate_predicate("${ body.[ }"),
+            Err(ExprError::Invalid { .. })
+        ));
+    }
+
+    #[test]
+    fn error_messages_are_stable() {
+        // These reach miss bodies and template errors on the wire.
+        let envelope = to_rcvar(&json!({ "headers": { "x-tier": "gold" } }));
+        assert_eq!(
+            segments("${ body.id").unwrap_err().to_string(),
+            r#"unterminated `${` in "${ body.id""#
+        );
+        assert_eq!(
+            predicate_source("x ${ a }").unwrap_err().to_string(),
+            r#"predicate "x ${ a }" must be exactly one `${ <jmespath> }` expression"#
+        );
+        assert_eq!(
+            compile("body.[").unwrap_err().to_string(),
+            "invalid JMESPath `body.[`: Parse error: Unexpected nud token -- found Eof (line 0, column 6)\nbody.[\n      ^\n"
+        );
+        assert_eq!(
+            evaluate("abs(headers.\"x-tier\")", &envelope)
                 .unwrap_err()
-                .contains("invalid JMESPath")
+                .to_string(),
+            "`abs(headers.\"x-tier\")` failed: Runtime error: Argument 0 expects type number, given string (line 0, column 3)\nabs(headers.\"x-tier\")\n   ^\n"
+        );
+        assert_eq!(
+            predicate_holds("${ abs(headers.\"x-tier\") }", &envelope)
+                .unwrap_err()
+                .to_string(),
+            "Runtime error: Argument 0 expects type number, given string (line 0, column 3)\nabs(headers.\"x-tier\")\n   ^\n"
         );
     }
 
