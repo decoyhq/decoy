@@ -19,6 +19,8 @@ allow = [
   "Unlicense",
   "Zlib",
 ]
+# `notify` (config file watching, #294) is CC0; allow it for that crate only.
+exceptions = [{ allow = ["CC0-1.0"], crate = "notify" }]
 
 [bans]
 # Duplicate versions are known and benign (base64, getrandom, windows-sys, syn); see #267.

@@ -135,10 +135,16 @@ indented text with stable labels, so a copied detail reads well as text.
   `serve()` prints nothing: `decoy serve` prints the notices and `listening on` lines from
   `Server`, and the TUI shows them as system lines. `decoy serve` passes Ctrl-C/SIGTERM; the TUI
   passes its own quit signal too.
-- `Server::reloader()` returns a `Reloader`. `Reloader::reload(config)` builds the new Catalog
-  from a re-read `ServeConfig` off the lock, swaps it into the `Controller` (which keeps the
+- `Server::reloader()` returns a `Reloader`. `Reloader::reload(read_config)` reads the config,
+  builds the new Catalog off the lock, swaps it into the `Controller` (which keeps the
   Selections, see Reload) and returns the warnings. Reloads run one at a time. `decoy_tui::run`
   gets a closure that re-reads the config from the same flags for `/reload`.
+- `decoy_runtime::watch::ConfigWatcher` watches the config file's and collections file's parent
+  directories (the files themselves when polling), descriptor sets, and the `.yaml`/`.proto` files
+  in the routes and proto trees (with `notify`; polling where native events don't arrive or can't
+  be set up). `changed()` resolves once per burst after 300ms of quiet, then re-arms from the
+  config as it is now, so a recreated directory or moved `routes:` stays watched. The caller runs
+  a reload per signal: `decoy serve` prints the result to stderr, the TUI as system lines.
 - The TUI talks to the in-process `Controller` and subscribes to an in-process event broadcast
   (`RequestEvent`, `SessionEvent`, `LogEvent`). The Control API does not change.
 - Runtime warnings and errors are `Event::Log` on the server's broadcast (a task-local set around

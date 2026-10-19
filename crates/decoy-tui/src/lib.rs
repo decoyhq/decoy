@@ -18,6 +18,7 @@ use crossterm::event::{
 use crossterm::execute;
 use crossterm::terminal::supports_keyboard_enhancement;
 use decoy_runtime::config::ServeConfig;
+use decoy_runtime::watch::ConfigWatcher;
 use decoy_runtime::{ControlError, Controller, DEFAULT_SESSION, ServeError, Server};
 use futures_util::{Stream, StreamExt};
 use ratatui::Terminal;
@@ -31,7 +32,7 @@ pub use app::{App, Effect, Event, Options, Verb};
 const BATCH: usize = 1024;
 
 /// Re-reads the config from the same flags and files the server started with, for `/reload`.
-pub type LoadConfig = Box<dyn Fn() -> Result<ServeConfig, ServeError> + Send>;
+pub type LoadConfig = Box<dyn Fn() -> Result<ServeConfig, ServeError> + Send + Sync>;
 
 /// Runs the TUI over a started `server` until the user quits or the server stops, then restores
 /// the terminal and waits for the server to drain. `quit` must resolve the shutdown future the
@@ -40,6 +41,7 @@ pub async fn run(
     server: Server,
     quit: tokio::sync::oneshot::Sender<()>,
     load_config: LoadConfig,
+    mut watching: Option<ConfigWatcher>,
 ) -> Result<(), ServeError> {
     let reloader = Reloader {
         reloader: server.reloader(),
@@ -74,6 +76,9 @@ pub async fn run(
     for listener in &server.listeners {
         app.info(format!("listening on {}", listener.label()));
     }
+    if let Some(watcher) = &watching {
+        app.info(watcher.describe());
+    }
 
     let mut events = server.subscribe();
     let mut served = tokio::spawn(server.wait());
@@ -104,6 +109,7 @@ pub async fn run(
         &mut app,
         &controller,
         &reloader,
+        &mut watching,
         &mut events,
         &mut served,
     )
@@ -156,6 +162,7 @@ async fn event_loop(
     app: &mut App,
     controller: &RwLock<Controller>,
     reloader: &Reloader,
+    watching: &mut Option<ConfigWatcher>,
     events: &mut tokio::sync::broadcast::Receiver<decoy_runtime::events::Event>,
     served: &mut Served,
 ) -> std::io::Result<Option<Result<(), ServeError>>> {
@@ -174,6 +181,8 @@ async fn event_loop(
                 Err(RecvError::Closed) => return Ok(None),
             },
             stopped = &mut *served => return Ok(Some(joined(stopped))),
+            // `--watch`: a config file changed.
+            Some(()) = changed(watching) => Event::Reloaded(reloader.reload().await),
         };
         let mut batch = vec![first];
         while batch.len() < BATCH {
@@ -203,6 +212,14 @@ async fn event_loop(
     }
 }
 
+/// The next `--watch` signal; never without `--watch`.
+async fn changed(watching: &mut Option<ConfigWatcher>) -> Option<()> {
+    match watching {
+        Some(watcher) => watcher.changed().await,
+        None => std::future::pending().await,
+    }
+}
+
 /// What `/reload` needs: the config loader and the server to apply it to.
 struct Reloader {
     reloader: decoy_runtime::Reloader,
@@ -211,9 +228,8 @@ struct Reloader {
 
 impl Reloader {
     async fn reload(&self) -> Result<decoy_runtime::Reloaded, String> {
-        let config = (self.load_config)().map_err(|error| error.to_string())?;
         self.reloader
-            .reload(config)
+            .reload(&self.load_config)
             .await
             .map_err(|error| error.to_string())
     }
@@ -268,6 +284,7 @@ mod tests {
         dir: tempfile::TempDir,
         controller: std::sync::Arc<RwLock<Controller>>,
         reloader: Reloader,
+        watching: Option<ConfigWatcher>,
         out: Vec<u8>,
         keys: mpsc::UnboundedSender<Input>,
         input: std::pin::Pin<Box<dyn Stream<Item = Input>>>,
@@ -313,6 +330,7 @@ mod tests {
                 dir,
                 controller,
                 reloader,
+                watching: None,
                 out: Vec::new(),
                 keys,
                 input: Box::pin(futures_util::stream::poll_fn(move |cx| rx.poll_recv(cx))),
@@ -353,6 +371,7 @@ mod tests {
                 &mut self.app,
                 &self.controller,
                 &self.reloader,
+                &mut self.watching,
                 &mut self.events,
                 &mut self.served,
             )
@@ -482,6 +501,33 @@ mod tests {
         let screen = harness.screen();
         assert!(screen.contains("reload failed"), "{screen}");
         assert_eq!(collection(&harness).await, "calm");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_saved_config_file_reloads_under_watch() {
+        let mut harness = Harness::new(16).await;
+        let config = (harness.reloader.load_config)().unwrap();
+        let paths = decoy_runtime::watch::WatchedPaths::of(&config, None);
+        harness.watching = Some(ConfigWatcher::new(paths, Box::new(|| None), true).unwrap());
+
+        let collections = harness.dir.path().join("collections.yaml");
+        let controller = harness.controller.clone();
+        let keys = harness.keys.clone();
+        tokio::spawn(async move {
+            std::fs::write(
+                collections,
+                "- id: calm\n  routes: [users-by-id:user-1:ada]\n",
+            )
+            .unwrap();
+            while controller.read().await.default_collection() != "calm" {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            keys.send(ctrl_d()).unwrap();
+        });
+        let quit = tokio::time::timeout(std::time::Duration::from_secs(10), harness.run());
+        assert!(quit.await.expect("no reload").unwrap().is_none());
+        let screen = harness.screen();
+        assert!(screen.contains("reloaded"), "{screen}");
     }
 
     #[tokio::test]

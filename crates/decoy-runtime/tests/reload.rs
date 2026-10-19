@@ -54,7 +54,7 @@ impl Fixture {
     async fn reload(&self) -> Result<Reloaded, String> {
         self.server
             .reloader()
-            .reload(config(self.temp.path()))
+            .reload(|| Ok(config(self.temp.path())))
             .await
             .map_err(|error| error.to_string())
     }

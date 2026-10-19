@@ -1687,3 +1687,53 @@ cases:
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("must be integer milliseconds"), "{stderr}");
 }
+
+/// `decoy serve --watch` (#294): a save reloads, a broken file is reported once per save.
+#[test]
+fn watch_reloads_on_save_and_reports_a_parse_error_once() {
+    let fixture = Fixture::new();
+    fixture.write_route("users.yaml", route_with_id("users"));
+    fixture.write_collections("- id: default\n  routes: []\n");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_decoy"))
+        .args(fixture.args(unused_port(), &["--watch"]))
+        .current_dir(fixture.temp.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let stderr = child.stderr.take().unwrap();
+    let _server = Server(child);
+    let (tx, lines) = mpsc::channel();
+    thread::spawn(move || {
+        for line in std::io::BufRead::lines(std::io::BufReader::new(stderr)) {
+            if tx.send(line.unwrap()).is_err() {
+                return;
+            }
+        }
+    });
+    let next = |what: &str| loop {
+        let line = lines
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap_or_else(|_| panic!("no `{what}` line"));
+        if line.contains(what) {
+            return line;
+        }
+    };
+    next("watching the config files");
+
+    fixture.write_route("other.yaml", route_with_id("other"));
+    assert_eq!(
+        next("reloaded"),
+        "decoy serve: reloaded: 2 routes, 1 collection"
+    );
+
+    fixture.write_route("other.yaml", "id: other\ncases: [");
+    let error = next("reload failed");
+    assert!(error.contains("other.yaml"), "{error}");
+    // One save, one error, however many file events the save made.
+    let more: Vec<String> = lines
+        .recv_timeout(Duration::from_secs(1))
+        .into_iter()
+        .collect();
+    assert!(more.is_empty(), "{more:?}");
+}

@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use decoy_runtime::config::{ServeCliOptions, ServeConfig};
+use decoy_runtime::watch::{ConfigWatcher, WatchedPaths};
 
 mod upgrade;
 
@@ -44,6 +45,13 @@ struct ServeArgs {
     collection: Option<String>,
     #[arg(long, value_name = "URL")]
     passthrough_base_url: Option<String>,
+    /// Reload when a config, routes, collections or proto file changes
+    #[arg(long)]
+    watch: bool,
+    /// --watch, polling the files instead of waiting for change events (implies --watch; WSL2
+    /// `/mnt/*` paths and network filesystems poll on their own)
+    #[arg(long)]
+    watch_poll: bool,
 }
 
 #[tokio::main]
@@ -78,18 +86,46 @@ async fn tui(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             () = shutdown_signal() => {}
         }
     };
-    let server = decoy_runtime::serve(serve_config(args.clone())?, shutdown)
+    let config = serve_config(args.clone())?;
+    let watching = watch(&args, &config)?;
+    let server = decoy_runtime::serve(config, shutdown)
         .await
         .map_err(|error| error as Box<dyn std::error::Error>)?;
-    let load_config =
-        Box::new(move || serve_config(args.clone()).map_err(|error| error.to_string().into()));
-    decoy_tui::run(server, quit, load_config)
+    decoy_tui::run(server, quit, config_reader(args), watching)
         .await
         .map_err(|error| error as Box<dyn std::error::Error>)
 }
 
+/// Re-reads the config from the same flags and files, for a reload.
+fn config_reader(args: ServeArgs) -> decoy_tui::LoadConfig {
+    Box::new(move || serve_config(args.clone()).map_err(|error| error.to_string().into()))
+}
+
+/// `--watch`: one signal per burst of changes to the files `config` was read from.
+fn watch(
+    args: &ServeArgs,
+    config: &ServeConfig,
+) -> Result<Option<ConfigWatcher>, Box<dyn std::error::Error>> {
+    if !args.watch && !args.watch_poll {
+        return Ok(None);
+    }
+    let config_file = match &args.config {
+        Some(file) => Some(std::env::current_dir()?.join(file)),
+        None => None,
+    };
+    let paths = WatchedPaths::of(config, config_file.as_deref());
+    let poll = args.watch_poll;
+    let args = args.clone();
+    let read_paths = Box::new(move || {
+        let config = serve_config(args.clone()).ok()?;
+        Some(WatchedPaths::of(&config, config_file.as_deref()))
+    });
+    Ok(Some(ConfigWatcher::new(paths, read_paths, poll)?))
+}
+
 async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let config = serve_config(args)?;
+    let config = serve_config(args.clone())?;
+    let watching = watch(&args, &config)?;
     let server = decoy_runtime::serve(config, shutdown_signal())
         .await
         .map_err(|error| error as Box<dyn std::error::Error>)?;
@@ -98,6 +134,26 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
     for listener in &server.listeners {
         eprintln!("decoy serve listening on {}", listener.label());
+    }
+    if let Some(mut watcher) = watching {
+        eprintln!("decoy serve: {}", watcher.describe());
+        let reloader = server.reloader();
+        let read_config = config_reader(args);
+        tokio::spawn(async move {
+            while watcher.changed().await.is_some() {
+                match reloader.reload(&read_config).await {
+                    Ok(reloaded) => {
+                        eprintln!("decoy serve: reloaded: {}", reloaded.summary());
+                        for warning in reloaded.warnings {
+                            eprintln!("decoy serve: {warning}");
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("decoy serve: reload failed, the old config stays live: {error}");
+                    }
+                }
+            }
+        });
     }
     server
         .wait()
