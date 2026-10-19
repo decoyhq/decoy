@@ -8,7 +8,7 @@ use std::thread;
 
 use super::{Candidate, Catalog, Rejection};
 use crate::collections::CollectionsFile;
-use crate::http::{HttpExecutionRequest, HttpRequest, RequestMetadata, RuntimeConfig};
+use crate::http::{HttpRequest, RuntimeConfig};
 use crate::schema::{HttpMethod, PassthroughTarget, Route};
 
 #[derive(Debug)]
@@ -84,17 +84,6 @@ pub(crate) fn spawn_upstream() -> (
     });
 
     (format!("http://{addr}"), rx, handle)
-}
-
-pub(crate) fn execution_request(path: &str, path_and_query: &str) -> HttpExecutionRequest {
-    HttpExecutionRequest {
-        method: HttpMethod::Get,
-        path: path.to_owned(),
-        path_and_query: path_and_query.to_owned(),
-        headers: BTreeMap::new(),
-        body: Vec::new(),
-        metadata: RequestMetadata::default(),
-    }
 }
 
 pub(crate) fn get_user_route() -> Route {

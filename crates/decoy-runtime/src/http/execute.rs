@@ -171,13 +171,22 @@ mod tests {
 
     use super::*;
     use crate::collections::CollectionsFile;
-    use crate::engine::test_support::{
-        candidate, catalog, execution_request, explain_catalog, get, spawn_upstream,
-    };
+    use crate::engine::test_support::{candidate, catalog, explain_catalog, get, spawn_upstream};
     use crate::engine::{MissDiagnostic, Rejection};
     use crate::http::{BodyPlan, ResolveOutcome, RuntimeConfig};
     use crate::matching::ConditionFailure;
     use crate::schema::Route;
+
+    fn execution_request(path: &str, path_and_query: &str) -> HttpExecutionRequest {
+        HttpExecutionRequest {
+            method: HttpMethod::Get,
+            path: path.to_owned(),
+            path_and_query: path_and_query.to_owned(),
+            headers: BTreeMap::new(),
+            body: Vec::new(),
+            metadata: RequestMetadata::default(),
+        }
+    }
 
     #[tokio::test]
     async fn execution_forwards_only_when_selected_behavior_is_passthrough() {

@@ -5,11 +5,11 @@ pub const DEFAULT_SESSION: &str = "default";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selection {
-    pub(super) collection: String,
+    pub(crate) collection: String,
     /// `useCollection` picked `collection`; otherwise it follows the default across reloads.
     pub(super) collection_picked: bool,
     /// In call order; see [`Catalog::activations`](super::Catalog::activations) for how they apply.
-    pub(super) route_overrides: Vec<Activation>,
+    pub(crate) route_overrides: Vec<Activation>,
     /// [`Controller`](super::Controller)'s clock at the last verb that changed it; the lowest is evicted first.
     pub(super) touched: u64,
 }

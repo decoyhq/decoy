@@ -16,8 +16,14 @@ The layout below is the target; code still in flat files moves there in behaviou
 
 ## Rules
 
-- `engine/` must not import `server`, `control_api`, axum, hyper, or reqwest, nor transport I/O.
-  Session constants (`DEFAULT_SESSION`, `SESSION_HEADER`) live in the core.
+- `engine/` must not import `server`, `control_api`, axum, hyper, or reqwest, nor a transport's
+  `execute` or `forward` code. It may import transport plan and request types (`ResponsePlan`,
+  `HttpResponsePlan`, `BodyPlan`, `ResolveOutcome`, `HttpRequest`, `RequestMetadata`,
+  `RuntimeConfig`, gRPC equivalents). Session constants (`DEFAULT_SESSION`, `SESSION_HEADER`) live
+  in the core.
+- Session-level execute drivers (`SessionView::execute_http`, `execute_grpc`) live in the transport
+  folder (`http/view.rs`, `grpc/view.rs`) as `impl SessionView` blocks; `engine/view.rs` keeps the
+  struct and event capture (`start`, `emit`).
 - Transport folders must not import the Controller.
 - Resolve is pure: no sleeps, no network, no clock. I/O belongs in execute or adapters.
 - A new transport is a new folder. Don't add a `Transport` trait, traits for single

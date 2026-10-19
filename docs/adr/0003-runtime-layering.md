@@ -25,8 +25,13 @@ every file bigger still.
   - `server/` (axum ingress, lifecycle, reload) and `control_api.rs`: inbound adapters.
   - Loading and model (`schema`, `config`, `startup`, `collections`, `matching`, `expression`,
     `template`) stay flat, as do the shared `events`, `request`, `protos`, `tls` and `watch`.
-- **Dependency rule.** `engine/` never imports `server`, `control_api`, transport folders' I/O, axum,
-  hyper, or reqwest. Transport folders never import the Controller. Adapters depend inward only.
+- **Dependency rule.** `engine/` never imports `server`, `control_api`, axum, hyper, or reqwest, nor
+  a transport's execute or forward code. It may import a transport's plan and request types
+  (`ResponsePlan`, `HttpResponsePlan`, `BodyPlan`, `ResolveOutcome`, `HttpRequest`,
+  `RequestMetadata`, `RuntimeConfig` and their gRPC equivalents) and load-time checks such as
+  `grpc::schema::check_route`. A transport's execute driver for a Session (`SessionView::execute_http`,
+  `SessionView::execute_grpc`) lives in that transport's folder as an `impl SessionView` block.
+  Transport folders never import the Controller. Adapters depend inward only.
 - **Typed errors where an error crosses a layer or drives a decision**, via `thiserror`, one enum
   per module. Load-time validation reasons that only become diagnostic text stay `String` on
   purpose. `Display` text is part of the wire contract (miss bodies, Control API `{error}`), so
