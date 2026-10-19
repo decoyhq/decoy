@@ -220,8 +220,9 @@ fn normalize_for_sort(routes_dir: &Path, path: &Path) -> String {
 }
 
 fn decode_route(path: &Path, input: &str) -> Result<Route, StartupError> {
-    let yaml = parse_yaml(path, input)?;
-    let route = serde_norway::from_value::<Route>(yaml).map_err(|error| {
+    parse_yaml(path, input)?;
+    // Decode from text, not the parsed value, so schema errors keep their line.
+    let route = serde_norway::from_str::<Route>(input).map_err(|error| {
         StartupError::with_source(
             StartupDiagnosticKind::Schema,
             source_from_yaml_error(path, &error),
@@ -233,8 +234,8 @@ fn decode_route(path: &Path, input: &str) -> Result<Route, StartupError> {
 }
 
 fn decode_collections(path: &Path, input: &str) -> Result<Vec<Collection>, StartupError> {
-    let yaml = parse_yaml(path, input)?;
-    serde_norway::from_value::<Vec<Collection>>(yaml).map_err(|error| {
+    parse_yaml(path, input)?;
+    serde_norway::from_str::<Vec<Collection>>(input).map_err(|error| {
         StartupError::with_source(
             StartupDiagnosticKind::Schema,
             source_from_yaml_error(path, &error),
@@ -411,14 +412,14 @@ cases:
         assert_eq!(
             diagnose("id: get-user\ntransport: http\ncases: 7\n", &collections),
             (
-                None,
-                "failed to decode route schema: invalid type: integer `7`, expected a map"
+                Some(3),
+                "failed to decode route schema: cases: invalid type: integer `7`, expected a map at line 3 column 8"
                     .to_owned()
             )
         );
         assert_eq!(
             diagnose(&route_yaml("get-user"), "- id: local\n  routes: oops\n"),
-            (None, "failed to decode collections schema: invalid type: string \"oops\", expected a sequence".to_owned())
+            (Some(2), "failed to decode collections schema: .[0].routes: invalid type: string \"oops\", expected a sequence at line 2 column 11".to_owned())
         );
         assert_eq!(
             diagnose(&route_yaml("get-user"), "- id: local\n  routes:\n    - a\n\t- b\n"),
@@ -670,5 +671,37 @@ cases:
         .unwrap();
 
         assert_eq!(startup.default_collection, "local");
+    }
+
+    #[test]
+    fn startup_unknown_keys_name_the_file_and_line() {
+        let temp = tempfile::tempdir().unwrap();
+        let route_path = temp.path().join("routes/get-user.yaml");
+        let collections_path = temp.path().join("collections.yaml");
+        write(
+            &route_path,
+            &route_yaml("get-user").replace("    match:", "    matches:"),
+        );
+        write(
+            &collections_path,
+            &collections_yaml("get-user:user-123:success"),
+        );
+
+        let error = load_catalog_from_files(
+            temp.path().join("routes"),
+            &collections_path,
+            RuntimeConfig::default(),
+            None,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.diagnostic.kind, StartupDiagnosticKind::Schema);
+        assert_eq!(error.diagnostic.source.path, route_path);
+        assert_eq!(error.diagnostic.source.line, Some(9));
+        assert!(
+            error.diagnostic.message.contains("unknown field `matches`"),
+            "{}",
+            error.diagnostic.message
+        );
     }
 }
