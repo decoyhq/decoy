@@ -1,4 +1,6 @@
+pub mod catalog;
 pub mod controller;
+pub mod outcome;
 pub mod session;
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -8,21 +10,23 @@ use std::cell::OnceCell;
 use std::collections::BTreeMap;
 
 use jmespath::Rcvar;
-use thiserror::Error;
 
-use crate::collections::{Activation, CollectionError, CollectionsFile};
+use crate::collections::Activation;
 use crate::events::{Match, Outcome};
 use crate::expression::{set_field, to_rcvar};
-use crate::http::{BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig};
+use crate::http::{BodyPlan, RequestMetadata, ResponsePlan};
 use crate::http_forward::{
     ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough, target_url,
 };
-use crate::matching::{ConditionFailure, MatchInput, case_matches, case_mismatch};
+use crate::matching::{MatchInput, case_matches, case_mismatch};
 use crate::request::RequestEnvelope;
-use crate::schema::{Behavior, HttpMethod, Route, RouteMatch};
-use crate::template::{has_templates, render_response};
+use crate::schema::{Behavior, HttpMethod, RouteMatch};
+use crate::template::render_response;
 
+pub use catalog::{Catalog, CatalogError};
 pub use controller::{ControlError, Controller, MAX_SESSIONS};
+pub(crate) use outcome::reject;
+pub use outcome::{Candidate, MissDiagnostic, Rejection};
 pub use session::{
     DEFAULT_SESSION, RouteOverrideSnapshot, SESSION_HEADER, Selection, SelectionSnapshot,
 };
@@ -74,177 +78,11 @@ pub enum ResolveOutcome<'a> {
     Miss(MissDiagnostic),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MissDiagnostic {
-    pub collection: String,
-    pub reason: String,
-    /// Every active route entry evaluated, bottom-to-top, with why it was rejected.
-    pub candidates: Vec<Candidate>,
-}
-
-/// One evaluated active route entry and why it did not match.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct Candidate {
-    pub address: String,
-    #[serde(flatten)]
-    pub rejection: Rejection,
-}
-
-/// Why a Candidate was rejected. `method`/`path` hold the Route's value; the request's is known.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-#[serde(tag = "reason", rename_all = "camelCase")]
-pub enum Rejection {
-    MissingRoute,
-    MissingCase,
-    MissingBehavior,
-    /// The Route serves another transport (an HTTP request against a gRPC Route, or back).
-    Transport,
-    Method {
-        expected: String,
-    },
-    Path {
-        expected: String,
-    },
-    Condition(ConditionFailure),
-    /// The request did not decode with the Route's Pipeline.
-    Decode {
-        error: String,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Catalog {
-    routes: BTreeMap<String, Route>,
-    collections: CollectionsFile,
-    /// Each Collection resolved once (inheritance, validation) instead of on every request.
-    resolved: BTreeMap<String, Result<Vec<Activation>, String>>,
-    /// HTTP Response Behaviors without templates, planned once with the body serialized:
-    /// route → case → behavior.
-    static_plans: BTreeMap<String, BTreeMap<String, BTreeMap<String, HttpResponsePlan>>>,
-    runtime: RuntimeConfig,
-}
-
 impl Catalog {
-    pub fn new(
-        routes: Vec<Route>,
-        collections: CollectionsFile,
-        runtime: RuntimeConfig,
-    ) -> Result<Self, CatalogError> {
-        for route in &routes {
-            route.validate()?;
-            crate::grpc_schema::check_route(route, &runtime.protos).map_err(CatalogError::Grpc)?;
-        }
-        Self::from_checked(routes, collections, runtime)
-    }
-
-    /// `new` for Routes startup already validated and checked against the protos (with file
-    /// paths in its diagnostics), so the expensive proto check runs once.
-    pub(crate) fn from_checked(
-        routes: Vec<Route>,
-        collections: CollectionsFile,
-        runtime: RuntimeConfig,
-    ) -> Result<Self, CatalogError> {
-        let mut by_id = BTreeMap::new();
-
-        for route in routes {
-            if by_id.insert(route.id.clone(), route).is_some() {
-                return Err(CatalogError::DuplicateRoute);
-            }
-        }
-
-        let resolved = collections
-            .ids()
-            .map(|id| {
-                let activations = collections.resolve(id).map_err(|error| error.to_string());
-                (id.to_owned(), activations)
-            })
-            .collect();
-        let static_plans = by_id
-            .values()
-            .filter(|route| matches!(route.route_match, RouteMatch::Http(_)))
-            .map(|route| {
-                let cases = route.cases.iter().map(|(case_id, case)| {
-                    let behaviors = case.behaviors.iter().filter_map(|(name, behavior)| {
-                        let Behavior::Response(response) = behavior else {
-                            return None;
-                        };
-                        if has_templates(response) {
-                            return None;
-                        }
-                        let metadata = RequestMetadata::default();
-                        let ResponsePlan::Response(mut plan) =
-                            ResponsePlan::from_behavior(route, behavior, &runtime, &metadata)
-                        else {
-                            unreachable!("a Response Behavior plans a response")
-                        };
-                        plan.body = plan.body.map(|body| BodyPlan::Bytes(body.into_bytes()));
-                        Some((name.clone(), plan))
-                    });
-                    (case_id.clone(), behaviors.collect())
-                });
-                (route.id.clone(), cases.collect())
-            })
-            .collect();
-        Ok(Self {
-            routes: by_id,
-            collections,
-            resolved,
-            static_plans,
-            runtime,
-        })
-    }
-
     /// Resolves with the full explanation; serving uses `execute_http`, which skips it on hits.
     #[cfg(test)]
     pub fn resolve_http(&self, collection_id: &str, request: &HttpRequest) -> ResolveOutcome<'_> {
         self.resolve_http_with_metadata(collection_id, request, &RequestMetadata::default())
-    }
-
-    /// Every Route, by id.
-    pub fn routes(&self) -> impl Iterator<Item = &Route> {
-        self.routes.values()
-    }
-
-    pub fn collection_ids(&self) -> impl Iterator<Item = &str> {
-        self.collections.ids()
-    }
-
-    pub fn validate_collection(&self, collection_id: &str) -> Result<(), ControlError> {
-        self.collections
-            .get(collection_id)
-            .map(|_| ())
-            .ok_or_else(|| ControlError::UnknownCollection {
-                id: collection_id.to_owned(),
-            })
-    }
-
-    pub fn validate_behavior_address(
-        &self,
-        route_id: &str,
-        case_id: &str,
-        behavior_id: &str,
-    ) -> Result<(), ControlError> {
-        let route = self
-            .routes
-            .get(route_id)
-            .ok_or_else(|| ControlError::UnknownRoute {
-                route: route_id.to_owned(),
-            })?;
-        let case = route
-            .cases
-            .get(case_id)
-            .ok_or_else(|| ControlError::UnknownCase {
-                route: route_id.to_owned(),
-                case: case_id.to_owned(),
-            })?;
-        case.behaviors
-            .get(behavior_id)
-            .map(|_| ())
-            .ok_or_else(|| ControlError::UnknownBehavior {
-                route: route_id.to_owned(),
-                case: case_id.to_owned(),
-                behavior: behavior_id.to_owned(),
-            })
     }
 
     #[cfg(test)]
@@ -373,45 +211,6 @@ impl Catalog {
                 explain.then_some(Outcome::Miss(miss)),
             ),
         }
-    }
-
-    /// The Collection's activations with Session overrides applied: an override replaces its
-    /// `route+case` entry in place, or is appended after the Collection in call order.
-    pub(crate) fn activations<'a>(
-        &'a self,
-        collection_id: &str,
-        overrides: &'a [Activation],
-    ) -> Result<Vec<&'a Activation>, String> {
-        let collection = self
-            .resolved
-            .get(collection_id)
-            .ok_or_else(|| {
-                CollectionError::UnknownCollection {
-                    id: collection_id.to_owned(),
-                }
-                .to_string()
-            })?
-            .as_ref()
-            .map_err(Clone::clone)?;
-        let same = |a: &Activation, b: &Activation| a.route == b.route && a.case == b.case;
-        let mut activations: Vec<&Activation> = collection
-            .iter()
-            .map(|entry| overrides.iter().find(|o| same(o, entry)).unwrap_or(entry))
-            .collect();
-        activations.extend(
-            overrides
-                .iter()
-                .filter(|o| !collection.iter().any(|entry| same(o, entry))),
-        );
-        Ok(activations)
-    }
-
-    pub(crate) fn route(&self, id: &str) -> Option<&Route> {
-        self.routes.get(id)
-    }
-
-    pub(crate) fn runtime(&self) -> &RuntimeConfig {
-        &self.runtime
     }
 
     fn resolve_http_with_overrides(
@@ -550,20 +349,6 @@ impl Catalog {
     }
 }
 
-/// Records why `activation` was rejected when explaining (`Some`); the fast path builds nothing.
-pub(crate) fn reject(
-    candidates: &mut Option<Vec<Candidate>>,
-    activation: &Activation,
-    rejection: impl FnOnce() -> Rejection,
-) {
-    if let Some(candidates) = candidates {
-        candidates.push(Candidate {
-            address: activation.address(),
-            rejection: rejection(),
-        });
-    }
-}
-
 fn match_path(pattern: &str, actual: &str) -> Option<BTreeMap<String, String>> {
     let pattern_parts = split_path(pattern);
     let actual_parts = split_path(actual);
@@ -610,18 +395,6 @@ impl From<crate::http::HttpResponsePlan> for ForwardResponse {
     }
 }
 
-#[derive(Debug, Error)]
-pub enum CatalogError {
-    #[error(transparent)]
-    Validation(#[from] crate::schema::ValidationError),
-    #[error("duplicate route id")]
-    DuplicateRoute,
-    #[error("{0}")]
-    Grpc(String),
-    #[error(transparent)]
-    Collection(#[from] CollectionError),
-}
-
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
@@ -631,8 +404,9 @@ mod tests {
     use crate::engine::test_support::{
         candidate, catalog, execution_request, explain_catalog, get, spawn_upstream,
     };
-    use crate::http::{BodyPlan, HttpResponsePlan, PassthroughPlan};
-    use crate::schema::PassthroughTarget;
+    use crate::http::{BodyPlan, HttpResponsePlan, PassthroughPlan, RuntimeConfig};
+    use crate::matching::ConditionFailure;
+    use crate::schema::{PassthroughTarget, Route};
 
     #[test]
     fn golden_route_case_behavior_selection_prefers_last_matching_activation() {
