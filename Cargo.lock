@@ -593,6 +593,7 @@ dependencies = [
  "prost-reflect",
  "rcgen",
  "reqwest",
+ "semver",
  "serde_json",
  "tempfile",
  "tokio",

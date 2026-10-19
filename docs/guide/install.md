@@ -22,8 +22,8 @@ one; `DECOY_INSTALL_DIR` changes the directory. The Windows script adds the dire
 `PATH`; on macOS/Linux add it yourself.
 
 Upgrade in place with `decoy upgrade`. It re-runs the Latest install script into the directory of the
-running binary. To move to another version, run that release's install script with
-`DECOY_INSTALL_DIR` set instead. npm installs refuse and point you to npm instead.
+running binary, unless the running version is already Latest or a newer pre-release. To move to
+another version, run that release's install script with `DECOY_INSTALL_DIR` set instead. npm installs refuse and point you to npm instead.
 
 ## npm (JS/TS projects)
 
