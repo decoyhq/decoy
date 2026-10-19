@@ -319,7 +319,8 @@ impl App {
             KeyCode::Tab | KeyCode::Right if !items.is_empty() => {
                 self.accept(&items);
             }
-            KeyCode::Enter if !items.is_empty() => {
+            // A typed session id may be new, so Enter runs it as typed; Tab takes a seen one.
+            KeyCode::Enter if !items.is_empty() && !self.naming_session() => {
                 if self.accept(&items) {
                     return self.submit();
                 }
@@ -352,6 +353,12 @@ impl App {
         self.popup = 0;
         self.popup_closed = false;
         self.history_at = None;
+    }
+
+    fn naming_session(&self) -> bool {
+        self.input
+            .strip_prefix("/session ")
+            .is_some_and(|id| !id.trim().is_empty())
     }
 
     /// Puts a history entry (or, past the newest, an empty line) in the input, popup closed.
@@ -998,6 +1005,19 @@ pub(crate) mod tests {
         typed(&mut app, "/session e2e");
         app.handle_event(enter());
         assert_eq!(app.session, "e2e");
+    }
+
+    #[test]
+    fn enter_on_a_session_prefix_starts_that_session_and_tab_completes_it() {
+        let mut app = app();
+        app.handle_event(from_session(1, "e2e-1"));
+        typed(&mut app, "/session e");
+        app.handle_event(enter());
+        assert_eq!(app.session, "e");
+        typed(&mut app, "/session e2");
+        app.handle_event(key(KeyCode::Tab, KeyModifiers::NONE));
+        app.handle_event(enter());
+        assert_eq!(app.session, "e2e-1");
     }
 
     #[test]
