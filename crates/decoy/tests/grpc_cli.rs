@@ -92,15 +92,16 @@ async fn serves_unary_grpc_calls_with_matching_templates_statuses_and_sessions()
             .is_ok()
     );
 
+    // s2 stays on happy-path: in approvals-down the broad `any:not-found` sits above `pending`.
     server
         .control(
             "useRoute",
             r#"{"route":"approvals-get","case":"pending","behavior":"approved"}"#,
-            "s1",
+            "s2",
         )
         .await;
     let reply = client
-        .get(json!({ "id": "a-1" }), &[("x-mock-session", "s1")])
+        .get(json!({ "id": "a-1" }), &[("x-mock-session", "s2")])
         .await
         .unwrap();
     assert_eq!(reply["state"], "APPROVED");

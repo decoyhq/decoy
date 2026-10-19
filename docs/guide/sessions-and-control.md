@@ -19,6 +19,10 @@ Command-shaped `POST` endpoints under the reserved `/__decoy__` path. Pick the S
 | `reset`         | `POST /__decoy__/control/reset`         | empty: drops the Session's route overrides                            |
 | `endSession`    | `POST /__decoy__/control/endSession`    | empty: ends the Session; it starts again from defaults when next used |
 
+`useRoute` swaps the Behavior of that `route:case` where it sits in the active Collection, so
+more specific Cases listed after it still win. A `route:case` the Collection doesn't list goes
+after all of its entries, and among those the last `useRoute` call wins.
+
 Success returns `200` with the Session's Selection. Unknown Collections or Behavior addresses and
 malformed JSON return `400 {"error":"..."}`, and unknown `/__decoy__` paths return `404`.
 

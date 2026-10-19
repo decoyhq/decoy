@@ -112,7 +112,7 @@ impl Catalog {
     pub(crate) async fn execute_grpc(
         &self,
         collection_id: &str,
-        overrides: &BTreeMap<(String, String), String>,
+        overrides: &[Activation],
         request: GrpcRequest,
         capture: bool,
     ) -> GrpcCall {
@@ -180,7 +180,7 @@ impl Catalog {
     pub fn resolve_grpc(
         &self,
         collection_id: &str,
-        overrides: &BTreeMap<(String, String), String>,
+        overrides: &[Activation],
         request: &GrpcRequest,
     ) -> GrpcResolution<'_> {
         self.resolve_grpc_with(collection_id, overrides, request, true)
@@ -191,7 +191,7 @@ impl Catalog {
     fn resolve_grpc_with(
         &self,
         collection_id: &str,
-        overrides: &BTreeMap<(String, String), String>,
+        overrides: &[Activation],
         request: &GrpcRequest,
         explain: bool,
     ) -> GrpcResolution<'_> {
@@ -209,7 +209,7 @@ impl Catalog {
         let mut candidates = explain.then(Vec::new);
         // Decoded once per call; only another Pipeline needs a fresh decode.
         let mut decoded: Option<(&[PipelineStep], Value)> = None;
-        for activation in activations.iter().rev() {
+        for activation in activations.iter().copied().rev() {
             let Some(route) = self.route(&activation.route) else {
                 reject(&mut candidates, activation, || Rejection::MissingRoute);
                 continue;
@@ -523,7 +523,7 @@ mod tests {
         let response = catalog
             .execute_grpc(
                 "default",
-                &BTreeMap::new(),
+                &[],
                 request(&catalog, json!({ "id": "a-1" })),
                 false,
             )
@@ -552,7 +552,7 @@ mod tests {
         let response = catalog
             .execute_grpc(
                 "default",
-                &BTreeMap::new(),
+                &[],
                 request(&catalog, json!({ "id": "a-9" })),
                 false,
             )
@@ -578,7 +578,7 @@ mod tests {
         let response = catalog
             .execute_grpc(
                 "default",
-                &BTreeMap::new(),
+                &[],
                 request(&catalog, json!({ "id": "a-2" })),
                 false,
             )
@@ -640,7 +640,7 @@ cases:
             skipped,
             conditions,
             ..
-        } = catalog.resolve_grpc("default", &BTreeMap::new(), &call)
+        } = catalog.resolve_grpc("default", &[], &call)
         else {
             panic!("expected match")
         };
@@ -670,8 +670,7 @@ cases:
         let catalog = explain_catalog();
         let mut call = request(&catalog, json!({ "id": "a-1" }));
         call.method = "ListApprovals".to_owned();
-        let GrpcResolution::Miss(miss) = catalog.resolve_grpc("default", &BTreeMap::new(), &call)
-        else {
+        let GrpcResolution::Miss(miss) = catalog.resolve_grpc("default", &[], &call) else {
             panic!("expected miss")
         };
         let method = || Rejection::Method {
@@ -695,8 +694,7 @@ cases:
     fn an_unknown_collection_misses_with_no_candidates() {
         let catalog = explain_catalog();
         let call = request(&catalog, json!({ "id": "a-1" }));
-        let GrpcResolution::Miss(miss) = catalog.resolve_grpc("nope", &BTreeMap::new(), &call)
-        else {
+        let GrpcResolution::Miss(miss) = catalog.resolve_grpc("nope", &[], &call) else {
             panic!("expected miss")
         };
         assert_eq!(
@@ -748,7 +746,7 @@ cases:
         let response = catalog
             .execute_grpc(
                 "default",
-                &BTreeMap::new(),
+                &[],
                 request(&catalog, json!({ "id": "a-1" })),
                 false,
             )
@@ -765,12 +763,7 @@ cases:
             "get:empty:ok",
         );
         let response = catalog
-            .execute_grpc(
-                "default",
-                &BTreeMap::new(),
-                request(&catalog, json!({})),
-                false,
-            )
+            .execute_grpc("default", &[], request(&catalog, json!({})), false)
             .await
             .response;
         assert_eq!(decoded(&catalog, &response), json!({ "id": "empty" }));
@@ -791,7 +784,7 @@ cases:
         let response = catalog
             .execute_grpc(
                 "default",
-                &BTreeMap::new(),
+                &[],
                 request(&catalog, json!({ "id": "PERMISSION_DENIED" })),
                 false,
             )
@@ -803,7 +796,7 @@ cases:
         let response = catalog
             .execute_grpc(
                 "default",
-                &BTreeMap::new(),
+                &[],
                 request(&catalog, json!({ "id": "NOPE" })),
                 false,
             )
@@ -825,7 +818,7 @@ cases:
         let mut call = request(&catalog, json!({ "id": "a-1" }));
         call.body.truncate(3);
         let response = catalog
-            .execute_grpc("default", &BTreeMap::new(), call, false)
+            .execute_grpc("default", &[], call, false)
             .await
             .response;
         assert_eq!(response.status, INVALID_ARGUMENT);
@@ -843,9 +836,7 @@ cases:
         );
         let mut call = request(&catalog, json!({ "id": "a-1" }));
         call.body.truncate(3);
-        let call = catalog
-            .execute_grpc("default", &BTreeMap::new(), call, true)
-            .await;
+        let call = catalog.execute_grpc("default", &[], call, true).await;
         let Some(Outcome::Miss(miss)) = call.outcome else {
             panic!("expected a miss")
         };
@@ -864,7 +855,7 @@ cases:
         let call = catalog
             .execute_grpc(
                 "default",
-                &BTreeMap::new(),
+                &[],
                 request(&catalog, json!({ "id": "x" })),
                 true,
             )
@@ -884,7 +875,7 @@ cases:
         let response = catalog
             .execute_grpc(
                 "default",
-                &BTreeMap::new(),
+                &[],
                 request(&catalog, json!({ "id": "x" })),
                 false,
             )
