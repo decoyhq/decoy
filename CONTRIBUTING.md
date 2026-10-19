@@ -29,8 +29,9 @@ Examples (`examples/*`) are the e2e tier and run their own `test:e2e` per worksp
 
 `task e2e` builds the packages and the `decoy` binary, then runs every example's `test:e2e`.
 Examples boot Decoy with `cargo run` against the built `@decoyhq/*` packages, so the Rust
-toolchain must be installed. Browser examples also need Chromium once (`pnpm install` skips the
-download):
+toolchain must be installed. Set `DECOY_BINARY_PATH` to the absolute path of a prebuilt `decoy`
+(e.g. `"$PWD/target/debug/decoy"`) to skip the examples' `cargo run`, as CI does; `task e2e` still
+builds it with cargo. Browser examples also need Chromium once (`pnpm install` skips the download):
 
 ```sh
 pnpm --filter ./examples/playwright-ts-e2e exec playwright install --with-deps chromium

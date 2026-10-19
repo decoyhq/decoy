@@ -242,7 +242,7 @@ jobs:
       - name: Test JS packages
         run: pnpm -r --no-bail run test
 
-  # Builds `decoy` once for every e2e job below (examples start it with `cargo run`).
+  # Builds `decoy` once for every e2e job below (examples run it via DECOY_BINARY_PATH).
   build-decoy:
     needs: changes
     if: needs.changes.outputs.e2e == 'true' && (needs.changes.outputs.has-examples == 'true' || needs.changes.outputs.has-browser-examples == 'true')
@@ -322,20 +322,11 @@ jobs:
           name: decoy
           path: ${{ runner.temp }}/decoy
 
-      # Examples start Decoy with `cargo run --quiet -p decoy -- …`; this `cargo` shim on PATH runs
-      # the prebuilt binary instead (artifacts drop the exec bit). Any other cargo call fails loudly.
+      # Examples run DECOY_BINARY_PATH instead of `cargo run`; artifacts drop the exec bit.
       - name: Use prebuilt decoy
         run: |
-          bin="$RUNNER_TEMP/decoy"
-          chmod +x "$bin/decoy"
-          cat > "$bin/cargo" <<'SH'
-          #!/bin/sh
-          [ "$1 $2 $3 $4 $5" = "run --quiet -p decoy --" ] || { echo "cargo shim: unexpected 'cargo $*'" >&2; exit 1; }
-          shift 5
-          exec "$(dirname "$0")/decoy" "$@"
-          SH
-          chmod +x "$bin/cargo"
-          echo "$bin" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/decoy/decoy"
+          echo "DECOY_BINARY_PATH=$RUNNER_TEMP/decoy/decoy" >> "$GITHUB_ENV"
 
       - name: e2e
         env:
@@ -389,20 +380,11 @@ jobs:
           name: decoy
           path: ${{ runner.temp }}/decoy
 
-      # Examples start Decoy with `cargo run --quiet -p decoy -- …`; this `cargo` shim on PATH runs
-      # the prebuilt binary instead (artifacts drop the exec bit). Any other cargo call fails loudly.
+      # Examples run DECOY_BINARY_PATH instead of `cargo run`; artifacts drop the exec bit.
       - name: Use prebuilt decoy
         run: |
-          bin="$RUNNER_TEMP/decoy"
-          chmod +x "$bin/decoy"
-          cat > "$bin/cargo" <<'SH'
-          #!/bin/sh
-          [ "$1 $2 $3 $4 $5" = "run --quiet -p decoy --" ] || { echo "cargo shim: unexpected 'cargo $*'" >&2; exit 1; }
-          shift 5
-          exec "$(dirname "$0")/decoy" "$@"
-          SH
-          chmod +x "$bin/cargo"
-          echo "$bin" >> "$GITHUB_PATH"
+          chmod +x "$RUNNER_TEMP/decoy/decoy"
+          echo "DECOY_BINARY_PATH=$RUNNER_TEMP/decoy/decoy" >> "$GITHUB_ENV"
 
       - name: Install Chromium (+ system deps)
         env:

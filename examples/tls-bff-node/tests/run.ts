@@ -19,11 +19,13 @@ async function healthy(): Promise<boolean> {
 if (await healthy()) {
   throw new Error(`something already serves ${CRM_URL}; stop it first`)
 }
-const decoy = spawn(
-  'cargo',
-  ['run', '--quiet', '-p', 'decoy', '--', 'serve', '--config', 'mocks/decoy.yaml'],
-  { cwd: exampleDir, stdio: ['ignore', 'ignore', 'inherit'] },
-)
+// DECOY_BINARY_PATH: a prebuilt `decoy` (as in CI); otherwise build and run it with cargo.
+const bin = process.env.DECOY_BINARY_PATH
+const serve = ['serve', '--config', 'mocks/decoy.yaml']
+const [command, ...args] = bin
+  ? [bin, ...serve]
+  : ['cargo', 'run', '--quiet', '-p', 'decoy', '--', ...serve]
+const decoy = spawn(command, args, { cwd: exampleDir, stdio: ['ignore', 'ignore', 'inherit'] })
 const stopDecoy = (): void => {
   decoy.kill()
 }
