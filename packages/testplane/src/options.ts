@@ -37,12 +37,21 @@ export function resolveOptions(
   env: NodeJS.ProcessEnv = process.env,
 ): ResolvedDecoyOptions {
   return {
-    url: (options.url ?? DEFAULT_URL).replace(/\/+$/, ''),
+    url: trimTrailingSlashes(options.url ?? DEFAULT_URL),
     command: options.command ?? 'decoy serve',
     cwd: options.cwd ?? process.cwd(),
     reuseExistingServer: options.reuseExistingServer ?? !env.CI,
     timeout: options.timeout ?? 60_000,
   }
+}
+
+// A loop, not /\/+$/: that regex backtracks polynomially on long runs of '/'.
+function trimTrailingSlashes(url: string): string {
+  let end = url.length
+  while (end > 0 && url[end - 1] === '/') {
+    end--
+  }
+  return url.slice(0, end)
 }
 
 /** True when Decoy answers its liveness probe at `url`. */

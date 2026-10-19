@@ -14,7 +14,11 @@ export default {
   browsers: {
     chrome: {
       headless: true,
-      desiredCapabilities: { browserName: 'chrome' },
+      desiredCapabilities: {
+        browserName: 'chrome',
+        // As Playwright does by default: CI runners (Ubuntu 24 AppArmor) block Chrome's sandbox.
+        'goog:chromeOptions': { args: ['--no-sandbox'] },
+      },
     },
   },
   // Testplane's `webServer`: the static app on port 4173.
