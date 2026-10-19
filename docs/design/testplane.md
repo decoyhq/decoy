@@ -30,7 +30,7 @@ In tests, `decoy(browser)` returns the Session's Router (`useCollection`, `useRo
   `beforeEach` / `afterEach`: the place for per-test Sessions.
 - One browser session runs many tests in sequence (`testsPerSession` defaults to Infinity), and
   each test gets a new `browser` object for the same WebDriver session.
-- `browser.getPuppeteer()` gives a CDP connection (Chromium) in WebDriver Classic mode.
+- `browser.getPuppeteer()` gives a CDP connection on Chromium, in Classic and BiDi sessions.
 - Config already has `devServer` (≈ Playwright `webServer`) and master `beforeAll` / `afterAll`.
 
 ## Design
@@ -60,12 +60,22 @@ Gotchas the prototype hit:
 1. **Shared core.** Done: `packages/runner-core` (private) holds start/stop, health, and the Control
    API client. rslib bundles it into each package's code and declarations (api-extractor
    `bundledPackages`), so consumers never install it.
-2. **Non-Chromium.** CDP routing is Chromium only. The cross-browser path is BiDi
-   `network.addIntercept` + `network.continueRequest({ url, headers })`, used when
-   `browser.isBidi`. Check that Firefox honours `url` in `continueRequest`.
-3. **Not yet verified end to end:** POST bodies, cookies (does Chrome send the original origin's
-   cookies after the rewrite?), requests from new tabs and workers, Selenium grids / cloud
-   providers where `getPuppeteer()` can't connect.
+2. **Non-Chromium.** Not supported yet; `urls` on Firefox fails with a clear error. Routing uses
+   CDP, which also works in Testplane BiDi sessions (`webSocketUrl: true`) on Chrome. The obvious
+   BiDi route, `network.continueRequest({ url, headers })` (also what `browser.mock().request()`
+   does), was tried and does not work today:
+   - Chrome via chromium-bidi: the rewritten request reaches Decoy without the page's cookies,
+     even with no header override. `beforeRequestSent` lists no cookies to copy, and passing
+     `cookies: []` sends none.
+   - Firefox 158: any `url` override, even to the same origin, aborts the request (`fetch`
+     AbortError, XHR error, navigation error page). Header-only overrides work. Firefox added
+     `url` in 133.
+     Paths still open for Firefox: answer with `network.provideResponse` from a Node-side fetch to
+     Decoy (needs the request body: `network.addDataCollector` / `getData`, not in Testplane's
+     WebdriverIO types yet), or rebuild the `Cookie` header from `storage.getCookies`.
+3. **Verified end to end** (`echo.testplane.ts`, both session kinds): POST body, cookies, and
+   custom headers reach Decoy. Still unverified: requests from new tabs and workers, and Selenium
+   grids or cloud providers where `getPuppeteer()` can't connect.
 4. **Bleed between tests.** The browser is reused, so a request still in flight from test N could
    land in test N+1's Session; it is aborted only if it fires between the hooks. Playwright avoids
    this with a fresh context per test.

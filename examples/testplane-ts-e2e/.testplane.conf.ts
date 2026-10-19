@@ -11,6 +11,7 @@ export default {
   gridUrl: 'local',
   baseUrl: 'http://127.0.0.1:4173',
   sets: { all: { files: 'tests/**/*.testplane.ts' } },
+  // Routing runs over CDP in both session kinds: WebDriver Classic (Testplane's default) and BiDi.
   browsers: {
     chrome: {
       headless: true,
@@ -19,6 +20,10 @@ export default {
         // As Playwright does by default: CI runners (Ubuntu 24 AppArmor) block Chrome's sandbox.
         'goog:chromeOptions': { args: ['--no-sandbox'] },
       },
+    },
+    'chrome-bidi': {
+      headless: true,
+      desiredCapabilities: { browserName: 'chrome', webSocketUrl: true },
     },
   },
   // Testplane's `webServer`: the static app on port 4173.

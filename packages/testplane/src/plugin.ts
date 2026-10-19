@@ -91,15 +91,30 @@ async function beginSession(
   }
   if (options.urls !== undefined) {
     const { urls } = options
-    state.routing ??= browser
-      .getPuppeteer()
-      .then((puppeteer) =>
-        routeToDecoy(puppeteer as unknown as InterceptableBrowser, url, urls, state.holder),
-      )
+    state.routing ??= cdpOf(browser).then((puppeteer) =>
+      routeToDecoy(puppeteer, url, urls, state.holder),
+    )
     await state.routing
   }
   state.router = router
   state.holder.sessionId = sessionId
+}
+
+/**
+ * Routing rewrites requests over CDP, so it needs Chrome or Chromium, in either WebDriver Classic
+ * or BiDi sessions. WebDriver BiDi's own `network.continueRequest({ url })` can't replace it yet:
+ * Chrome drops cookies on the rewritten request and Firefox aborts it (docs/design/testplane.md).
+ */
+async function cdpOf(browser: WebdriverIO.Browser): Promise<InterceptableBrowser> {
+  try {
+    return await browser.getPuppeteer()
+  } catch (error) {
+    const name = browser.capabilities.browserName ?? 'this browser'
+    throw new Error(
+      `@decoyhq/testplane routes \`urls\` over CDP, which needs Chrome or Chromium; ${name} is not supported yet.`,
+      { cause: error },
+    )
+  }
 }
 
 /** Best effort: a Decoy that is already gone can't hold the Session either. */
