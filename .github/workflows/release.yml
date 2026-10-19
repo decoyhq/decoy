@@ -10,8 +10,10 @@ on:
     paths:
       - '.github/workflows/release.yml'
       - 'scripts/npm-platform-packages.mjs'
+      - 'scripts/versions.mjs'
       - 'scripts/install.*'
       - 'packages/cli/**'
+      - 'packages/playwright/**'
   workflow_dispatch:
 
 permissions:
@@ -24,6 +26,7 @@ concurrency:
 jobs:
   version:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       version: ${{ steps.read.outputs.version }}
     steps:
@@ -44,6 +47,7 @@ jobs:
     needs: version
     name: build (${{ matrix.target }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -120,6 +124,7 @@ jobs:
     needs: [version, build, npm-smoke]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:
@@ -164,9 +169,20 @@ jobs:
             --generate-notes \
             "${prerelease[@]}"
 
+  # The published release, installed through scripts/install.{sh,ps1} on every platform.
+  install-script:
+    needs: [version, release]
+    if: github.ref_type == 'tag'
+    permissions:
+      contents: read
+    uses: $/.github/workflows/install-script.yml
+    with:
+      version: ${{ needs.version.outputs.version }}
+
   npm-smoke:
     needs: [version, build]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -240,6 +256,7 @@ jobs:
     needs: [version, release, npm-smoke]
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write # npm trusted publishing (OIDC); provenance is attached automatically
@@ -275,5 +292,18 @@ jobs:
               echo "$name@$VERSION already published, skipping"
               continue
             fi
-            npm publish "$tarball" --access public --tag "$tag"
+            pkg_tag="$tag"
+            # A backport (0.1.9 after 0.2.0) must not move `latest` back; it gets `v0.1-latest`.
+            # No `latest` yet (first publish, npm E404) keeps `latest`; any other lookup error stops.
+            if ! current="$(npm view "$name" dist-tags.latest 2> "$RUNNER_TEMP/npm-view.err")"; then
+              grep -q E404 "$RUNNER_TEMP/npm-view.err" || { cat "$RUNNER_TEMP/npm-view.err" >&2; exit 1; }
+              current=
+            fi
+            if [ "$tag" = latest ] && [ -n "$current" ] && node -e '
+              const [a, b] = process.argv.slice(1).map((v) => v.split("-")[0].split(".").map(Number));
+              process.exit((a[0] - b[0] || a[1] - b[1] || a[2] - b[2]) < 0 ? 0 : 1);
+            ' "$VERSION" "$current"; then
+              pkg_tag="v$(echo "$VERSION" | cut -d. -f1-2)-latest"
+            fi
+            npm publish "$tarball" --access public --tag "$pkg_tag"
           done

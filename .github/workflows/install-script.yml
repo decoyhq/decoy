@@ -1,30 +1,38 @@
 name: Install script
 
 # Runs scripts/install.{sh,ps1} against the newest published release on every platform.
+# release.yml calls it after publishing (a release made with GITHUB_TOKEN triggers no workflow).
 on:
   pull_request:
     paths: ['scripts/install.sh', 'scripts/install.ps1', '.github/workflows/install-script.yml']
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      version:
+        description: Release to install (default the newest)
+        type: string
+        required: false
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Literal, not github.workflow: called from release.yml that would match its group and deadlock.
+  group: install-script-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   install:
     name: install (${{ matrix.runner }})
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, windows-latest]
     env:
       GITHUB_TOKEN: ${{ github.token }}
+      DECOY_VERSION: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

@@ -169,7 +169,7 @@ jobs:
         run: cargo fmt --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
       # Known vulnerabilities, unexpected licenses and crate sources (deny.toml).
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
@@ -183,7 +183,7 @@ jobs:
       - name: Test (with coverage)
         run: |
           rustup component add llvm-tools-preview
-          cargo llvm-cov --workspace --lcov --output-path rust.lcov
+          cargo llvm-cov --locked --workspace --lcov --output-path rust.lcov
 
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
@@ -218,8 +218,9 @@ jobs:
           shared-key: e2e
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # --ignore-scripts skips the root `prepare` build; the build step below runs it once.
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       # Examples are real consumers: they boot Decoy through a config loaded at
       # runtime, which resolves `@decoyhq/*` to built `./dist` (the `default` export
@@ -262,7 +263,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
 
       # Examples run against built packages (same as the non-browser e2e job): they
       # boot Decoy through a runtime-loaded config that resolves `@decoyhq/*` to `./dist`.
@@ -271,7 +272,7 @@ jobs:
 
       # Examples start native Decoy with `cargo run`; build it up front so startup is quick.
       - name: Build decoy binary
-        run: cargo build -p decoy
+        run: cargo build --locked -p decoy
 
       - name: Install Chromium (+ system deps)
         env:
