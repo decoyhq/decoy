@@ -10,12 +10,14 @@ pub enum BindError {
     Resolve {
         name: String,
         host: String,
+        #[source]
         error: std::io::Error,
     },
     #[error("cannot listen on `{name}` ({addr}): {error}")]
     Listen {
         name: String,
         addr: SocketAddr,
+        #[source]
         error: std::io::Error,
     },
     #[error("`{name}` host `{host}` has no addresses")]
@@ -144,5 +146,7 @@ mod tests {
                 .starts_with(&format!("cannot listen on `t` ({addr}): ")),
             "{error}"
         );
+        let source = std::error::Error::source(&error).expect("the I/O error is the source");
+        assert!(source.is::<std::io::Error>(), "{source:?}");
     }
 }
