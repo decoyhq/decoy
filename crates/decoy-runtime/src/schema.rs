@@ -41,6 +41,7 @@ pub enum PipelineStep {
 
 /// A Route as written; `match` is decoded once `transport` says which shape it has.
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawRoute {
     id: String,
     transport: Transport,
@@ -106,6 +107,10 @@ impl Route {
             })?;
         }
 
+        if let Some(target) = &self.passthrough {
+            target.validate()?;
+        }
+
         if self.cases.is_empty() {
             return Err(ValidationError::EmptyCases {
                 route: self.id.clone(),
@@ -131,7 +136,11 @@ impl Route {
                     (Transport::Grpc, Behavior::Response(response)) => {
                         crate::grpc_schema::validate_response(response, self.decodes_protobuf())
                     }
-                    (Transport::Http, Behavior::Passthrough(_)) => Ok(()),
+                    (Transport::Http, Behavior::Passthrough(passthrough)) => passthrough
+                        .target
+                        .as_ref()
+                        .map_or(Ok(()), PassthroughTarget::validate)
+                        .map_err(|error| error.to_string()),
                     (Transport::Grpc, Behavior::Passthrough(_)) => {
                         Err("gRPC Routes do not support passthrough".to_owned())
                     }
@@ -205,6 +214,7 @@ impl HttpMethod {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Case {
     #[serde(default, rename = "match")]
     pub case_match: Value,
@@ -271,12 +281,26 @@ pub struct PassthroughBehavior {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PassthroughTarget {
     #[serde(rename = "baseUrl")]
     pub base_url: String,
 }
 
+impl PassthroughTarget {
+    fn validate(&self) -> Result<(), ValidationError> {
+        if url::Url::parse(&self.base_url)
+            .is_ok_and(|parsed| matches!(parsed.scheme(), "http" | "https"))
+        {
+            Ok(())
+        } else {
+            Err(ValidationError::InvalidTarget(self.base_url.clone()))
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RawBehavior {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     kind: Option<BehaviorKind>,
@@ -302,7 +326,27 @@ impl TryFrom<RawBehavior> for Behavior {
 
     fn try_from(raw: RawBehavior) -> Result<Self, Self::Error> {
         let delay = raw.delay.as_ref().map(parse_delay).transpose()?;
-        match raw.kind.unwrap_or(BehaviorKind::Response) {
+        let kind = raw.kind.unwrap_or(BehaviorKind::Response);
+        let misplaced = match kind {
+            BehaviorKind::Response => raw.target.is_some().then_some("target"),
+            BehaviorKind::Passthrough => [
+                ("status", raw.status.is_some()),
+                ("headers", !raw.headers.is_empty()),
+                ("body", raw.body.is_some()),
+                ("message", raw.message.is_some()),
+                ("metadata", !raw.metadata.is_empty()),
+            ]
+            .into_iter()
+            .find_map(|(field, set)| set.then_some(field)),
+        };
+        if let Some(field) = misplaced {
+            let kind = match kind {
+                BehaviorKind::Response => "response",
+                BehaviorKind::Passthrough => "passthrough",
+            };
+            return Err(ValidationError::MisplacedBehaviorField { kind, field });
+        }
+        match kind {
             BehaviorKind::Response => Ok(Self::Response(ResponseBehavior {
                 status: raw.status,
                 headers: raw.headers,
@@ -378,6 +422,13 @@ pub enum ValidationError {
     InvalidDelay(String),
     #[error("route `{route}` has an invalid pipeline: {reason}")]
     InvalidPipeline { route: String, reason: String },
+    #[error("{kind} behavior does not take `{field}`")]
+    MisplacedBehaviorField {
+        kind: &'static str,
+        field: &'static str,
+    },
+    #[error("passthrough target `{0}` must be an http or https URL")]
+    InvalidTarget(String),
     #[error("behavior `{address}` is invalid: {reason}")]
     InvalidBehavior { address: String, reason: String },
     #[error("case `{route}:{case}` has an invalid match: {reason}")]
@@ -636,5 +687,98 @@ cases:
         let error = route("fast").unwrap_err().to_string();
         assert!(error.contains("must be integer milliseconds"), "{error}");
         assert!(route("-5").is_err());
+    }
+
+    fn route_error(extra_route: &str, behavior: &str) -> String {
+        Route::from_yaml(&format!(
+            r#"
+id: users
+transport: http
+match: {{ method: GET, path: /users }}
+{extra_route}
+cases:
+  any:
+    behaviors:
+      ok:
+{behavior}
+"#
+        ))
+        .unwrap_err()
+        .to_string()
+    }
+
+    #[test]
+    fn rejects_unknown_route_key() {
+        let error = route_error("extends: base", "        status: 200");
+        assert!(error.contains("unknown field `extends`"), "{error}");
+    }
+
+    #[test]
+    fn rejects_unknown_case_key_instead_of_making_a_catch_all() {
+        let error = Route::from_yaml(
+            r#"
+id: users
+transport: http
+match: { method: GET, path: /users }
+cases:
+  admin:
+    matches: { query: { role: admin } }
+    behaviors:
+      ok: { status: 200 }
+"#,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("unknown field `matches`"), "{error}");
+    }
+
+    #[test]
+    fn rejects_unknown_behavior_key() {
+        let error = route_error("", "        status: 200\n        delay_ms: 500");
+        assert!(error.contains("unknown field `delay_ms`"), "{error}");
+    }
+
+    #[test]
+    fn rejects_unknown_passthrough_target_key() {
+        let error = route_error(
+            "passthrough: { baseUrl: 'http://up', timeout: 5 }",
+            "        status: 200",
+        );
+        assert!(error.contains("unknown field `timeout`"), "{error}");
+    }
+
+    #[test]
+    fn rejects_response_fields_on_a_passthrough_behavior() {
+        let error = route_error("", "        kind: passthrough\n        status: 200");
+        assert!(
+            error.contains("passthrough behavior does not take `status`"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_target_on_a_response_behavior() {
+        let error = route_error(
+            "",
+            "        status: 200\n        target: { baseUrl: 'http://up' }",
+        );
+        assert!(
+            error.contains("response behavior does not take `target`"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn passthrough_targets_must_be_http_urls() {
+        let error = route_error(
+            "passthrough: { baseUrl: 'localhost:3000' }",
+            "        status: 200",
+        );
+        assert!(error.contains("`localhost:3000`"), "{error}");
+        let error = route_error(
+            "",
+            "        kind: passthrough\n        target: { baseUrl: 'ftp://up' }",
+        );
+        assert!(error.contains("`ftp://up`"), "{error}");
     }
 }

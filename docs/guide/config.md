@@ -87,7 +87,7 @@ protos:
 ```
 
 Paths in the file resolve relative to the file; flag paths resolve relative to the working
-directory. Unknown keys, unreadable files, invalid Routes or Collections, duplicate Route ids,
+directory. Unknown keys in the config, Routes or Collections, unreadable files, invalid Routes or Collections, duplicate Route ids,
 a port used twice or already taken, missing proto roots, protos that don't compile, unreadable or mismatched TLS cert/key, an unreadable `.decoy/` CA, and an unknown
 startup Collection all fail at startup with a diagnostic.
 

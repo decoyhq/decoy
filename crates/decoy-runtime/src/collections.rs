@@ -6,6 +6,7 @@ use thiserror::Error;
 use crate::schema::{ValidationError, validate_id};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Collection {
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -31,7 +32,7 @@ impl Collection {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(untagged, deny_unknown_fields)]
 pub enum CollectionRouteRef {
     Address(String),
     Structured {
@@ -296,5 +297,19 @@ mod tests {
 
         let error = collections.resolve("a").unwrap_err();
         assert!(matches!(error, CollectionError::InheritanceCycle { .. }));
+    }
+
+    #[test]
+    fn rejects_unknown_collection_keys() {
+        for (yaml, field) in [
+            ("- id: child\n  extends: base\n", "extends"),
+            (
+                "- id: local\n  routes:\n    - { route: a, case: b, behavior: c, delay: 1 }\n",
+                "did not match any variant",
+            ),
+        ] {
+            let error = CollectionsFile::from_yaml(yaml).unwrap_err().to_string();
+            assert!(error.contains(field), "{error}");
+        }
     }
 }
