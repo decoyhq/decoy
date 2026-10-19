@@ -10,6 +10,8 @@ Operating manual for agents working in the **decoy** monorepo.
   architecture changes.
 - `docs/adr/` holds accepted architectural decisions. Read ADRs before reversing or replacing a
   recorded decision.
+- Crates may carry their own `AGENTS.md` with layering rules (e.g. `crates/decoy-runtime/AGENTS.md`).
+  Follow it when changing code in that crate.
 
 ## Agent skills
 
