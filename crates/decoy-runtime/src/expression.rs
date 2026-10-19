@@ -5,10 +5,14 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::LazyLock;
+use std::thread::LocalKey;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use jmespath::functions::{ArgumentType, CustomFunction, Signature};
-use jmespath::{Context, ErrorReason, JmespathError, Rcvar, Runtime, RuntimeError, Variable};
+use jmespath::{
+    Context, ErrorReason, JmespathError, Rcvar, Runtime, RuntimeError, SearchResult, Variable,
+    interpret,
+};
 use serde_json::Value;
 
 /// A YAML string split into literal text and `${ … }` expression sources.
@@ -108,25 +112,58 @@ fn compile(source: &str) -> Result<jmespath::Expression<'static>, String> {
         .map_err(|error| format!("invalid JMESPath `{source}`: {error}"))
 }
 
+type Cache = RefCell<HashMap<String, Rc<jmespath::Expression<'static>>>>;
+
 thread_local! {
     /// Compiled expressions by source. Sources come from config files, so the set stays small;
     /// per thread because a compiled expression isn't `Send`.
-    static COMPILED: RefCell<HashMap<String, Rc<jmespath::Expression<'static>>>> =
-        RefCell::new(HashMap::new());
+    static COMPILED: Cache = RefCell::new(HashMap::new());
+    /// The same, keyed by the whole predicate string, so a predicate isn't re-segmented either.
+    static PREDICATES: Cache = RefCell::new(HashMap::new());
 }
 
 /// `compile`, once per source and thread: requests reuse the parsed expression.
 fn compiled(source: &str) -> Result<Rc<jmespath::Expression<'static>>, String> {
-    if let Some(expression) = COMPILED.with(|cache| cache.borrow().get(source).cloned()) {
+    cached(&COMPILED, source, || compile(source))
+}
+
+fn cached(
+    cache: &'static LocalKey<Cache>,
+    key: &str,
+    compile: impl FnOnce() -> Result<jmespath::Expression<'static>, String>,
+) -> Result<Rc<jmespath::Expression<'static>>, String> {
+    if let Some(expression) = cache.with(|cache| cache.borrow().get(key).cloned()) {
         return Ok(expression);
     }
-    let expression = Rc::new(compile(source)?);
-    COMPILED.with(|cache| {
+    let expression = Rc::new(compile()?);
+    cache.with(|cache| {
         cache
             .borrow_mut()
-            .insert(source.to_owned(), Rc::clone(&expression))
+            .insert(key.to_owned(), Rc::clone(&expression))
     });
     Ok(expression)
+}
+
+/// The request envelope as JMESPath sees it. Convert once per request and share the result:
+/// `Expression::search` would convert the whole envelope again on every call.
+pub fn to_rcvar(envelope: &Value) -> Rcvar {
+    // Can't fail: every JSON value has a JMESPath counterpart (no NaN or non-string keys).
+    Rcvar::new(Variable::try_from(envelope).unwrap_or(Variable::Null))
+}
+
+/// Replace one top-level field of a converted envelope; copies only the top-level map if shared.
+pub fn set_field(envelope: &mut Rcvar, key: &str, value: &Value) {
+    if let Variable::Object(fields) = Rc::make_mut(envelope) {
+        fields.insert(key.to_owned(), to_rcvar(value));
+    }
+}
+
+fn search(expression: &jmespath::Expression<'_>, envelope: &Rcvar) -> SearchResult {
+    interpret(
+        envelope,
+        expression.as_ast(),
+        &mut Context::new(expression.as_str(), &RUNTIME),
+    )
 }
 
 /// Check one expression source (without `${ }`) at startup.
@@ -135,9 +172,8 @@ pub fn validate_expression(source: &str) -> Result<(), String> {
 }
 
 /// Evaluate one expression source against `envelope`.
-pub fn evaluate(source: &str, envelope: &Value) -> Result<Value, String> {
-    let result = compiled(source)?
-        .search(envelope)
+pub fn evaluate(source: &str, envelope: &Rcvar) -> Result<Value, String> {
+    let result = search(&*compiled(source)?, envelope)
         .map_err(|error| format!("`{source}` failed: {error}"))?;
     serde_json::to_value(&*result).map_err(|error| format!("`{source}` result: {error}"))
 }
@@ -222,14 +258,11 @@ pub fn validate_predicate(predicate: &str) -> Result<(), String> {
 /// Evaluate a validated predicate against `envelope`. JMESPath truthiness: `null`, `false`, `""`,
 /// `[]`, and `{}` are false. An evaluation error (e.g. a function given the wrong type) is false,
 /// and logged so the miss it causes isn't silent.
-pub fn predicate_holds(predicate: &str, envelope: &Value) -> bool {
-    let result = predicate_source(predicate)
-        .and_then(|source| compiled(&source))
-        .and_then(|expression| {
-            expression
-                .search(envelope)
-                .map_err(|error| error.to_string())
-        });
+pub fn predicate_holds(predicate: &str, envelope: &Rcvar) -> bool {
+    let result = cached(&PREDICATES, predicate, || {
+        compile(&predicate_source(predicate)?)
+    })
+    .and_then(|expression| search(&expression, envelope).map_err(|error| error.to_string()));
     match result {
         Ok(result) => result.is_truthy(),
         Err(error) => {
@@ -310,7 +343,7 @@ mod tests {
 
     #[test]
     fn built_in_functions() {
-        let envelope = json!({ "pick": ["a", "b"] });
+        let envelope = to_rcvar(&json!({ "pick": ["a", "b"] }));
         let uuid = evaluate("uuid()", &envelope).unwrap();
         let uuid = uuid.as_str().unwrap();
         assert_eq!(uuid.len(), 36);
@@ -350,10 +383,10 @@ mod tests {
 
     #[test]
     fn predicates_follow_jmespath_truthiness() {
-        let envelope = json!({
+        let envelope = to_rcvar(&json!({
             "body": { "amount": 1500, "operationName": "GetUser", "empty": "", "items": [] },
             "headers": { "x-tier": "gold" }
-        });
+        }));
         assert!(predicate_holds("${ body.amount > `1000` }", &envelope));
         assert!(predicate_holds(
             "${ body.operationName == 'GetUser' && headers.\"x-tier\" == 'gold' }",

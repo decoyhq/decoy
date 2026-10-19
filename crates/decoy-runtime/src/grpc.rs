@@ -2,10 +2,12 @@
 //! envelope, render the Behavior, and encode the answer. Transport framing (HTTP/2, trailers) is
 //! the server's job; this module works on bytes. See `docs/design/transports.md` §4.
 
+use std::cell::OnceCell;
 use std::collections::BTreeMap;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use jmespath::Rcvar;
 use prost::Message as _;
 use prost_reflect::{DynamicMessage, MessageDescriptor, MethodDescriptor};
 use serde_json::{Value, json};
@@ -13,6 +15,7 @@ use serde_json::{Value, json};
 use crate::collections::Activation;
 use crate::engine::{Candidate, Catalog, MissDiagnostic, Rejection, reject};
 use crate::events::{Match, Outcome};
+use crate::expression::to_rcvar;
 use crate::grpc_schema::{STATUS_CODES, find_method, request_json_options};
 use crate::matching::{grpc_case_matches, grpc_case_mismatch};
 use crate::schema::{Behavior, PipelineStep, ResponseBehavior, Route, RouteMatch};
@@ -208,7 +211,7 @@ impl Catalog {
 
         let mut candidates = explain.then(Vec::new);
         // Decoded once per call; only another Pipeline needs a fresh decode.
-        let mut decoded: Option<(&[PipelineStep], Value)> = None;
+        let mut decoded: Option<(&[PipelineStep], Value, OnceCell<Rcvar>)> = None;
         for activation in activations.iter().copied().rev() {
             let Some(route) = self.route(&activation.route) else {
                 reject(&mut candidates, activation, || Rejection::MissingRoute);
@@ -231,8 +234,8 @@ impl Catalog {
                 continue;
             };
             let steps = pipeline(route);
-            let envelope = match &mut decoded {
-                Some((cached, envelope)) if *cached == steps => envelope,
+            let (envelope, jmes) = match &mut decoded {
+                Some((cached, envelope, jmes)) if *cached == steps => (envelope, &*jmes),
                 _ => {
                     let message = match decode(&request.body, steps, &method.input()) {
                         Ok(message) => message,
@@ -252,7 +255,8 @@ impl Catalog {
                         "metadata": request.metadata,
                         "message": message,
                     });
-                    &mut decoded.insert((steps, envelope)).1
+                    let (_, envelope, jmes) = decoded.insert((steps, envelope, OnceCell::new()));
+                    (envelope, &*jmes)
                 }
             };
             let Some(case) = route.cases.get(&activation.case) else {
@@ -260,13 +264,13 @@ impl Catalog {
                 continue;
             };
             if explain {
-                if let Some(failure) = grpc_case_mismatch(&case.case_match, envelope) {
+                if let Some(failure) = grpc_case_mismatch(&case.case_match, envelope, jmes) {
                     reject(&mut candidates, activation, || {
                         Rejection::Condition(failure)
                     });
                     continue;
                 }
-            } else if !grpc_case_matches(&case.case_match, envelope) {
+            } else if !grpc_case_matches(&case.case_match, envelope, jmes) {
                 continue;
             }
             let Some(Behavior::Response(response)) = case.behaviors.get(&activation.behavior)
@@ -303,7 +307,10 @@ fn respond(
     response: &ResponseBehavior,
     envelope: &Value,
 ) -> Result<GrpcResponse, String> {
-    let rendered = render_grpc_response(response, envelope)?;
+    let jmes = OnceCell::new();
+    let rendered = render_grpc_response(response, &|| {
+        jmes.get_or_init(|| to_rcvar(envelope)).clone()
+    })?;
     let status = match &rendered.status {
         None => OK,
         Some(status) => status_code(status)?,

@@ -2,6 +2,7 @@ use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use jmespath::Rcvar;
 use thiserror::Error;
 
 use crate::collections::{Activation, CollectionError, CollectionsFile};
@@ -9,6 +10,7 @@ use crate::events::{
     CapturedBody, CapturedResponse, Event, Match, Outcome, RequestEvent, SessionChange,
     SessionEvent, SessionSource,
 };
+use crate::expression::{set_field, to_rcvar};
 use crate::grpc::{GrpcRequest, GrpcResponse};
 use crate::http::{BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig};
 use crate::http_forward::{
@@ -419,8 +421,9 @@ impl Catalog {
         };
 
         let mut candidates = explain.then(Vec::new);
-        // The envelope's JSON, built once per request; only `pathParams` changes per candidate.
-        let mut json = OnceCell::<serde_json::Value>::new();
+        // The envelope for JMESPath, built once per request; only `pathParams` changes per
+        // candidate.
+        let mut json = OnceCell::<Rcvar>::new();
 
         for activation in activations.iter().copied().rev() {
             let Some(route) = self.routes.get(&activation.route) else {
@@ -453,7 +456,7 @@ impl Catalog {
             };
 
             if let Some(json) = json.get_mut() {
-                json["pathParams"] = serde_json::json!(path_params);
+                set_field(json, "pathParams", &serde_json::json!(path_params));
             }
             let input = MatchInput {
                 method: &request.method,
@@ -487,11 +490,13 @@ impl Catalog {
                 _ if let Some(plan) = static_plan => ResponsePlan::Response(plan.clone()),
                 Behavior::Response(response) => {
                     let envelope = json.get_or_init(|| {
-                        request
-                            .envelope
-                            .to_json(&request.method, &request.path, &path_params)
+                        to_rcvar(&request.envelope.to_json(
+                            &request.method,
+                            &request.path,
+                            &path_params,
+                        ))
                     });
-                    match render_response(response, envelope) {
+                    match render_response(response, &|| envelope.clone()) {
                         Ok(rendered) => ResponsePlan::from_behavior(
                             route,
                             &Behavior::Response(rendered),
