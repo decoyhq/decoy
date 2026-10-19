@@ -11,7 +11,7 @@ use crate::engine::Catalog;
 use crate::http::RuntimeConfig;
 use crate::schema::{Route, ValidationError};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Startup {
     pub catalog: Catalog,
     pub default_collection: String,

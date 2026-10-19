@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use thiserror::Error;
 
@@ -8,12 +9,12 @@ use crate::http::{BodyPlan, HttpResponsePlan, RuntimeConfig};
 use crate::schema::{Behavior, Route, RouteMatch};
 use crate::template::has_templates;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Catalog {
     pub(crate) routes: BTreeMap<String, Route>,
     collections: CollectionsFile,
     /// Each Collection resolved once (inheritance, validation) instead of on every request.
-    resolved: BTreeMap<String, Result<Vec<Activation>, String>>,
+    resolved: BTreeMap<String, Result<Vec<Activation>, Arc<CollectionError>>>,
     /// HTTP Response Behaviors without templates, planned once with the body serialized:
     /// route → case → behavior.
     pub(crate) static_plans: BTreeMap<String, BTreeMap<String, BTreeMap<String, HttpResponsePlan>>>,
@@ -28,7 +29,8 @@ impl Catalog {
     ) -> Result<Self, CatalogError> {
         for route in &routes {
             route.validate()?;
-            crate::grpc::schema::check_route(route, &runtime.protos).map_err(CatalogError::Grpc)?;
+            crate::grpc::schema::check_route(route, &runtime.protos)
+                .map_err(|reason| CatalogError::GrpcRoute { reason })?;
         }
         Self::from_checked(routes, collections, runtime)
     }
@@ -51,7 +53,7 @@ impl Catalog {
         let resolved = collections
             .ids()
             .map(|id| {
-                let activations = collections.resolve(id).map_err(|error| error.to_string());
+                let activations = collections.resolve(id).map_err(Arc::new);
                 (id.to_owned(), activations)
             })
             .collect();
@@ -138,15 +140,14 @@ impl Catalog {
         &'a self,
         collection_id: &str,
         overrides: &'a [Activation],
-    ) -> Result<Vec<&'a Activation>, String> {
+    ) -> Result<Vec<&'a Activation>, Arc<CollectionError>> {
         let collection = self
             .resolved
             .get(collection_id)
             .ok_or_else(|| {
-                CollectionError::UnknownCollection {
+                Arc::new(CollectionError::UnknownCollection {
                     id: collection_id.to_owned(),
-                }
-                .to_string()
+                })
             })?
             .as_ref()
             .map_err(Clone::clone)?;
@@ -178,8 +179,9 @@ pub enum CatalogError {
     Validation(#[from] crate::schema::ValidationError),
     #[error("duplicate route id")]
     DuplicateRoute,
-    #[error("{0}")]
-    Grpc(String),
+    /// A gRPC Route that doesn't fit the loaded protos.
+    #[error("{reason}")]
+    GrpcRoute { reason: String },
     #[error(transparent)]
     Collection(#[from] CollectionError),
 }

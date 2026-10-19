@@ -64,10 +64,10 @@ impl Catalog {
     ) -> ResolveOutcome<'_> {
         let activations = match self.activations(collection_id, overrides) {
             Ok(activations) => activations,
-            Err(reason) => {
+            Err(error) => {
                 return ResolveOutcome::Miss(MissDiagnostic {
                     collection: collection_id.to_owned(),
-                    reason,
+                    reason: error.to_string(),
                     candidates: Vec::new(),
                 });
             }
@@ -560,6 +560,19 @@ cases:
                 ),
                 candidate("get-user:any:ghost", Rejection::MissingBehavior),
             ]
+        );
+    }
+
+    #[test]
+    fn a_broken_collection_misses_with_its_load_error() {
+        assert_eq!(
+            catalog("- id: a\n  from: b\n- id: b\n  from: a\n")
+                .resolve_http("a", &get("/users/456")),
+            ResolveOutcome::Miss(MissDiagnostic {
+                collection: "a".to_owned(),
+                reason: "collection inheritance cycle at `a`".to_owned(),
+                candidates: Vec::new(),
+            })
         );
     }
 
