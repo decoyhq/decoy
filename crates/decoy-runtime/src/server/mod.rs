@@ -9,20 +9,21 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 
-use crate::config::{ServeConfig, TlsSource};
+use crate::config::{ConfigError, ServeConfig, TlsSource};
 use crate::engine::Controller;
 use crate::http::RuntimeConfig;
 use crate::protos::load_descriptor_pool;
 use crate::schema::PassthroughTarget;
-use crate::startup::{Startup, load_catalog_from_files};
+use crate::startup::{Startup, StartupError, load_catalog_from_files};
 use crate::tls;
 use axum::routing::any;
 use axum::{Extension, Router};
+use thiserror::Error;
 use tokio::sync::RwLock;
 
 use ingress::{MaxBodyBytes, Secure, handle_request};
-pub use listen::BoundListener;
 use listen::bind;
+pub use listen::{BindError, BoundListener};
 use reload::ListenerFields;
 pub use reload::{Reloaded, Reloader};
 
@@ -40,8 +41,25 @@ pub struct Server {
     servers: tokio::task::JoinSet<std::io::Result<()>>,
 }
 
-/// Error returned by [`serve`] and [`Server::wait`]; `Send + Sync` so `wait` can be spawned.
-pub type ServeError = Box<dyn std::error::Error + Send + Sync>;
+/// Error returned by [`serve`], [`Server::wait`] and [`Reloader::reload`]. Each variant shows its
+/// cause's text unchanged.
+#[derive(Debug, Error)]
+pub enum ServeError {
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    #[error(transparent)]
+    Protos(StartupError),
+    #[error(transparent)]
+    Startup(#[from] StartupError),
+    #[error(transparent)]
+    Tls(StartupError),
+    #[error(transparent)]
+    Bind(#[from] BindError),
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Task(#[from] tokio::task::JoinError),
+}
 
 /// Loads `config`, binds every listener and starts serving. `shutdown` is awaited by
 /// [`Server::wait`]; when it resolves, open requests get [`DRAIN_TIMEOUT`] to finish.
@@ -62,9 +80,9 @@ pub async fn serve(
         .layer(Extension(events.clone()));
     let tls_config = match &config.tls {
         None => None,
-        Some(TlsSource::Files(files)) => Some(tls::server_config(files)?),
+        Some(TlsSource::Files(files)) => Some(tls::server_config(files).map_err(ServeError::Tls)?),
         Some(TlsSource::Auto { dir }) => {
-            let (tls_config, ca) = tls::auto_server_config(dir)?;
+            let (tls_config, ca) = tls::auto_server_config(dir).map_err(ServeError::Tls)?;
             notices.push(format!(
                 "TLS cert signed by {}; trust it with e.g. NODE_EXTRA_CA_CERTS",
                 ca.display()
@@ -136,7 +154,7 @@ pub async fn serve(
 
 /// Builds the Catalog from `config`'s protos, Routes and Collections.
 fn load(config: &ServeConfig) -> Result<Startup, ServeError> {
-    let protos = load_descriptor_pool(&config.protos)?;
+    let protos = load_descriptor_pool(&config.protos).map_err(ServeError::Protos)?;
     Ok(load_catalog_from_files(
         &config.routes,
         &config.collections,

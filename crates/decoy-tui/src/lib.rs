@@ -150,7 +150,7 @@ type Served = tokio::task::JoinHandle<Result<(), ServeError>>;
 fn joined(
     result: Result<Result<(), ServeError>, tokio::task::JoinError>,
 ) -> Result<(), ServeError> {
-    result.map_err(|error| Box::new(error) as ServeError)?
+    result?
 }
 
 /// Returns the server's result when it stopped first, `None` when the user quit. Copies are
@@ -539,7 +539,8 @@ mod tests {
     async fn a_server_that_stops_ends_the_loop_with_its_result() {
         let mut harness = Harness::new(16).await;
         let stop = harness.stop.take().unwrap();
-        stop.send(Err("port gone".into())).unwrap();
+        stop.send(Err(std::io::Error::other("port gone").into()))
+            .unwrap();
 
         let stopped = harness.run().await.unwrap().unwrap();
         assert_eq!(stopped.unwrap_err().to_string(), "port gone");

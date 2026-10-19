@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
+use decoy_runtime::ServeError;
 use decoy_runtime::config::{ServeCliOptions, ServeConfig};
 use decoy_runtime::watch::{ConfigWatcher, WatchedPaths};
 
@@ -91,17 +92,13 @@ async fn tui(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     };
     let config = serve_config(args.clone())?;
     let watching = watch(&args, &config)?;
-    let server = decoy_runtime::serve(config, shutdown)
-        .await
-        .map_err(|error| error as Box<dyn std::error::Error>)?;
-    decoy_tui::run(server, quit, config_reader(args), watching)
-        .await
-        .map_err(|error| error as Box<dyn std::error::Error>)
+    let server = decoy_runtime::serve(config, shutdown).await?;
+    Ok(decoy_tui::run(server, quit, config_reader(args), watching).await?)
 }
 
 /// Re-reads the config from the same flags and files, for a reload.
 fn config_reader(args: ServeArgs) -> decoy_tui::LoadConfig {
-    Arc::new(move || serve_config(args.clone()).map_err(|error| error.to_string().into()))
+    Arc::new(move || serve_config(args.clone()))
 }
 
 /// `--watch`: one signal per burst of changes to the files `config` was read from.
@@ -129,9 +126,7 @@ fn watch(
 async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     let config = serve_config(args.clone())?;
     let watching = watch(&args, &config)?;
-    let server = decoy_runtime::serve(config, shutdown_signal())
-        .await
-        .map_err(|error| error as Box<dyn std::error::Error>)?;
+    let server = decoy_runtime::serve(config, shutdown_signal()).await?;
     for notice in &server.notices {
         eprintln!("decoy serve: {notice}");
     }
@@ -159,13 +154,10 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     }
-    server
-        .wait()
-        .await
-        .map_err(|error| error as Box<dyn std::error::Error>)
+    Ok(server.wait().await?)
 }
 
-fn serve_config(args: ServeArgs) -> Result<ServeConfig, Box<dyn std::error::Error>> {
+fn serve_config(args: ServeArgs) -> Result<ServeConfig, ServeError> {
     let cwd = std::env::current_dir()?;
     Ok(ServeConfig::from_options(
         ServeCliOptions {
