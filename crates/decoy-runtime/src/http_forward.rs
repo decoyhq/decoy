@@ -8,7 +8,7 @@ use futures_util::stream::BoxStream;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use thiserror::Error;
 
-use crate::control_api::SESSION_HEADER;
+use crate::engine::SESSION_HEADER;
 use crate::http::PassthroughPlan;
 use crate::schema::HttpMethod;
 

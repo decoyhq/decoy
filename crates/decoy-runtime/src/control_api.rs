@@ -3,12 +3,11 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub use crate::engine::session::{DEFAULT_SESSION, SESSION_HEADER};
 use crate::engine::{ControlError, Controller, SelectionSnapshot};
 use crate::events::SessionSource;
 
 pub const CONTROL_PREFIX: &str = "/__decoy__";
-pub const SESSION_HEADER: &str = "x-mock-session";
-pub const DEFAULT_SESSION: &str = "default";
 /// Liveness probe for tools waiting on a runtime. It reports only that Decoy is serving; it
 /// exposes no diagnostics or identity and never reads or mutates Selection.
 pub const HEALTH_PATH: &str = "/__decoy__/health";
