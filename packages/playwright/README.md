@@ -24,16 +24,19 @@ export default defineConfig<DecoyTestOptions>({
   },
 })
 
-// fixtures.ts
-export const test = base.extend<DecoyFixtures>(createDecoyFixtures())
-
 // some.spec.ts
+import { expect, test } from '@decoyhq/playwright'
+
 test('empty state', async ({ page, decoy }) => {
   await decoy.useCollection('empty')
-  await decoy.useRoute('users-by-id', 'user-123', 'missing')
+  await decoy.useRoute('users-by-id:user-123:missing') // or ('users-by-id', 'user-123', 'missing')
   await decoy.reset()
 })
 ```
+
+`test` is Playwright's `test` with the Decoy fixtures merged in, and `expect` is Playwright's. To
+combine them with your own fixtures, `test.extend` it, or merge `createDecoyFixtures()` into your
+base yourself: `base.extend<DecoyFixtures>(createDecoyFixtures())`.
 
 - `setup` starts `command` unless Decoy already answers `GET /__decoy__/health` at `url`.
   Reuse follows Playwright `webServer`: allowed locally, refused when `CI` is set. The returned
@@ -42,7 +45,8 @@ test('empty state', async ({ page, decoy }) => {
 - Fixtures never start Decoy. Each test gets its own Session: Decoy's health is checked and
   `collection` applied once, before routed requests or test code run.
 - The `decoy` fixture is this Session's Router: `sessionId`, `useCollection`, `useRoute`,
-  `reset`, `endSession`. Each call hits the Control API immediately and rejects with Decoy's error,
+  `reset`, `endSession`. `useRoute` takes a Behavior address, either as one `'route:case:behavior'`
+  string or as three arguments; a malformed address rejects without calling Decoy. Each call hits the Control API immediately and rejects with Decoy's error,
   or after 10s without an answer.
   It fails if `decoyOptions` is unset. When the test ends, the fixtures end its Session in Decoy.
 - Decoy is off unless `decoyOptions` is set.
@@ -52,3 +56,5 @@ test('empty state', async ({ page, decoy }) => {
   browser as-is (Set-Cookie included, for the page's origin; forwarding keeps no cookies of its
   own); if Decoy is unreachable the request is aborted, never sent to the real network.
   Other requests continue normally.
+- Only the fixture's `context` (and its `page`) is routed. A context you create yourself with
+  `browser.newContext()` is not: its requests skip Decoy and carry no Session.
