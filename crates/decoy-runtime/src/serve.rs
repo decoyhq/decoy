@@ -13,7 +13,7 @@ use crate::control_api::{
 };
 use crate::engine::{Catalog, Controller, HttpExecutionOutcome, HttpExecutionRequest};
 use crate::grpc::{GrpcRequest, GrpcResponse, RESOURCE_EXHAUSTED, UNIMPLEMENTED};
-use crate::http::{BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig};
+use crate::http::{HttpResponsePlan, RequestMetadata, ResponsePlan, RuntimeConfig};
 use crate::http_forward::ForwardResponse;
 use crate::protos::load_descriptor_pool;
 use crate::schema::{HttpMethod, PassthroughTarget};
@@ -601,8 +601,7 @@ fn json_response(status: StatusCode, value: serde_json::Value) -> Response<Body>
 
 fn http_response(plan: HttpResponsePlan) -> Response<Body> {
     let body = match plan.body {
-        Some(BodyPlan::Json(value)) => Body::from(serde_json::to_vec(&value).expect("json body")),
-        Some(BodyPlan::Text(text)) => Body::from(text),
+        Some(body) => Body::from(body.into_bytes()),
         None => Body::empty(),
     };
     let mut response = Response::new(body);
