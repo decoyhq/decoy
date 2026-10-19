@@ -95,8 +95,11 @@ pub enum GrpcResolution<'a> {
         envelope: Value,
     },
     Miss(MissDiagnostic),
-    /// The call failed before matching finished, e.g. the request did not decode.
-    Failed(GrpcResponse),
+    /// Nothing matched and a Route could not decode the request: `INVALID_ARGUMENT`.
+    Failed {
+        response: GrpcResponse,
+        candidates: Vec<Candidate>,
+    },
 }
 
 /// A served unary call and what an event needs to explain it.
@@ -164,12 +167,15 @@ impl Catalog {
                 request: None,
                 message: None,
             },
-            GrpcResolution::Failed(response) => GrpcCall {
+            GrpcResolution::Failed {
+                response,
+                candidates,
+            } => GrpcCall {
                 outcome: capture.then(|| {
                     Outcome::Miss(MissDiagnostic {
                         collection: collection_id.to_owned(),
                         reason: response.status_message.clone(),
-                        candidates: Vec::new(),
+                        candidates,
                     })
                 }),
                 response,
@@ -212,6 +218,8 @@ impl Catalog {
         let mut candidates = explain.then(Vec::new);
         // Decoded once per call; only another Pipeline needs a fresh decode.
         let mut decoded: Option<(&[PipelineStep], Value, OnceCell<Rcvar>)> = None;
+        // The first decode error, the answer when no other Route matches.
+        let mut decode_failure = None;
         for activation in activations.iter().copied().rev() {
             let Some(route) = self.route(&activation.route) else {
                 reject(&mut candidates, activation, || Rejection::MissingRoute);
@@ -239,14 +247,15 @@ impl Catalog {
                 _ => {
                     let message = match decode(&request.body, steps, &method.input()) {
                         Ok(message) => message,
-                        Err(reason) => {
-                            return GrpcResolution::Failed(GrpcResponse::error(
-                                INVALID_ARGUMENT,
+                        Err(error) => {
+                            decode_failure.get_or_insert_with(|| {
                                 format!(
-                                    "route `{}` could not decode the request: {reason}",
+                                    "route `{}` could not decode the request: {error}",
                                     route.id
-                                ),
-                            ));
+                                )
+                            });
+                            reject(&mut candidates, activation, || Rejection::Decode { error });
+                            continue;
                         }
                     };
                     let envelope = json!({
@@ -289,11 +298,18 @@ impl Catalog {
             };
         }
 
-        GrpcResolution::Miss(MissDiagnostic {
-            collection: collection_id.to_owned(),
-            reason: "no active route case matched request".to_owned(),
-            candidates: candidates.unwrap_or_default(),
-        })
+        let candidates = candidates.unwrap_or_default();
+        match decode_failure {
+            Some(reason) => GrpcResolution::Failed {
+                response: GrpcResponse::error(INVALID_ARGUMENT, reason),
+                candidates,
+            },
+            None => GrpcResolution::Miss(MissDiagnostic {
+                collection: collection_id.to_owned(),
+                reason: "no active route case matched request".to_owned(),
+                candidates,
+            }),
+        }
     }
 }
 
@@ -849,7 +865,53 @@ cases:
         };
         assert_eq!(miss.collection, "default");
         assert_eq!(miss.reason, call.response.status_message);
-        assert!(miss.candidates.is_empty());
+        assert!(
+            matches!(
+                &miss.candidates[..],
+                [Candidate {
+                    rejection: Rejection::Decode { .. },
+                    ..
+                }]
+            ),
+            "{:?}",
+            miss.candidates
+        );
+    }
+
+    #[test]
+    fn a_decode_failure_rejects_its_route_and_matching_goes_on() {
+        let route = |id: &str, pipeline: &str, message: &str| {
+            Route::from_yaml(&format!(
+                "id: {id}\ntransport: grpc\nmatch: {{ service: approvals.v1.Approvals, method: GetApproval }}\n{pipeline}cases:\n  any:\n    behaviors:\n      ok: {{ message: {message} }}\n"
+            ))
+            .unwrap()
+        };
+        let catalog = Catalog::new(
+            vec![
+                route("raw", "pipeline: [grpc-frame]\n", "CgNhLTE="),
+                route("proto", "", "{}"),
+            ],
+            CollectionsFile::from_yaml("- id: default\n  routes: [raw:any:ok, proto:any:ok]\n")
+                .unwrap(),
+            runtime(),
+        )
+        .unwrap();
+        let mut call = request(&catalog, json!({}));
+        // A truncated varint: a valid frame whose payload is not an `ApprovalRequest`.
+        call.body = frame(&[0x08]);
+        let GrpcResolution::Matched {
+            activation,
+            skipped,
+            ..
+        } = catalog.resolve_grpc("default", &[], &call)
+        else {
+            panic!("expected the raw Route to match")
+        };
+        assert_eq!(activation.address(), "raw:any:ok");
+        assert!(
+            matches!(&skipped[..], [Candidate { address, rejection: Rejection::Decode { .. } }] if address == "proto:any:ok"),
+            "{skipped:?}"
+        );
     }
 
     #[tokio::test]

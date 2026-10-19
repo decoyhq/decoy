@@ -23,7 +23,8 @@ pub enum Segment {
 }
 
 /// Split `input` into text and expressions. `\${` is a literal `${`; the closing `}` is found by
-/// brace depth, so `${ {a: b} }` works. An unterminated `${` is an error.
+/// brace depth outside string literals, so `${ {a: b} }` and `${ join('}', tags) }` work. An
+/// unterminated `${` is an error.
 pub fn segments(input: &str) -> Result<Vec<Segment>, String> {
     let mut segments = Vec::new();
     let mut text = String::new();
@@ -55,8 +56,21 @@ pub fn segments(input: &str) -> Result<Vec<Segment>, String> {
 
 fn closing_brace(source: &str) -> Option<usize> {
     let mut depth = 0usize;
+    // The open JMESPath literal's quote (`'`, `"` or a backtick) and whether the last char was `\`.
+    let mut quote = None;
+    let mut escaped = false;
     for (index, character) in source.char_indices() {
+        if let Some(open) = quote {
+            match character {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                _ if character == open => quote = None,
+                _ => {}
+            }
+            continue;
+        }
         match character {
+            '\'' | '"' | '`' => quote = Some(character),
             '{' => depth += 1,
             '}' if depth == 0 => return Some(index),
             '}' => depth -= 1,
@@ -327,6 +341,22 @@ mod tests {
             vec![Segment::Expression("{id: body.id}".to_owned())]
         );
         assert!(segments("${ body.id").is_err());
+    }
+
+    #[test]
+    fn closing_brace_skips_string_literals() {
+        assert_eq!(
+            segments(r#"${ join('}', tags) }"#).unwrap(),
+            vec![Segment::Expression("join('}', tags)".to_owned())]
+        );
+        assert_eq!(
+            segments(r#"${ "a}b" }${ `"}"` }${ 'it\'s}' }"#).unwrap(),
+            vec![
+                Segment::Expression(r#""a}b""#.to_owned()),
+                Segment::Expression(r#"`"}"`"#.to_owned()),
+                Segment::Expression(r"'it\'s}'".to_owned()),
+            ]
+        );
     }
 
     #[test]

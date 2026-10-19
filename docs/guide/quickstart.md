@@ -44,7 +44,7 @@ decoy serve --routes mocks/routes --collections mocks/collections.yaml --port 80
 
 ```sh
 curl -i localhost:8080/users/123   # 200 {"id":"123","name":"Ada"}
-curl -X POST localhost:8080/__decoy__/control/useCollection -d '{"collection":"user-missing"}'
+curl -X POST localhost:8080/__decoy__/control/useCollection -H 'content-type: application/json' -d '{"collection":"user-missing"}'
 curl -i localhost:8080/users/123   # 404 not found
 curl -i localhost:8080/orders      # 501, x-mock-miss: true: nothing mocks it, nothing is proxied
 ```

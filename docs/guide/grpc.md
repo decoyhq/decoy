@@ -95,6 +95,8 @@ Every string can be a `${ }` template, including `status`.
   or `createdAtMs: 5` would never match a decoded request, so they fail: use JSON names, and write
   64-bit values as strings (`createdAtMs: '5'`).
 - Metadata names are lowercase header names and not `grpc-*`.
+- Literal metadata values are printable ASCII (`0x20`–`0x7E`). A rendered value outside that range
+  is dropped from the trailers with a warning.
 
 Templated values are checked when they render. A render or encode failure answers `INTERNAL` with
 the Behavior address.

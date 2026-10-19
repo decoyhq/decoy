@@ -315,6 +315,12 @@ fn value_matches(pattern: &Value, actual: &Value) -> bool {
         (Value::Array(pattern), Value::Array(actual)) => pattern
             .iter()
             .all(|expected| actual.iter().any(|value| value_matches(expected, value))),
+        // Two integers compare exactly (f64 loses precision past 2^53); otherwise `1 == 1.0`.
+        (Value::Number(pattern), Value::Number(actual))
+            if !pattern.is_f64() && !actual.is_f64() =>
+        {
+            pattern == actual
+        }
         (Value::Number(pattern), Value::Number(actual)) => pattern.as_f64() == actual.as_f64(),
         (pattern, actual) => pattern == actual,
     }
@@ -444,6 +450,19 @@ mod tests {
         ));
         assert!(!matches(
             json!({ "body": { "user": { "email": "x" } } }),
+            &request
+        ));
+    }
+
+    #[test]
+    fn body_integers_compare_exactly_beyond_f64_precision() {
+        let request = envelope("/", &[], json!({ "id": 9_007_199_254_740_993_u64 }));
+        assert!(matches(
+            json!({ "body": { "id": 9_007_199_254_740_993_u64 } }),
+            &request
+        ));
+        assert!(!matches(
+            json!({ "body": { "id": 9_007_199_254_740_992_u64 } }),
             &request
         ));
     }
