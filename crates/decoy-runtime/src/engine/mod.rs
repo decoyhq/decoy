@@ -1,3 +1,5 @@
+pub mod session;
+
 use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -7,7 +9,6 @@ use jmespath::Rcvar;
 use thiserror::Error;
 
 use crate::collections::{Activation, CollectionError, CollectionsFile};
-use crate::control_api::DEFAULT_SESSION;
 use crate::events::{
     CapturedBody, CapturedResponse, Event, Match, Outcome, RequestEvent, SessionChange,
     SessionEvent, SessionSource,
@@ -22,6 +23,8 @@ use crate::matching::{ConditionFailure, MatchInput, case_matches, case_mismatch}
 use crate::request::RequestEnvelope;
 use crate::schema::{Behavior, HttpMethod, Route, RouteMatch, Transport};
 use crate::template::{has_templates, render_response};
+
+pub use session::{DEFAULT_SESSION, SESSION_HEADER};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct HttpRequest {
