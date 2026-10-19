@@ -12,6 +12,11 @@ pre-commit:
       glob: '*.{js,mjs,ts,tsx,json,md,yml,yaml,html,css}'
       run: pnpm exec prettier --write --ignore-unknown {staged_files}
       stage_fixed: true
+    3_rustfmt:
+      glob: '*.rs'
+      # rustfmt alone defaults to edition 2015; match the workspace edition in Cargo.toml.
+      run: rustfmt --edition 2024 {staged_files}
+      stage_fixed: true
 
 commit-msg:
   commands:
