@@ -4,9 +4,18 @@
 use std::path::Path;
 use std::process::Command;
 
-// The release copies default to that release's version; DECOY_VERSION overrides it.
-const INSTALL_SH: &str = "https://github.com/decoyhq/decoy/releases/latest/download/install.sh";
-const INSTALL_PS1: &str = "https://github.com/decoyhq/decoy/releases/latest/download/install.ps1";
+/// The release copy of `script`: from that version's release when pinned, so an old version is
+/// installed by the script it shipped with, else from the latest release.
+fn install_script_url(script: &str, version: Option<&str>) -> String {
+    let releases = "https://github.com/decoyhq/decoy/releases";
+    match version {
+        Some(version) => format!(
+            "{releases}/download/v{}/{script}",
+            version.trim_start_matches('v')
+        ),
+        None => format!("{releases}/latest/download/{script}"),
+    }
+}
 
 /// Why `exe` must not upgrade itself, if it is owned by a package manager.
 pub fn refusal(exe: &Path) -> Option<&'static str> {
@@ -32,13 +41,14 @@ pub fn run(version: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
-            &format!("irm {INSTALL_PS1} | iex"),
+            &format!("irm {} | iex", install_script_url("install.ps1", version)),
         ]);
         command
     } else {
         let mut command = Command::new("sh");
         // Not `curl | sh`: a failed download would pipe nothing into sh, which exits 0.
-        let script = format!("s=\"$(curl -fsSL {INSTALL_SH})\" && printf '%s\\n' \"$s\" | sh");
+        let url = install_script_url("install.sh", version);
+        let script = format!("s=\"$(curl -fsSL {url})\" && printf '%s\\n' \"$s\" | sh");
         command.args(["-c", &script]);
         command
     };
@@ -62,5 +72,21 @@ mod tests {
         let npm = Path::new("/p/node_modules/@decoyhq/cli-linux-x64/bin/decoy");
         assert!(refusal(npm).is_some());
         assert!(refusal(Path::new("/home/u/.decoy/bin/decoy")).is_none());
+    }
+
+    #[test]
+    fn pinned_version_fetches_that_releases_install_script() {
+        assert_eq!(
+            install_script_url("install.sh", Some("0.1.0-alpha.6")),
+            "https://github.com/decoyhq/decoy/releases/download/v0.1.0-alpha.6/install.sh"
+        );
+        assert_eq!(
+            install_script_url("install.ps1", Some("v0.2.0")),
+            "https://github.com/decoyhq/decoy/releases/download/v0.2.0/install.ps1"
+        );
+        assert_eq!(
+            install_script_url("install.sh", None),
+            "https://github.com/decoyhq/decoy/releases/latest/download/install.sh"
+        );
     }
 }
