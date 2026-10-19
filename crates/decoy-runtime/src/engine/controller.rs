@@ -39,8 +39,8 @@ pub struct Controller {
     /// Counts verbs that change a Selection, to find the Session changed least recently.
     clock: u64,
     events: crate::events::Sender,
-    /// Who is calling the verbs; the Control API sets it for the length of its call.
-    pub(crate) source: SessionSource,
+    /// Who is calling the verbs; [`Controller::with_source`] sets it for one call.
+    source: SessionSource,
 }
 
 impl Controller {
@@ -62,6 +62,19 @@ impl Controller {
 
     pub(crate) fn events(&self) -> crate::events::Sender {
         self.events.clone()
+    }
+
+    /// Runs `verbs` with every [`SessionEvent`] they emit tagged `source`, then restores the
+    /// previous source.
+    pub(crate) fn with_source<T>(
+        &mut self,
+        source: SessionSource,
+        verbs: impl FnOnce(&mut Self) -> T,
+    ) -> T {
+        let previous = std::mem::replace(&mut self.source, source);
+        let result = verbs(self);
+        self.source = previous;
+        result
     }
 
     #[cfg(test)]
