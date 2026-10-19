@@ -670,6 +670,17 @@ cases:
             message(&encode(json!("!"), &[PipelineStep::GrpcFrame], &input).unwrap_err()),
             "message is not base64: Invalid symbol 33, offset 0."
         );
+        assert_eq!(
+            message(
+                &encode(
+                    json!("AA=="),
+                    &[PipelineStep::Protobuf, PipelineStep::GrpcFrame],
+                    &input
+                )
+                .unwrap_err()
+            ),
+            "step `Protobuf` needs JSON, got bytes"
+        );
     }
 
     #[test]
