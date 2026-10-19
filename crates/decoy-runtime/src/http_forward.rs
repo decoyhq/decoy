@@ -3,6 +3,8 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use bytes::Bytes;
+use futures_util::StreamExt as _;
+use futures_util::stream::BoxStream;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use thiserror::Error;
 
@@ -18,12 +20,23 @@ pub struct ForwardRequest {
     pub body: Vec<u8>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct ForwardResponse {
     pub status: u16,
     /// In order, repeats kept (e.g. several `set-cookie`).
     pub headers: Vec<(String, String)>,
     pub body: Bytes,
+    /// A passthrough's upstream body, streamed as it arrives (SSE, long-poll, downloads); `body`
+    /// is empty then.
+    pub stream: Option<UpstreamBody>,
+}
+
+pub struct UpstreamBody(pub BoxStream<'static, Result<Bytes, reqwest::Error>>);
+
+impl std::fmt::Debug for UpstreamBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("UpstreamBody")
+    }
 }
 
 impl ForwardResponse {
@@ -86,6 +99,7 @@ impl ForwardingError {
             body: serde_json::to_vec(&body)
                 .expect("JSON response serializes")
                 .into(),
+            stream: None,
         }
     }
 }
@@ -106,7 +120,9 @@ impl From<reqwest::Error> for ForwardingError {
 pub const VIA_HEADER: &str = "x-decoy-via";
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+/// Longest upstream silence, before the headers or between body chunks. No deadline on the whole
+/// response, so SSE and downloads run while bytes keep coming. 60s, as nginx's `proxy_read_timeout`.
+const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 fn instance_id() -> &'static str {
     static ID: OnceLock<String> = OnceLock::new();
@@ -117,25 +133,26 @@ fn instance_id() -> &'static str {
 fn client() -> Result<&'static reqwest::Client, ForwardingError> {
     static CLIENT: OnceLock<Result<reqwest::Client, String>> = OnceLock::new();
     CLIENT
-        .get_or_init(|| {
-            // reqwest brings no crypto provider and panics without one; use `ring`, as the TLS
-            // listeners do. Err means one is installed already.
-            let _ = rustls::crypto::ring::default_provider().install_default();
-            // The OS store can be empty (scratch, distroless), and the platform verifier refuses
-            // to build then; bundled Mozilla roots keep it non-empty.
-            let bundled = webpki_root_certs::TLS_SERVER_ROOT_CERTS
-                .iter()
-                .filter_map(|cert| reqwest::Certificate::from_der(cert).ok());
-            reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .connect_timeout(CONNECT_TIMEOUT)
-                .timeout(REQUEST_TIMEOUT)
-                .tls_certs_merge(bundled)
-                .build()
-                .map_err(|error| error.to_string())
-        })
+        .get_or_init(|| build_client(IDLE_TIMEOUT).map_err(|error| error.to_string()))
         .as_ref()
         .map_err(|error| ForwardingError::Client(error.clone()))
+}
+
+fn build_client(idle: Duration) -> reqwest::Result<reqwest::Client> {
+    // reqwest brings no crypto provider and panics without one; use `ring`, as the TLS listeners
+    // do. Err means one is installed already.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    // The OS store can be empty (scratch, distroless), and the platform verifier refuses to build
+    // then; bundled Mozilla roots keep it non-empty.
+    let bundled = webpki_root_certs::TLS_SERVER_ROOT_CERTS
+        .iter()
+        .filter_map(|cert| reqwest::Certificate::from_der(cert).ok());
+    reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .connect_timeout(CONNECT_TIMEOUT)
+        .read_timeout(idle)
+        .tls_certs_merge(bundled)
+        .build()
 }
 
 const ALWAYS_STRIPPED_REQUEST_HEADERS: &[&str] = &[
@@ -151,6 +168,8 @@ const ALWAYS_STRIPPED_REQUEST_HEADERS: &[&str] = &[
     "content-length",
 ];
 
+/// `content-length` is kept: the body streams through byte for byte (no decompression), so the
+/// server can't infer the length, and hyper cuts the response short if the upstream does.
 const STRIPPED_RESPONSE_HEADERS: &[&str] = &[
     "connection",
     "keep-alive",
@@ -160,7 +179,6 @@ const STRIPPED_RESPONSE_HEADERS: &[&str] = &[
     "trailer",
     "transfer-encoding",
     "upgrade",
-    "content-length",
 ];
 
 pub async fn forward_passthrough(
@@ -204,12 +222,12 @@ pub async fn forward_passthrough(
 
     let status = response.status().as_u16();
     let headers = forwardable_response_headers(response.headers());
-    let body = response.bytes().await?;
 
     Ok(ForwardResponse {
         status,
         headers,
-        body,
+        body: Bytes::new(),
+        stream: Some(UpstreamBody(response.bytes_stream().boxed())),
     })
 }
 
@@ -443,7 +461,7 @@ mod tests {
 
         assert_eq!(response.status, 207);
         assert_eq!(response.header("x-from-upstream"), Some("yes"));
-        assert_eq!(response.header("content-length"), None);
+        assert_eq!(response.header("content-length"), Some("11"));
         let cookies: Vec<&str> = response
             .headers
             .iter()
@@ -451,7 +469,10 @@ mod tests {
             .map(|(_, value)| value.as_str())
             .collect();
         assert_eq!(cookies, ["a=1", "b=2"]);
-        assert_eq!(response.body, &br#"{"ok":true}"#[..]);
+        let body: Vec<Bytes> = futures_util::TryStreamExt::try_collect(response.stream.unwrap().0)
+            .await
+            .unwrap();
+        assert_eq!(body.concat(), br#"{"ok":true}"#);
 
         let request = received.recv().unwrap();
         handle.join().unwrap();
@@ -494,23 +515,48 @@ mod tests {
         assert_eq!(error.response().status, 508);
     }
 
-    #[tokio::test]
-    async fn an_upstream_that_never_answers_is_a_timeout() {
+    /// Accepts one connection, writes `response`, then holds the socket open without a word.
+    fn spawn_silent_upstream(response: &'static [u8]) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
-        let _hold = thread::spawn(move || listener.accept().map(|(stream, _)| stream));
-        let error = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_millis(100))
-            .build()
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let _ = stream.read(&mut [0; 1024]);
+            stream.write_all(response).unwrap();
+            thread::sleep(Duration::from_secs(5));
+        });
+        format!("http://{addr}/")
+    }
+
+    #[tokio::test]
+    async fn an_upstream_that_sends_no_headers_is_a_timeout() {
+        let url = spawn_silent_upstream(b"");
+        let error = build_client(Duration::from_millis(100))
             .unwrap()
-            .get(format!("http://{addr}/"))
+            .get(url)
             .send()
             .await
             .unwrap_err();
 
         let error = ForwardingError::from(error);
-        assert!(matches!(error, ForwardingError::Timeout(_)));
+        assert!(matches!(error, ForwardingError::Timeout(_)), "{error}");
         assert_eq!(error.response().status, 504);
+    }
+
+    #[tokio::test]
+    async fn a_body_that_stalls_is_cut_off() {
+        let url = spawn_silent_upstream(b"HTTP/1.1 200 OK\r\ncontent-length: 10\r\n\r\nfirst");
+        let response = build_client(Duration::from_millis(100))
+            .unwrap()
+            .get(url)
+            .send()
+            .await
+            .unwrap();
+        let mut body = response.bytes_stream();
+
+        assert_eq!(body.next().await.unwrap().unwrap(), "first");
+        let error = body.next().await.unwrap().unwrap_err();
+        assert!(error.is_timeout(), "{error}");
     }
 
     #[tokio::test]

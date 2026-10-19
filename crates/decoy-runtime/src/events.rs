@@ -113,6 +113,43 @@ impl CapturedBody {
     }
 }
 
+/// Captures a streamed body as it passes, cut to [`BODY_CAP`], and hands it over when dropped:
+/// when the stream ends or the client hangs up.
+pub(crate) struct StreamCapture {
+    bytes: Vec<u8>,
+    size: usize,
+    done: Option<Box<dyn FnOnce(CapturedBody) + Send>>,
+}
+
+impl StreamCapture {
+    pub(crate) fn new(done: impl FnOnce(CapturedBody) + Send + 'static) -> Self {
+        Self {
+            bytes: Vec::new(),
+            size: 0,
+            done: Some(Box::new(done)),
+        }
+    }
+
+    pub(crate) fn push(&mut self, chunk: &[u8]) {
+        let room = BODY_CAP - self.bytes.len();
+        self.bytes
+            .extend_from_slice(&chunk[..chunk.len().min(room)]);
+        self.size += chunk.len();
+    }
+}
+
+impl Drop for StreamCapture {
+    fn drop(&mut self) {
+        if let Some(done) = self.done.take() {
+            done(CapturedBody {
+                bytes: std::mem::take(&mut self.bytes),
+                decoded: false,
+                size: self.size,
+            });
+        }
+    }
+}
+
 /// A Selection created, changed, or ended.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionEvent {
