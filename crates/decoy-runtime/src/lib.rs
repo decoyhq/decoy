@@ -15,7 +15,7 @@ pub mod matching;
 pub mod protos;
 pub mod request;
 pub mod schema;
-pub mod serve;
+pub mod server;
 pub mod startup;
 pub mod template;
 pub mod tls;
@@ -40,7 +40,7 @@ pub use schema::{
     Behavior, BehaviorKind, Case, GrpcRouteMatch, HttpMethod, HttpRouteMatch, Route, RouteMatch,
     Transport, ValidationError,
 };
-pub use serve::{BoundListener, Reloaded, Reloader, ServeError, Server, serve};
+pub use server::{BoundListener, Reloaded, Reloader, ServeError, Server, serve};
 pub use startup::{
     SourceLocation, Startup, StartupDiagnostic, StartupDiagnosticKind, StartupError,
     load_catalog_from_files,
