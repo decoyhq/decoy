@@ -49,7 +49,9 @@ version="${version#v}"
 
 name="decoy-$version-$target"
 base="https://github.com/$repo/releases/download/v$version"
-tmp="$(mktemp -d)"
+mkdir -p "$install_dir"
+# Stage next to the target so the final mv is a same-filesystem rename, never a partial copy.
+tmp="$(mktemp -d "$install_dir/.decoy-install.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 
 echo "Installing decoy $version ($target)"
@@ -67,9 +69,8 @@ fi
 [ "$actual" = "$expected" ] || err "checksum mismatch for $name.tar.gz"
 
 tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
-mkdir -p "$install_dir"
+chmod +x "$tmp/$name/decoy"
 mv -f "$tmp/$name/decoy" "$install_dir/decoy"
-chmod +x "$install_dir/decoy"
 
 echo "Installed $("$install_dir/decoy" --version) to $install_dir/decoy"
 case ":$PATH:" in

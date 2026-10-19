@@ -45,11 +45,18 @@ try {
   New-Item -ItemType Directory -Force -Path $installDir | Out-Null
   $exe = Join-Path $installDir 'decoy.exe'
   # A running decoy.exe (decoy upgrade) cannot be overwritten, but it can be renamed aside.
-  if (Test-Path $exe) {
+  $hadExe = Test-Path $exe
+  if ($hadExe) {
     Remove-Item -Force -ErrorAction SilentlyContinue "$exe.old"
     Move-Item -Force $exe "$exe.old"
   }
-  Move-Item -Force (Join-Path $tmp "$name\decoy.exe") $exe
+  try {
+    Move-Item -Force (Join-Path $tmp "$name\decoy.exe") $exe
+  } catch {
+    # Put the old binary back so a failed upgrade never leaves no decoy.exe.
+    if ($hadExe) { Move-Item -Force "$exe.old" $exe }
+    throw
+  }
 } finally {
   Remove-Item -Recurse -Force $tmp
 }
