@@ -6,7 +6,7 @@ How to run the repo locally and the rules a change should follow. Vocabulary liv
 ## Toolchain
 
 - **Rust** (stable) for `crates/*`
-- **pnpm 11** · **Node ≥ 24** for wrappers in `packages/*` and `examples/*`
+- **pnpm 12** · **Node ≥ 24** for wrappers in `packages/*` and `examples/*`
 
 ```sh
 pnpm install            # use --frozen-lockfile in CI

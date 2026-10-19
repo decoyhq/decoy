@@ -7,7 +7,7 @@ catalog:
   '@grpc/proto-loader': ^0.8.0
   '@playwright/test': ^1.56.0
   '@types/node': ^24.19.2
-# pnpm 11 reads its settings here, not from .npmrc.
+# pnpm 11+ reads its settings here, not from .npmrc.
 engineStrict: true
 autoInstallPeers: true
 # Skip versions published in the last day (most malicious releases are pulled within hours).
