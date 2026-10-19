@@ -96,11 +96,14 @@ pub async fn run(
     // Without these the TUI still works (no wheel, no Cmd+C), and an early return here would
     // leave the terminal in raw mode on the alternate screen.
     let _ = execute!(std::io::stdout(), EnableMouseCapture);
-    // ratatui's hook leaves the alternate screen and raw mode; release the rest before it.
+    // ratatui's hook leaves the alternate screen and raw mode, then prints the panic; release
+    // the rest before it. Tokio catches a task's panic, so exit or the TUI keeps drawing into a
+    // cooked terminal.
     let restore = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         release(enhanced);
         restore(info);
+        std::process::exit(101);
     }));
 
     let result = event_loop(

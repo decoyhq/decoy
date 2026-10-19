@@ -69,24 +69,40 @@ impl WatchedPaths {
     /// Natively, each file's parent directory (editors save by renaming a temp file over the
     /// original, which a watch on the file misses) and each tree. Polling sees a renamed-over
     /// file anyway, and must not hash the rest of the config's directory, so it takes the file.
-    fn watches(&self, polling: bool) -> Vec<(PathBuf, RecursiveMode)> {
-        let mut watches: Vec<(PathBuf, RecursiveMode)> = self
-            .files
+    /// A path that's missing right now is watched through its nearest existing ancestor, and
+    /// comes back paired with that ancestor in the second list.
+    #[allow(clippy::type_complexity)]
+    fn watches(&self, polling: bool) -> (Vec<(PathBuf, RecursiveMode)>, Vec<(PathBuf, PathBuf)>) {
+        let files = self.files.iter().filter_map(|file| match file.parent() {
+            Some(_) if polling && file.exists() => {
+                Some((file.clone(), RecursiveMode::NonRecursive))
+            }
+            parent => parent.map(|parent| (parent.to_path_buf(), RecursiveMode::NonRecursive)),
+        });
+        let trees = self
+            .trees
             .iter()
-            .filter_map(|file| match file.parent() {
-                Some(_) if polling && file.exists() => Some(file.clone()),
-                parent => parent.map(Path::to_path_buf),
+            .map(|(tree, _)| (tree.clone(), RecursiveMode::Recursive));
+        let mut missing = Vec::new();
+        let mut watches: Vec<(PathBuf, RecursiveMode)> = files
+            .chain(trees)
+            .filter_map(|(path, mode)| {
+                if path.exists() {
+                    return Some((path, mode));
+                }
+                let ancestor = path
+                    .ancestors()
+                    .skip(1)
+                    .find(|dir| dir.exists())?
+                    .to_path_buf();
+                missing.push((path, ancestor.clone()));
+                Some((ancestor, RecursiveMode::NonRecursive))
             })
-            .map(|path| (path, RecursiveMode::NonRecursive))
             .collect();
-        watches.extend(
-            self.trees
-                .iter()
-                .map(|(tree, _)| (tree.clone(), RecursiveMode::Recursive)),
-        );
-        watches.sort_by(|a, b| a.0.cmp(&b.0));
-        watches.dedup_by(|a, b| a.0 == b.0 && a.1 == b.1);
-        watches
+        // A path watched both ways keeps the recursive watch.
+        watches.sort_by_key(|(path, mode)| (path.clone(), *mode == RecursiveMode::NonRecursive));
+        watches.dedup_by(|a, b| a.0 == b.0);
+        (watches, missing)
     }
 }
 
@@ -105,11 +121,14 @@ fn canonical(path: &Path) -> PathBuf {
 /// Watches the config files until dropped. [`ConfigWatcher::changed`] resolves once per burst of
 /// relevant changes, after [`DEBOUNCE`].
 pub struct ConfigWatcher {
-    watcher: Box<dyn notify::Watcher + Send>,
+    _watchers: Vec<Box<dyn notify::Watcher + Send>>,
     paths: WatchedPaths,
     read_paths: ReadPaths,
     force_poll: bool,
     polling: bool,
+    /// Some path was missing when the watches were set up, so they're set up again on every
+    /// change until it's back.
+    missing: bool,
     events: mpsc::UnboundedSender<()>,
     changes: mpsc::Receiver<()>,
 }
@@ -135,13 +154,14 @@ impl ConfigWatcher {
                 }
             }
         });
-        let (watcher, polling) = arm(&paths, poll, &events)?;
+        let (watchers, polling, missing) = arm(&paths, poll, &events)?;
         Ok(Self {
-            watcher,
+            _watchers: watchers,
             paths,
             read_paths,
             force_poll: poll,
             polling,
+            missing,
             events,
             changes,
         })
@@ -161,26 +181,29 @@ impl ConfigWatcher {
         let paths = (self.read_paths)().unwrap_or_else(|| self.paths.clone());
         // A poller walks its roots again on every look, so it already sees a recreated
         // directory; starting a new one would hash every file on this thread for nothing.
-        if self.polling && paths == self.paths {
+        if self.polling && !self.missing && paths == self.paths {
             return changed;
         }
         self.paths = paths;
-        if let Ok((watcher, polling)) = arm(&self.paths, self.force_poll, &self.events) {
-            self.watcher = watcher;
+        if let Ok((watchers, polling, missing)) = arm(&self.paths, self.force_poll, &self.events) {
+            self._watchers = watchers;
             self.polling = polling;
+            self.missing = missing;
         }
         changed
     }
 }
 
-/// A watcher on `paths` that sends `()` to `events` per relevant file event; polling when forced,
-/// needed, or when native watching fails (e.g. the inotify watch limit).
+/// Watchers on `paths` that send `()` to `events` per relevant file event; polling when forced,
+/// needed, or when native watching fails (e.g. the inotify watch limit). Also says whether it
+/// polls and whether some path is missing.
+#[allow(clippy::type_complexity)]
 fn arm(
     paths: &WatchedPaths,
     force_poll: bool,
     events: &mpsc::UnboundedSender<()>,
-) -> Result<(Box<dyn notify::Watcher + Send>, bool), notify::Error> {
-    let handler = {
+) -> Result<(Vec<Box<dyn notify::Watcher + Send>>, bool, bool), notify::Error> {
+    let handler = |missing: Vec<(PathBuf, PathBuf)>| {
         let paths = paths.clone();
         let events = events.clone();
         move |event: notify::Result<notify::Event>| {
@@ -188,51 +211,62 @@ fn arm(
             if matches!(event.kind, EventKind::Access(_)) {
                 return;
             }
-            if event.paths.iter().any(|path| paths.matches(path)) {
+            // Under the ancestor standing in for a missing path, a step back towards it counts.
+            let towards_missing = |path: &Path| {
+                missing
+                    .iter()
+                    .any(|(gone, ancestor)| gone.starts_with(path) && path != ancestor)
+            };
+            if event
+                .paths
+                .iter()
+                .any(|path| paths.matches(path) || towards_missing(path))
+            {
                 let _ = events.send(());
             }
         }
     };
-    let poll = force_poll
-        || paths
-            .watches(false)
-            .iter()
-            .any(|(path, _)| needs_polling(path));
+    let (native, missing) = paths.watches(false);
+    let poll = force_poll || native.iter().any(|(path, _)| needs_polling(path));
     if !poll {
-        let native = notify::recommended_watcher(handler.clone()).and_then(|mut watcher| {
-            for (path, mode) in paths.watches(false) {
-                notify::Watcher::watch(&mut watcher, &path, mode)?;
-            }
-            Ok(watcher)
-        });
-        if let Ok(watcher) = native {
-            return Ok((Box::new(watcher), false));
+        let armed =
+            notify::recommended_watcher(handler(missing.clone())).and_then(|mut watcher| {
+                for (path, mode) in &native {
+                    notify::Watcher::watch(&mut watcher, path, *mode)?;
+                }
+                Ok(watcher)
+            });
+        if let Ok(watcher) = armed {
+            let watcher: Box<dyn notify::Watcher + Send> = Box::new(watcher);
+            return Ok((vec![watcher], false, !missing.is_empty()));
         }
     }
-    let mut watcher = notify::PollWatcher::new(
-        handler,
-        // Polling compares mtimes in whole seconds; hashing the (small) config files also
-        // catches a save in the same second as the previous look.
-        notify::Config::default()
-            .with_poll_interval(POLL_INTERVAL)
-            .with_compare_contents(true),
-    )?;
-    for (path, mode) in paths.watches(true) {
-        notify::Watcher::watch(&mut watcher, &path, mode)?;
+    let (polled, missing) = paths.watches(true);
+    let (files, dirs): (Vec<_>, Vec<_>) = polled.into_iter().partition(|(path, _)| path.is_file());
+    let config = notify::Config::default().with_poll_interval(POLL_INTERVAL);
+    // Polling compares mtimes in whole seconds; hashing the (small) config files also catches a
+    // save in the same second as the previous look.
+    // shortcut: trees compare mtimes only, so a second save of a route or proto file within the
+    // same second is missed; hash them too if that shows up.
+    let mut watchers: Vec<Box<dyn notify::Watcher + Send>> = Vec::new();
+    for (watches, config) in [(files, config.with_compare_contents(true)), (dirs, config)] {
+        let mut watcher = notify::PollWatcher::new(handler(missing.clone()), config)?;
+        for (path, mode) in watches {
+            notify::Watcher::watch(&mut watcher, &path, mode)?;
+        }
+        watchers.push(Box::new(watcher));
     }
-    Ok((Box::new(watcher), true))
+    Ok((watchers, true, !missing.is_empty()))
 }
 
 /// True where native file events don't arrive: network filesystems, and Windows drives seen
-/// from WSL2 (`/mnt/c`), which inotify can't watch.
+/// from WSL (`/mnt/c`, a `9p` or `drvfs` mount), which inotify can't watch.
 pub fn needs_polling(path: &Path) -> bool {
     #[cfg(target_os = "linux")]
     {
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
-        let wsl = std::fs::read_to_string("/proc/sys/kernel/osrelease")
-            .is_ok_and(|release| release.to_ascii_lowercase().contains("microsoft"));
-        polled(&path, &mounts, wsl)
+        polled(&path, &mounts)
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -241,9 +275,9 @@ pub fn needs_polling(path: &Path) -> bool {
     }
 }
 
-/// [`needs_polling`] given the `/proc/mounts` text and whether this is WSL.
+/// [`needs_polling`] given the `/proc/mounts` text.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn polled(path: &Path, mounts: &str, wsl: bool) -> bool {
+fn polled(path: &Path, mounts: &str) -> bool {
     const POLLED: &[&str] = &[
         "nfs",
         "nfs4",
@@ -254,9 +288,6 @@ fn polled(path: &Path, mounts: &str, wsl: bool) -> bool {
         "drvfs",
         "fuse.sshfs",
     ];
-    if wsl && path.starts_with("/mnt") && path.components().count() > 2 {
-        return true;
-    }
     // The mount with the longest mount point that contains `path` decides.
     mounts
         .lines()
@@ -282,32 +313,19 @@ mod tests {
 
     #[test]
     fn network_and_windows_drives_poll_local_disks_do_not() {
-        assert!(!polled(Path::new("/home/me/mocks"), MOUNTS, false));
-        assert!(polled(Path::new("/mnt/c/Users/me/mocks"), MOUNTS, false));
-        assert!(polled(Path::new("/home/me/nfs/mocks"), MOUNTS, false));
-        assert!(!polled(
-            Path::new("/home/me/nfs/local/mocks"),
-            MOUNTS,
-            false
-        ));
+        assert!(!polled(Path::new("/home/me/mocks"), MOUNTS));
+        assert!(polled(Path::new("/mnt/c/Users/me/mocks"), MOUNTS));
+        assert!(polled(Path::new("/home/me/nfs/mocks"), MOUNTS));
+        assert!(!polled(Path::new("/home/me/nfs/local/mocks"), MOUNTS));
     }
 
     #[test]
-    fn wsl_polls_under_mnt_whatever_the_mount_table_says() {
-        assert!(polled(
-            Path::new("/mnt/d/mocks"),
-            "/dev/sdc / ext4 rw 0 0\n",
-            true
-        ));
-        assert!(!polled(
-            Path::new("/mnt/d/mocks"),
-            "/dev/sdc / ext4 rw 0 0\n",
-            false
-        ));
-        assert!(!polled(
-            Path::new("/home/me"),
-            "/dev/sdc / ext4 rw 0 0\n",
-            true
-        ));
+    fn linux_disks_under_mnt_do_not_poll() {
+        let wsl = "/dev/sdc / ext4 rw 0 0\n\
+            C:\\134 /mnt/c 9p rw,aname=drvfs 0 0\n\
+            /dev/sdd /mnt/wslg/distro ext4 ro 0 0\n";
+        assert!(polled(Path::new("/mnt/c/Users/me/mocks"), wsl));
+        assert!(!polled(Path::new("/mnt/wslg/distro/mocks"), wsl));
+        assert!(!polled(Path::new("/mnt/data/mocks"), wsl));
     }
 }

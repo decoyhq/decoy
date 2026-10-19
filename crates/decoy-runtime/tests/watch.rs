@@ -233,3 +233,40 @@ async fn polling_picks_up_an_atomic_save_of_the_config_file() {
 
     assert_eq!(signals(&mut changes, Duration::from_secs(3)).await, 1);
 }
+
+#[tokio::test]
+async fn a_proto_root_deleted_and_recreated_keeps_being_watched() {
+    a_deleted_and_recreated_proto_root_signals(false).await;
+}
+
+#[tokio::test]
+async fn polling_keeps_watching_a_proto_root_deleted_and_recreated() {
+    a_deleted_and_recreated_proto_root_signals(true).await;
+}
+
+async fn a_deleted_and_recreated_proto_root_signals(poll: bool) {
+    let temp = fixture();
+    fs::create_dir(temp.path().join("protos")).unwrap();
+    write(temp.path(), "protos/api.proto", "syntax = \"proto3\";\n");
+    write(
+        temp.path(),
+        "decoy.yaml",
+        "routes: routes\ncollections: collections.yaml\nprotos: { roots: [protos] }\n",
+    );
+    let mut changes = watcher(temp.path(), poll);
+    settle().await;
+
+    // Gone for longer than the debounce, so the watches are set up again while it's missing.
+    fs::remove_dir_all(temp.path().join("protos")).unwrap();
+    assert_eq!(signals(&mut changes, Duration::from_secs(3)).await, 1);
+    fs::create_dir(temp.path().join("protos")).unwrap();
+    write(temp.path(), "protos/api.proto", "syntax = \"proto3\";\n");
+    assert_eq!(signals(&mut changes, Duration::from_secs(3)).await, 1);
+
+    write(
+        temp.path(),
+        "protos/api.proto",
+        "syntax = \"proto3\";\npackage a;\n",
+    );
+    assert_eq!(signals(&mut changes, Duration::from_secs(3)).await, 1);
+}

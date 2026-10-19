@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -177,14 +177,26 @@ pub fn load_catalog_from_files(
 
 fn discover_route_files(routes_dir: &Path) -> Result<Vec<PathBuf>, StartupError> {
     let mut paths = Vec::new();
-    discover_route_files_inner(routes_dir, &mut paths)?;
+    discover_route_files_inner(routes_dir, &mut paths, &mut BTreeSet::new())?;
     paths.sort_by(|left, right| {
         normalize_for_sort(routes_dir, left).cmp(&normalize_for_sort(routes_dir, right))
     });
     Ok(paths)
 }
 
-fn discover_route_files_inner(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<(), StartupError> {
+/// Follows symlinks; `visited` holds the folders walked so far, so a folder linking back to an
+/// ancestor isn't walked again.
+fn discover_route_files_inner(
+    dir: &Path,
+    paths: &mut Vec<PathBuf>,
+    visited: &mut BTreeSet<PathBuf>,
+) -> Result<(), StartupError> {
+    let canonical = dir
+        .canonicalize()
+        .map_err(|error| StartupError::new(StartupDiagnosticKind::Io, dir, error.to_string()))?;
+    if !visited.insert(canonical) {
+        return Ok(());
+    }
     for entry in fs::read_dir(dir)
         .map_err(|error| StartupError::new(StartupDiagnosticKind::Io, dir, error.to_string()))?
     {
@@ -192,11 +204,20 @@ fn discover_route_files_inner(dir: &Path, paths: &mut Vec<PathBuf>) -> Result<()
             StartupError::new(StartupDiagnosticKind::Io, dir, error.to_string())
         })?;
         let path = entry.path();
-        let file_type = entry.file_type().map_err(|error| {
-            StartupError::new(StartupDiagnosticKind::Io, &path, error.to_string())
-        })?;
+        let file_type = match fs::metadata(&path) {
+            Ok(metadata) => metadata.file_type(),
+            // A dangling symlink, skipped as before links were followed.
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(StartupError::new(
+                    StartupDiagnosticKind::Io,
+                    &path,
+                    error.to_string(),
+                ));
+            }
+        };
         if file_type.is_dir() {
-            discover_route_files_inner(&path, paths)?;
+            discover_route_files_inner(&path, paths, visited)?;
         } else if file_type.is_file() && is_yaml_path(&path) {
             paths.push(path);
         }
@@ -666,6 +687,36 @@ cases:
                 }),
                 ..RuntimeConfig::default()
             },
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(startup.default_collection, "local");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn startup_follows_symlinked_route_files_and_survives_a_folder_loop() {
+        let temp = tempfile::tempdir().unwrap();
+        let routes_dir = temp.path().join("routes");
+        let collections_path = temp.path().join("collections.yaml");
+        write(
+            &temp.path().join("shared/get-user.yaml"),
+            &route_yaml("get-user"),
+        );
+        fs::create_dir(&routes_dir).unwrap();
+        std::os::unix::fs::symlink("../shared/get-user.yaml", routes_dir.join("get-user.yaml"))
+            .unwrap();
+        std::os::unix::fs::symlink(".", routes_dir.join("loop")).unwrap();
+        write(
+            &collections_path,
+            &collections_yaml("get-user:user-123:success"),
+        );
+
+        let startup = load_catalog_from_files(
+            &routes_dir,
+            &collections_path,
+            RuntimeConfig::default(),
             None,
         )
         .unwrap();
