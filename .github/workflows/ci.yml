@@ -203,7 +203,7 @@ jobs:
           flags: rust
 
   # The JS package tests on Windows and macOS (they cover the win32 process branches); Linux runs
-  # them in `ci`. Not in `required` yet: packages/cli binary.test.ts expects POSIX paths on Windows.
+  # them in `ci`.
   unit-os:
     needs: changes
     if: needs.changes.outputs.js == 'true'
@@ -404,31 +404,10 @@ jobs:
           chmod +x "$bin/cargo"
           echo "$bin" >> "$GITHUB_PATH"
 
-      - name: Locate Playwright version
-        id: playwright
-        run: |
-          version="$(grep -m1 -oP "^  '@playwright/test@\K[^']+" pnpm-lock.yaml)"
-          test -n "$version"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-
-      - id: playwright-cache
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
-
       - name: Install Chromium (+ system deps)
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
         env:
           EXAMPLE: ${{ matrix.example }}
         run: pnpm --filter "./examples/$EXAMPLE" exec playwright install --with-deps chromium
-
-      # Chromium came from the cache; its system packages still need installing.
-      - name: Install Chromium system deps
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        env:
-          EXAMPLE: ${{ matrix.example }}
-        run: pnpm --filter "./examples/$EXAMPLE" exec playwright install-deps chromium
 
       - name: e2e
         env:
@@ -438,7 +417,7 @@ jobs:
   # The one check the `main` ruleset requires, so jobs and example matrices can change freely.
   required:
     if: always()
-    needs: [changes, ci, rust, build-decoy, example-e2e, example-e2e-browser]
+    needs: [changes, ci, rust, unit-os, build-decoy, example-e2e, example-e2e-browser]
     permissions: {}
     runs-on: ubuntu-latest
     timeout-minutes: 5
