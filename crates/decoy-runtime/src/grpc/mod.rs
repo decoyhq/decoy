@@ -6,6 +6,7 @@ mod codec;
 pub mod execute;
 pub mod resolve;
 pub mod schema;
+mod view;
 
 use std::collections::BTreeMap;
 

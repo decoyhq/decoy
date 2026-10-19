@@ -2,6 +2,7 @@ pub mod execute;
 pub mod forward;
 mod path;
 pub mod resolve;
+mod view;
 
 use std::collections::BTreeMap;
 
