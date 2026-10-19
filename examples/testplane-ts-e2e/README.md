@@ -1,6 +1,7 @@
 # Testplane (TypeScript) E2E
 
-The same static page and mocks as `playwright-ts-e2e`, driven by [Testplane](https://testplane.io).
+The static page and mocks of `playwright-ts-e2e` (plus an echo Route and a popup), driven by
+[Testplane](https://testplane.io).
 The only Decoy wiring is one `plugins` entry in `.testplane.conf.ts`.
 
 ```sh
@@ -18,13 +19,15 @@ What happens:
 5. Each test gets its own Decoy Session on the `happy-path` Collection. Browser requests matching
    `**/api/**` go to Decoy; nothing reaches a real backend.
 
-| Test                                              | Proves                                                                                                        |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| `users.testplane.ts` › loading a user             | **Load user** fetches `/api/users/1`; Decoy answers `Ada Lovelace`.                                           |
-| `collections.testplane.ts` › switching Collection | `decoy(browser).useCollection('no-users')` makes the same click show `Error 404: user not found`.             |
-| `overrides.testplane.ts` › overriding one route   | `useRoute('users-by-id', 'user-1', 'grace')` shows `Grace Hopper`; `reset()` drops it.                        |
-| `overrides.testplane.ts` › unmapped API call      | `/api/orders` has no Route: Decoy's fail-closed `501` miss reaches the page.                                  |
-| `passthrough.testplane.ts` › Passthrough          | `/api/profile` is forwarded by Decoy to the local upstream.                                                   |
-| `echo.testplane.ts` › body, cookies, headers      | **Send echo** POSTs JSON with a cookie and `x-client`; Decoy's template echoes all three (`Ada / abc / app`). |
-| `isolation.testplane.ts` › Sessions               | Two tests in the same browser session get different Sessions; a switched Collection doesn't leak.             |
-| `templating.testplane.ts` › templated fallback    | `/api/users/2` is answered by the `any` Case's template: `User 2`.                                            |
+| Test                                              | Proves                                                                                                                  |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `users.testplane.ts` › loading a user             | **Load user** fetches `/api/users/1`; Decoy answers `Ada Lovelace`.                                                     |
+| `collections.testplane.ts` › switching Collection | `decoy(browser).useCollection('no-users')` makes the same click show `Error 404: user not found`.                       |
+| `overrides.testplane.ts` › overriding one route   | `useRoute('users-by-id', 'user-1', 'grace')` shows `Grace Hopper`; `reset()` drops it.                                  |
+| `overrides.testplane.ts` › unmapped API call      | `/api/orders` has no Route: Decoy's fail-closed `501` miss reaches the page.                                            |
+| `passthrough.testplane.ts` › Passthrough          | `/api/profile` is forwarded by Decoy to the local upstream.                                                             |
+| `echo.testplane.ts` › body, cookies, headers      | **Send echo** POSTs JSON with a cookie and `x-client`; Decoy's template echoes all three (`Ada / abc / app`).           |
+| `popup.testplane.ts` › popup                      | **Open popup** opens a tab that fetches `/api/users/1` on load; even that first request reaches Decoy (`Ada Lovelace`). |
+| `hooks.testplane.ts` › top-level `beforeEach`     | A file-level hook switches the Collection and clicks **Load user**; it already runs inside the test's Session.          |
+| `isolation.testplane.ts` › Sessions               | Two tests in the same browser session get different Sessions; a switched Collection doesn't leak.                       |
+| `templating.testplane.ts` › templated fallback    | `/api/users/2` is answered by the `any` Case's template: `User 2`.                                                      |

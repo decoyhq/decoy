@@ -283,6 +283,8 @@ jobs:
         env:
           VERSION: ${{ needs.version.outputs.version }}
         # No token: each package trusts this repo's release.yml on npmjs.com (Trusted Publisher).
+        # A new package (e.g. @decoyhq/testplane) must be published once by hand and given that
+        # Trusted Publisher before its first tag, or this loop fails at it.
         # Trusted publishing needs npm >= 11.5.1; npm is pinned in .prototools.
         run: |
           npm --version

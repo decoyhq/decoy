@@ -18,9 +18,3 @@ export interface DecoyOptions {
   /** Collection each test's Session starts on, applied before any routed request. */
   collection?: string
 }
-
-export {
-  DEFAULT_URL,
-  isHealthy,
-  resolveServerOptions as resolveOptions,
-} from '@decoyhq/runner-core'

@@ -1,27 +1,23 @@
 import { SESSION_HEADER } from '@decoyhq/runner-core'
 import type { DecoyOptions } from './options'
 
-/** The slice of a Puppeteer `HTTPRequest` routing needs. */
-export interface InterceptedRequest {
-  url(): string
-  headers(): Record<string, string>
-  continue(overrides?: { url?: string; headers?: Record<string, string> }): Promise<void>
-  abort(errorCode?: 'connectionrefused' | 'failed'): Promise<void>
+/** The slice of a Puppeteer `CDPSession` routing needs. */
+export interface CdpSession {
+  send(method: string, params?: object): Promise<unknown>
+  on(event: string, handler: (event: never) => void): unknown
+  connection(): { session(sessionId: string): CdpSession | null } | undefined
 }
 
-/** The slice of a Puppeteer `Page` routing needs. */
-export interface InterceptablePage {
-  setRequestInterception(enabled: boolean): Promise<void>
-  on(event: 'request', handler: (request: InterceptedRequest) => void): unknown
+interface AttachedToTarget {
+  sessionId: string
+  targetInfo: { targetId: string; type: string }
+  waitingForDebugger: boolean
 }
 
-/** The slice of a Puppeteer `Browser` (from `browser.getPuppeteer()`) routing needs. */
-export interface InterceptableBrowser {
-  pages(): Promise<InterceptablePage[]>
-  on(
-    event: 'targetcreated',
-    handler: (target: { page(): Promise<InterceptablePage | null> }) => void,
-  ): unknown
+/** The slice of a CDP `Fetch.requestPaused` event routing needs. */
+export interface RequestPaused {
+  requestId: string
+  request: { url: string; headers: Record<string, string> }
 }
 
 /** Which Session matching requests belong to right now; `undefined` between tests. */
@@ -29,55 +25,106 @@ export interface SessionHolder {
   sessionId: string | undefined
 }
 
+/** What to do with one paused browser request. */
+export type Decision =
+  { kind: 'continue' } | { kind: 'abort' } | { kind: 'decoy'; url: string; sessionId: string }
+
 /**
- * Send every request matching `urls`, from every page of `browser` (current and future), to Decoy
- * at `decoyUrl`, stamped with the holder's current Session. The rewrite happens inside Chrome
- * (CDP `Fetch.continueRequest` with a new url), so method, headers, and body are kept and the page
- * still sees its own origin. Requests outside a test are aborted, never sent to the real network.
+ * Send every request matching `urls`, from every page and out-of-process frame of the browser
+ * behind `root` (a browser-level CDP session), to Decoy at `decoyUrl`, stamped with the holder's
+ * current Session. New tabs and popups start paused (auto-attach with `waitForDebuggerOnStart`)
+ * and only run once interception is on, so even their first request is routed. The rewrite
+ * happens inside Chrome (`Fetch.continueRequest` with a new url): method, headers, cookies, and
+ * body are kept and the page still sees its own origin.
  */
 export async function routeToDecoy(
-  browser: InterceptableBrowser,
+  root: CdpSession,
   decoyUrl: string,
   urls: NonNullable<DecoyOptions['urls']>,
   holder: SessionHolder,
 ): Promise<void> {
   const matchers = toMatchers(urls)
-  const install = async (page: InterceptablePage) => {
-    await page.setRequestInterception(true)
-    page.on('request', (request) => {
-      void forwardToDecoy(request, decoyUrl, matchers, holder)
+  const autoAttach = (session: CdpSession) => {
+    session.on('Target.attachedToTarget', (event: AttachedToTarget) => {
+      void intercept(session, event)
+    })
+    return session.send('Target.setAutoAttach', {
+      autoAttach: true,
+      waitForDebuggerOnStart: true,
+      flatten: true,
     })
   }
-  browser.on('targetcreated', (target) => {
-    void target
-      .page()
-      .then((page) => (page ? install(page) : undefined))
-      .catch(() => undefined)
-  })
-  await Promise.all((await browser.pages()).map(install))
+  const intercept = async (parent: CdpSession, event: AttachedToTarget) => {
+    const target = parent.connection()?.session(event.sessionId)
+    if (!target) {
+      return
+    }
+    if (event.targetInfo.type === 'page' || event.targetInfo.type === 'iframe') {
+      try {
+        target.on('Fetch.requestPaused', (paused: RequestPaused) => {
+          void forwardToDecoy(
+            target,
+            paused,
+            decide(paused.request.url, decoyUrl, matchers, holder),
+          )
+        })
+        await target.send('Fetch.enable', {
+          patterns: [{ urlPattern: '*', requestStage: 'Request' }],
+        })
+        await autoAttach(target) // out-of-process iframes
+      } catch {
+        // Unroutable, so it must not run: close it rather than let it reach the real network.
+        await root
+          .send('Target.closeTarget', { targetId: event.targetInfo.targetId })
+          .catch(() => undefined)
+        return
+      }
+    }
+    if (event.waitingForDebugger) {
+      await target.send('Runtime.runIfWaitingForDebugger').catch(() => undefined)
+    }
+  }
+  await autoAttach(root)
 }
 
-export async function forwardToDecoy(
-  request: InterceptedRequest,
+/**
+ * Matching requests go to Decoy under the holder's current Session, keeping path and query.
+ * Matching requests outside a test are aborted, never sent to the real network.
+ */
+export function decide(
+  original: string,
   decoyUrl: string,
   matchers: readonly RegExp[],
   holder: SessionHolder,
+): Decision {
+  if (!matchers.some((matcher) => matcher.test(original))) {
+    return { kind: 'continue' }
+  }
+  if (holder.sessionId === undefined) {
+    return { kind: 'abort' }
+  }
+  const { pathname, search } = new URL(original)
+  return { kind: 'decoy', url: `${decoyUrl}${pathname}${search}`, sessionId: holder.sessionId }
+}
+
+export async function forwardToDecoy(
+  session: Pick<CdpSession, 'send'>,
+  paused: RequestPaused,
+  decision: Decision,
 ): Promise<void> {
-  const original = request.url()
+  const { requestId } = paused
   try {
-    if (!matchers.some((matcher) => matcher.test(original))) {
-      await request.continue()
-      return
+    if (decision.kind === 'continue') {
+      await session.send('Fetch.continueRequest', { requestId })
+    } else if (decision.kind === 'abort') {
+      await session.send('Fetch.failRequest', { requestId, errorReason: 'Failed' })
+    } else {
+      const headers = Object.entries(paused.request.headers)
+        .filter(([name]) => name.toLowerCase() !== SESSION_HEADER)
+        .map(([name, value]) => ({ name, value }))
+      headers.push({ name: SESSION_HEADER, value: decision.sessionId })
+      await session.send('Fetch.continueRequest', { requestId, url: decision.url, headers })
     }
-    if (holder.sessionId === undefined) {
-      await request.abort('failed')
-      return
-    }
-    const { pathname, search } = new URL(original)
-    await request.continue({
-      url: `${decoyUrl}${pathname}${search}`,
-      headers: { ...request.headers(), [SESSION_HEADER]: holder.sessionId },
-    })
   } catch {
     // The page navigated or closed while the request was paused; nothing is left to answer.
   }

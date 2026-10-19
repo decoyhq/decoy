@@ -1,9 +1,16 @@
-import { randomUUID } from 'node:crypto'
-import { createRouter, type DecoyRouter, startDecoy, type Teardown } from '@decoyhq/runner-core'
+import { dirname } from 'node:path'
+import {
+  type DecoyRouter,
+  newSessionId,
+  openSession,
+  resolveServerOptions,
+  startDecoy,
+  type Teardown,
+} from '@decoyhq/runner-core'
 import type Testplane from 'testplane'
 import type { TestFunctionCtx } from 'testplane'
-import { type DecoyOptions, isHealthy, resolveOptions } from './options'
-import { type InterceptableBrowser, routeToDecoy, type SessionHolder } from './routing'
+import type { DecoyOptions } from './options'
+import { type CdpSession, routeToDecoy, type SessionHolder } from './routing'
 
 /** Per-browser state: Testplane reuses one browser for many tests, one test at a time. */
 interface BrowserState {
@@ -42,6 +49,11 @@ export default function decoyPlugin(testplane: Testplane, options: DecoyOptions 
         root.beforeEach(async function (this: TestFunctionCtx) {
           await beginSession(this.browser, options, sessionIdFor(this))
         })
+        // First, ahead of the file's own top-level hooks (added when the file was read), so they
+        // already run inside the Session. `afterEach` hooks run child-first, so appending ends
+        // the Session after every user hook.
+        const hooks = root.beforeEachHooks
+        hooks.unshift(...hooks.splice(-1))
         root.afterEach(async function (this: TestFunctionCtx) {
           await endSession(this.browser)
         })
@@ -52,8 +64,10 @@ export default function decoyPlugin(testplane: Testplane, options: DecoyOptions 
 
   let teardown: Teardown | undefined
   testplane.on(testplane.events.RUNNER_START, async () => {
-    const resolved = resolveOptions(options)
-    teardown = await startDecoy({ ...resolved, cwd: resolved.cwd ?? process.cwd() })
+    const resolved = resolveServerOptions(options)
+    // Like Playwright: relative to the config file, so `--config apps/web/...` works from anywhere.
+    const configDir = testplane.config.configPath ? dirname(testplane.config.configPath) : undefined
+    teardown = await startDecoy({ ...resolved, cwd: resolved.cwd ?? configDir ?? process.cwd() })
   })
   testplane.on(testplane.events.RUNNER_END, async () => {
     await teardown?.()
@@ -76,27 +90,24 @@ async function beginSession(
   options: DecoyOptions,
   sessionId: string,
 ): Promise<void> {
-  const { url } = resolveOptions(options)
+  const { url } = resolveServerOptions(options)
   let state = states.get(browser.sessionId)
   if (state === undefined) {
     state = { holder: { sessionId: undefined }, routing: undefined, router: undefined }
     states.set(browser.sessionId, state)
   }
-  if (!(await isHealthy(url))) {
-    throw new Error(`Decoy is not reachable at ${url}. Is the @decoyhq/testplane plugin enabled?`)
-  }
-  const router = createRouter(url, sessionId)
-  if (options.collection !== undefined) {
-    await router.useCollection(options.collection)
-  }
+  // Stored before routing is set up, so `afterEach` ends this Session even if that step fails.
+  state.router = await openSession(
+    url,
+    sessionId,
+    options.collection,
+    'Is the @decoyhq/testplane plugin enabled?',
+  )
   if (options.urls !== undefined) {
     const { urls } = options
-    state.routing ??= cdpOf(browser).then((puppeteer) =>
-      routeToDecoy(puppeteer, url, urls, state.holder),
-    )
+    state.routing ??= cdpOf(browser).then((root) => routeToDecoy(root, url, urls, state.holder))
     await state.routing
   }
-  state.router = router
   state.holder.sessionId = sessionId
 }
 
@@ -105,9 +116,10 @@ async function beginSession(
  * or BiDi sessions. WebDriver BiDi's own `network.continueRequest({ url })` can't replace it yet:
  * Chrome drops cookies on the rewritten request and Firefox aborts it (docs/design/testplane.md).
  */
-async function cdpOf(browser: WebdriverIO.Browser): Promise<InterceptableBrowser> {
+async function cdpOf(browser: WebdriverIO.Browser): Promise<CdpSession> {
+  let puppeteer: Awaited<ReturnType<WebdriverIO.Browser['getPuppeteer']>>
   try {
-    return await browser.getPuppeteer()
+    puppeteer = await browser.getPuppeteer()
   } catch (error) {
     const name = browser.capabilities.browserName ?? 'this browser'
     throw new Error(
@@ -115,6 +127,7 @@ async function cdpOf(browser: WebdriverIO.Browser): Promise<InterceptableBrowser
       { cause: error },
     )
   }
+  return (await puppeteer.target().createCDPSession()) as unknown as CdpSession
 }
 
 /** Best effort: a Decoy that is already gone can't hold the Session either. */
@@ -131,10 +144,5 @@ async function endSession(browser: WebdriverIO.Browser): Promise<void> {
 
 /** Readable `<browser>-<full title>-<uuid>`, so Decoy's logs point at the test. */
 function sessionIdFor(ctx: TestFunctionCtx): string {
-  const readable = `${ctx.currentTest.browserId} ${ctx.currentTest.fullTitle()}`
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60)
-  return readable ? `${readable}-${randomUUID()}` : randomUUID()
+  return newSessionId(`${ctx.currentTest.browserId} ${ctx.currentTest.fullTitle()}`)
 }

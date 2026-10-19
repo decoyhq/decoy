@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Popup</title>
+  </head>
+  <body>
+    <p id="result" role="status"></p>
+    <script type="module">
+      // Fetches on load: a new tab's very first request must already go to Decoy.
+      const response = await fetch('/api/users/1')
+      const body = await response.json().catch(() => ({}))
+      document.querySelector('#result').textContent = response.ok
+        ? body.name
+        : `Error ${response.status}`
+    </script>
+  </body>
+</html>

@@ -6,7 +6,7 @@ export interface DecoyOptions {
   url?: string
   /** Shell command the plugin runs when Decoy is not already serving. Default `decoy serve`. */
   command?: string
-  /** Working directory for `command`. Default: `process.cwd()`. */
+  /** Working directory for `command` (relative: to `process.cwd()`). Default: the config file's directory. */
   cwd?: string
   /** Reuse a Decoy already serving at `url`. Default: `true` locally, `false` when `CI` is set. */
   reuseExistingServer?: boolean
@@ -20,5 +20,3 @@ export interface DecoyOptions {
   /** Collection each test's Session starts on, applied before the test runs. */
   collection?: string
 }
-
-export { isHealthy, resolveServerOptions as resolveOptions } from '@decoyhq/runner-core'
