@@ -31,12 +31,12 @@ jobs:
       browser-examples: ${{ steps.find.outputs.browser-examples }}
       has-browser-examples: ${{ steps.find.outputs.has-browser-examples }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - id: filter
         if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@v4.0.3
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         with:
           filters: |
             shared: &shared
@@ -106,12 +106,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup toolchain (proto reads .prototools)
-        uses: moonrepo/setup-toolchain@v0
+        uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
 
@@ -151,17 +151,17 @@ jobs:
       contents: read
       id-token: write # Codecov upload via OIDC
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup toolchain (proto reads .prototools)
-        uses: moonrepo/setup-toolchain@v0
+        uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
 
       # Restores main's build cache; only main saves, so PRs don't evict each other.
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
@@ -172,11 +172,11 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       # Known vulnerabilities, unexpected licenses and crate sources (deny.toml).
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check advisories licenses bans sources
 
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
         with:
           tool: cargo-llvm-cov
 
@@ -185,7 +185,7 @@ jobs:
           rustup component add llvm-tools-preview
           cargo llvm-cov --workspace --lcov --output-path rust.lcov
 
-      - uses: codecov/codecov-action@v7.1.1
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           use_oidc: true
           files: rust.lcov
@@ -203,17 +203,17 @@ jobs:
       matrix:
         example: ${{ fromJSON(needs.changes.outputs.examples) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup toolchain (proto reads .prototools)
-        uses: moonrepo/setup-toolchain@v0
+        uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
 
       # Examples start Decoy with `cargo run`; one cache shared by every e2e job, saved on main.
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: e2e
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -247,16 +247,16 @@ jobs:
       matrix:
         example: ${{ fromJSON(needs.changes.outputs.browser-examples) }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup toolchain (proto reads .prototools)
-        uses: moonrepo/setup-toolchain@v0
+        uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
 
-      - uses: Swatinem/rust-cache@v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           shared-key: e2e
           save-if: ${{ github.ref == 'refs/heads/main' }}

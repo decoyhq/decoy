@@ -27,7 +27,7 @@ jobs:
     outputs:
       version: ${{ steps.read.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - id: read
@@ -54,12 +54,12 @@ jobs:
           - { target: aarch64-apple-darwin, runner: macos-14 }
           - { target: x86_64-pc-windows-msvc, runner: windows-latest }
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup toolchain (proto reads .prototools)
-        uses: moonrepo/setup-toolchain@v0
+        uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
 
@@ -107,7 +107,7 @@ jobs:
           echo "$out"
           [ "$out" = "decoy $VERSION" ]
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: decoy-${{ matrix.target }}
           # Archives only: the staging folders (decoy-<version>-<target>/) also contain dots.
@@ -123,11 +123,11 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           merge-multiple: true
@@ -168,16 +168,16 @@ jobs:
     needs: [version, build]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup toolchain (proto reads .prototools)
-        uses: moonrepo/setup-toolchain@v0
+        uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: archives
           merge-multiple: true
@@ -230,7 +230,7 @@ jobs:
           node --input-type=module -e "await import('@decoyhq/playwright')"
           node -e "require('@decoyhq/playwright')"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: npm-tarballs
           path: npm-tarballs/*.tgz
@@ -244,16 +244,16 @@ jobs:
       contents: read
       id-token: write # npm trusted publishing (OIDC); provenance is attached automatically
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Setup toolchain (proto reads .prototools)
-        uses: moonrepo/setup-toolchain@v0
+        uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
         with:
           auto-install: true
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-tarballs
           path: npm-tarballs
