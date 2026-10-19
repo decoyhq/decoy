@@ -1,3 +1,8 @@
+pub mod execute;
+pub mod forward;
+mod path;
+pub mod resolve;
+
 use std::collections::BTreeMap;
 
 use bytes::Bytes;
@@ -5,6 +10,9 @@ use prost_reflect::DescriptorPool;
 use serde_json::Value;
 
 use crate::schema::{Behavior, PassthroughTarget, Route};
+
+pub use execute::{HttpExecutionOutcome, HttpExecutionRequest};
+pub use resolve::{HttpRequest, ResolveOutcome};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RuntimeConfig {

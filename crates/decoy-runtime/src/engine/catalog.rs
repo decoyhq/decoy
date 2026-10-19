@@ -10,14 +10,14 @@ use crate::template::has_templates;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Catalog {
-    pub(super) routes: BTreeMap<String, Route>,
+    pub(crate) routes: BTreeMap<String, Route>,
     collections: CollectionsFile,
     /// Each Collection resolved once (inheritance, validation) instead of on every request.
     resolved: BTreeMap<String, Result<Vec<Activation>, String>>,
     /// HTTP Response Behaviors without templates, planned once with the body serialized:
     /// route → case → behavior.
-    pub(super) static_plans: BTreeMap<String, BTreeMap<String, BTreeMap<String, HttpResponsePlan>>>,
-    pub(super) runtime: RuntimeConfig,
+    pub(crate) static_plans: BTreeMap<String, BTreeMap<String, BTreeMap<String, HttpResponsePlan>>>,
+    pub(crate) runtime: RuntimeConfig,
 }
 
 impl Catalog {

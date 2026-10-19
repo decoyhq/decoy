@@ -11,10 +11,12 @@ use crate::control_api::{
     ControlApiRequest, ControlApiResponse, HEALTH_PATH, handle_control_request, is_control_path,
     session_id,
 };
-use crate::engine::{Catalog, Controller, HttpExecutionOutcome, HttpExecutionRequest};
+use crate::engine::{Catalog, Controller};
 use crate::grpc::{GrpcRequest, GrpcResponse, RESOURCE_EXHAUSTED, UNIMPLEMENTED};
-use crate::http::{RequestMetadata, ResponsePlan, RuntimeConfig};
-use crate::http_forward::ForwardResponse;
+use crate::http::forward::ForwardResponse;
+use crate::http::{
+    HttpExecutionOutcome, HttpExecutionRequest, RequestMetadata, ResponsePlan, RuntimeConfig,
+};
 use crate::protos::load_descriptor_pool;
 use crate::schema::{HttpMethod, PassthroughTarget};
 use crate::startup::{Startup, load_catalog_from_files};

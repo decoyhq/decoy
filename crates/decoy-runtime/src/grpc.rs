@@ -733,11 +733,11 @@ cases:
 
     #[test]
     fn http_resolution_rejects_grpc_candidates_by_transport() {
-        let request = crate::engine::HttpRequest {
+        let request = crate::http::HttpRequest {
             path: "/y".to_owned(),
             ..Default::default()
         };
-        let crate::engine::ResolveOutcome::Miss(miss) =
+        let crate::http::ResolveOutcome::Miss(miss) =
             explain_catalog().resolve_http("default", &request)
         else {
             panic!("expected miss")
