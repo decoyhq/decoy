@@ -6,6 +6,7 @@ use jmespath::Rcvar;
 use thiserror::Error;
 
 use crate::collections::{Activation, CollectionError, CollectionsFile};
+use crate::control_api::DEFAULT_SESSION;
 use crate::events::{
     CapturedBody, CapturedResponse, Event, Match, Outcome, RequestEvent, SessionChange,
     SessionEvent, SessionSource,
@@ -621,6 +622,8 @@ pub struct Selection {
     collection_picked: bool,
     /// In call order; see [`Catalog::activations`] for how they apply.
     route_overrides: Vec<Activation>,
+    /// [`Controller`]'s clock at the last verb that changed it; the lowest is evicted first.
+    touched: u64,
 }
 
 impl Selection {
@@ -629,6 +632,7 @@ impl Selection {
             collection: collection.into(),
             collection_picked: false,
             route_overrides: Vec::new(),
+            touched: 0,
         }
     }
 
@@ -696,12 +700,17 @@ pub enum ControlError {
     },
 }
 
+/// How many Sessions hold a Selection at once before the least recently changed one is ended.
+pub const MAX_SESSIONS: usize = 10_000;
+
 #[derive(Debug, Clone)]
 pub struct Controller {
     /// Immutable after startup; requests share it instead of copying Routes and Collections.
     catalog: Arc<Catalog>,
     default_collection: String,
     sessions: BTreeMap<String, Selection>,
+    /// Counts verbs that change a Selection, to find the Session changed least recently.
+    clock: u64,
     events: crate::events::Sender,
     /// Who is calling the verbs; the Control API sets it for the length of its call.
     pub(crate) source: SessionSource,
@@ -860,6 +869,7 @@ impl Controller {
             catalog: Arc::new(catalog),
             default_collection: default_collection.into(),
             sessions: BTreeMap::new(),
+            clock: 0,
             events: crate::events::channel(),
             source: SessionSource::InProcess,
         }
@@ -1035,11 +1045,36 @@ impl Controller {
 
     fn selection_mut(&mut self, session: &str) -> &mut Selection {
         if !self.sessions.contains_key(session) {
+            self.evict_if_full();
             let selection = Selection::new(self.default_collection.clone());
             self.sessions.insert(session.to_owned(), selection);
             self.emit(session, SessionChange::Created);
         }
-        self.sessions.get_mut(session).expect("inserted above")
+        self.clock += 1;
+        let selection = self.sessions.get_mut(session).expect("inserted above");
+        selection.touched = self.clock;
+        selection
+    }
+
+    /// At [`MAX_SESSIONS`], ends the Session changed least recently, as `endSession` would, so a
+    /// client that never calls `endSession` can't grow the map forever. The default Session stays.
+    fn evict_if_full(&mut self) {
+        if self.sessions.len() < MAX_SESSIONS {
+            return;
+        }
+        let Some(oldest) = self
+            .sessions
+            .iter()
+            .filter(|(session, _)| session.as_str() != DEFAULT_SESSION)
+            .min_by_key(|(_, selection)| selection.touched)
+            .map(|(session, _)| session.clone())
+        else {
+            return;
+        };
+        crate::events::warn(format!(
+            "session {oldest} ended: {MAX_SESSIONS} sessions held, and it changed least recently"
+        ));
+        self.end_session(&oldest);
     }
 
     fn emit(&self, session: &str, change: SessionChange) {
@@ -1441,6 +1476,33 @@ cases:
         assert_eq!(
             matched_address(&controller, "/users/7"),
             "get-user:any:fallback"
+        );
+    }
+
+    #[test]
+    fn past_the_cap_the_session_changed_least_recently_ends() {
+        let mut controller = Controller::new(catalog("- id: local\n  routes: []\n"), "local");
+        controller.reset(DEFAULT_SESSION);
+        for i in 0..MAX_SESSIONS - 1 {
+            controller.reset(&format!("s{i}"));
+        }
+        // Changed again, so `s1` is now the one changed least recently (the default never goes).
+        controller.reset("s0");
+        let mut events = controller.subscribe();
+
+        controller.reset("new");
+
+        assert_eq!(controller.sessions.len(), MAX_SESSIONS);
+        assert!(!controller.sessions.contains_key("s1"));
+        for kept in [DEFAULT_SESSION, "s0", "s2", "new"] {
+            assert!(controller.sessions.contains_key(kept), "{kept}");
+        }
+        let Ok(Event::Session(ended)) = events.try_recv() else {
+            panic!("expected a session event")
+        };
+        assert_eq!(
+            (ended.session.as_str(), ended.change),
+            ("s1", SessionChange::Ended)
         );
     }
 
@@ -1963,6 +2025,7 @@ cases:
                         field: "pathParams.id".to_owned(),
                         expected: serde_json::json!("123"),
                         actual: serde_json::json!("456"),
+                        error: None,
                     })
                 ),
                 candidate("get-user:any:ghost", Rejection::MissingBehavior),
@@ -2031,6 +2094,7 @@ cases:
                         field: "pathParams.id".to_owned(),
                         expected: serde_json::json!("123"),
                         actual: serde_json::json!("456"),
+                        error: None,
                     })
                 )],
             })

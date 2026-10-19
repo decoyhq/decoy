@@ -270,15 +270,15 @@ pub fn validate_predicate(predicate: &str) -> Result<(), String> {
 }
 
 /// Evaluate a validated predicate against `envelope`. JMESPath truthiness: `null`, `false`, `""`,
-/// `[]`, and `{}` are false. An evaluation error (e.g. a function given the wrong type) is false,
-/// and logged so the miss it causes isn't silent.
-pub fn predicate_holds(predicate: &str, envelope: &Rcvar) -> bool {
+/// `[]`, and `{}` are false. An evaluation error (e.g. a function given the wrong type) is
+/// returned, and logged so the miss it causes isn't silent; the caller treats it as false.
+pub fn predicate_holds(predicate: &str, envelope: &Rcvar) -> Result<bool, String> {
     let result = cached(&PREDICATES, predicate, || {
         compile(&predicate_source(predicate)?)
     })
     .and_then(|expression| search(&expression, envelope).map_err(|error| error.to_string()));
     match result {
-        Ok(result) => result.is_truthy(),
+        Ok(result) => Ok(result.is_truthy()),
         Err(error) => {
             // Once per predicate: a fallback Case checked on every request mustn't flood stderr.
             static LOGGED: std::sync::Mutex<std::collections::BTreeSet<String>> =
@@ -291,7 +291,7 @@ pub fn predicate_holds(predicate: &str, envelope: &Rcvar) -> bool {
                     "predicate `{predicate}` failed, treated as false (logged once): {error}"
                 ));
             }
-            false
+            Err(error)
         }
     }
 }
@@ -417,14 +417,22 @@ mod tests {
             "body": { "amount": 1500, "operationName": "GetUser", "empty": "", "items": [] },
             "headers": { "x-tier": "gold" }
         }));
-        assert!(predicate_holds("${ body.amount > `1000` }", &envelope));
-        assert!(predicate_holds(
-            "${ body.operationName == 'GetUser' && headers.\"x-tier\" == 'gold' }",
-            &envelope
-        ));
-        assert!(!predicate_holds("${ body.missing }", &envelope));
-        assert!(!predicate_holds("${ body.empty }", &envelope));
-        assert!(!predicate_holds("${ body.items }", &envelope));
-        assert!(predicate_holds("${ body.amount }", &envelope));
+        assert_eq!(
+            predicate_holds("${ body.amount > `1000` }", &envelope),
+            Ok(true)
+        );
+        assert_eq!(
+            predicate_holds(
+                "${ body.operationName == 'GetUser' && headers.\"x-tier\" == 'gold' }",
+                &envelope
+            ),
+            Ok(true)
+        );
+        assert_eq!(predicate_holds("${ body.missing }", &envelope), Ok(false));
+        assert_eq!(predicate_holds("${ body.empty }", &envelope), Ok(false));
+        assert_eq!(predicate_holds("${ body.items }", &envelope), Ok(false));
+        assert_eq!(predicate_holds("${ body.amount }", &envelope), Ok(true));
+        // A runtime error is returned, not just false, so a miss can show it.
+        assert!(predicate_holds("${ abs(headers.\"x-tier\") }", &envelope).is_err());
     }
 }

@@ -5,7 +5,9 @@
 Every request belongs to a **Session**, named by its `x-mock-session` header. Requests without the
 header use the default Session. Each Session has its own **Selection**: active Collection plus
 per-Route overrides. So parallel tests can share one `decoy` without seeing each other's changes.
-New Sessions start on the default Collection.
+New Sessions start on the default Collection. Decoy holds up to 10,000 Sessions with a
+Selection. Past that, the one changed least recently is ended as if it had called `endSession`,
+with a warning; the default Session is never ended this way.
 
 ## Control API
 

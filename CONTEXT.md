@@ -67,7 +67,8 @@ _Avoid_: "config" (Selection is runtime, not authored), broad "state" unless dis
 An isolated **Selection** scope keyed canonically by the `x-mock-session` header. The default/global
 Session is for local dev; explicit Sessions isolate parallel e2e tests on a shared runtime.
 `endSession` ends a Session: its Selection is dropped, and the Session starts again from defaults
-the next time it is used.
+the next time it is used. Past a fixed cap, the Session changed least recently is ended the same
+way.
 _Avoid_: "tenant", "context", "user".
 
 ### Matching & templating
