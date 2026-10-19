@@ -991,6 +991,8 @@ impl Controller {
                 exists
             });
             if *selection != before {
+                self.clock += 1;
+                selection.touched = self.clock;
                 changed.push(session.clone());
             }
         }
@@ -1504,6 +1506,24 @@ cases:
             (ended.session.as_str(), ended.change),
             ("s1", SessionChange::Ended)
         );
+    }
+
+    #[test]
+    fn a_session_reload_changed_is_not_the_one_ended_past_the_cap() {
+        let both = "- id: local\n  routes: []\n- id: other\n  routes: []\n";
+        let mut controller = Controller::new(catalog(both), "local");
+        controller.reset(DEFAULT_SESSION);
+        controller.use_collection("s0", "other");
+        for i in 1..MAX_SESSIONS - 1 {
+            controller.reset(&format!("s{i}"));
+        }
+        // `other` is gone, so reload moves `s0` back to `local`: that counts as a change.
+        controller.reload(catalog("- id: local\n  routes: []\n"), "local");
+
+        controller.reset("new");
+
+        assert!(controller.sessions.contains_key("s0"));
+        assert!(!controller.sessions.contains_key("s1"));
     }
 
     #[test]

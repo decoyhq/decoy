@@ -371,6 +371,21 @@ mod snapshots {
     }
 
     #[test]
+    fn a_predicate_that_errored_shows_the_error() {
+        let failure = ConditionFailure {
+            field: "body".into(),
+            expected: json!("${ abs(body.name) }"),
+            actual: json!(false),
+            error: Some("invalid type for abs".into()),
+        };
+        let record = base(1, Outcome::Hit(matched("users-by-id:user-123:success")));
+        assert_eq!(
+            rejection(&Rejection::Condition(failure), &record),
+            "body: predicate failed: invalid type for abs"
+        );
+    }
+
+    #[test]
     fn a_hit_with_skipped_candidates() {
         let mut hit = matched("users-by-id:user-123:success");
         hit.skipped = vec![

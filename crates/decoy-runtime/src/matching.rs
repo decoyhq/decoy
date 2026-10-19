@@ -635,6 +635,25 @@ mod tests {
         assert_eq!(failure.error, None);
     }
 
+    #[test]
+    fn a_grpc_predicate_that_errors_reports_the_error() {
+        let envelope = json!({ "message": { "name": "ann" } });
+        for (case_match, field) in [
+            (json!("${ abs(message.name) }"), "match"),
+            (json!({ "message": "${ abs(message.name) }" }), "message"),
+        ] {
+            let failure = grpc_mismatch(&case_match, &envelope).unwrap();
+            assert_eq!(failure.field, field);
+            assert!(
+                failure
+                    .error
+                    .as_ref()
+                    .is_some_and(|error| error.contains("abs")),
+                "{failure:?}"
+            );
+        }
+    }
+
     fn failure(field: &str, expected: Value, actual: Value) -> Option<ConditionFailure> {
         Some(ConditionFailure {
             field: field.to_owned(),
