@@ -22,8 +22,10 @@ Session, which is `default` until you pick another with `/session`.
 ## Reload
 
 `/reload` re-reads the config from the same flags and files `decoy` started with, then serves the
-new Routes, Collections and settings. Requests already running finish against the old config. If the
-new config doesn't load, `/reload` prints the error and the old config keeps serving.
+new Routes, Collections and settings. A request takes `maxBodyBytes` when it arrives and the Routes
+and Selections once its body is read, so one whose body is still uploading during a reload keeps
+the old limit but is matched against the new config. If the new config doesn't load, `/reload`
+prints the error and the old config keeps serving.
 
 Listeners stay bound as they started: changes to the port, host, `listeners` or TLS need a restart,
 and `/reload` warns `listener changes need restart`.
