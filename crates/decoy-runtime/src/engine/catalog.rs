@@ -28,7 +28,7 @@ impl Catalog {
     ) -> Result<Self, CatalogError> {
         for route in &routes {
             route.validate()?;
-            crate::grpc_schema::check_route(route, &runtime.protos).map_err(CatalogError::Grpc)?;
+            crate::grpc::schema::check_route(route, &runtime.protos).map_err(CatalogError::Grpc)?;
         }
         Self::from_checked(routes, collections, runtime)
     }

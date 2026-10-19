@@ -10,7 +10,6 @@ pub mod engine;
 pub mod events;
 pub mod expression;
 pub mod grpc;
-pub mod grpc_schema;
 pub mod http;
 pub mod matching;
 pub mod protos;

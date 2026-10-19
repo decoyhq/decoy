@@ -514,7 +514,7 @@ fn grpc_response(response: GrpcResponse) -> Response<Body> {
     }
     for (name, value) in response.metadata {
         // A rendered template value skips the startup check; a tab is a valid header but not gRPC.
-        let valid = crate::grpc_schema::valid_metadata_value(&value);
+        let valid = crate::grpc::schema::valid_metadata_value(&value);
         match (
             HeaderName::from_bytes(name.as_bytes()),
             HeaderValue::from_str(&value),

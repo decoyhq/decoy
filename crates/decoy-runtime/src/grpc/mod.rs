@@ -2,24 +2,16 @@
 //! envelope, render the Behavior, and encode the answer. Transport framing (HTTP/2, trailers) is
 //! the server's job; this module works on bytes. See `docs/design/transports.md` §4.
 
-use std::cell::OnceCell;
+mod codec;
+pub mod execute;
+pub mod resolve;
+pub mod schema;
+
 use std::collections::BTreeMap;
 
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64;
-use jmespath::Rcvar;
-use prost::Message as _;
-use prost_reflect::{DynamicMessage, MessageDescriptor, MethodDescriptor};
-use serde_json::{Value, json};
+use crate::schema::PipelineStep;
 
-use crate::collections::Activation;
-use crate::engine::{Candidate, Catalog, MissDiagnostic, Rejection, reject};
-use crate::events::{Match, Outcome};
-use crate::expression::to_rcvar;
-use crate::grpc_schema::{STATUS_CODES, find_method, request_json_options};
-use crate::matching::{grpc_case_matches, grpc_case_mismatch};
-use crate::schema::{Behavior, PipelineStep, ResponseBehavior, Route, RouteMatch};
-use crate::template::render_grpc_response;
+pub use resolve::GrpcResolution;
 
 /// The default Pipeline for gRPC Routes (Q2).
 pub const DEFAULT_PIPELINE: [PipelineStep; 2] = [PipelineStep::GrpcFrame, PipelineStep::Protobuf];
@@ -80,393 +72,26 @@ impl GrpcResponse {
     }
 }
 
-/// Which active route entry answers a unary call, and why the others did not.
-#[derive(Debug)]
-pub enum GrpcResolution<'a> {
-    Matched {
-        activation: Activation,
-        /// Candidates rejected before the winner, in evaluation order; empty when serving.
-        skipped: Vec<Candidate>,
-        /// The winning Case's `match`; every condition in it passed.
-        conditions: &'a Value,
-        route: &'a Route,
-        method: MethodDescriptor,
-        response: &'a ResponseBehavior,
-        envelope: Value,
-    },
-    Miss(MissDiagnostic),
-    /// Nothing matched and a Route could not decode the request: `INVALID_ARGUMENT`.
-    Failed {
-        response: GrpcResponse,
-        candidates: Vec<Candidate>,
-    },
-}
-
-/// A served unary call and what an event needs to explain it.
-pub(crate) struct GrpcCall {
-    pub response: GrpcResponse,
-    /// Only when `capture` was asked for.
-    pub outcome: Option<Outcome>,
-    /// The Pipeline-decoded request message, when a Route decoded protobuf and `capture` was
-    /// asked for.
-    pub request: Option<Value>,
-    /// The response message before encoding; only when `capture` was asked for.
-    pub message: Option<Value>,
-}
-
-impl Catalog {
-    pub(crate) async fn execute_grpc(
-        &self,
-        collection_id: &str,
-        overrides: &[Activation],
-        request: GrpcRequest,
-        capture: bool,
-    ) -> GrpcCall {
-        match self.resolve_grpc_with(collection_id, overrides, &request, capture) {
-            GrpcResolution::Matched {
-                activation,
-                skipped,
-                conditions,
-                route,
-                method,
-                response,
-                mut envelope,
-            } => {
-                if let Some(delay) = response.delay {
-                    tokio::time::sleep(delay).await;
-                }
-                let response =
-                    respond(route, &method, response, &envelope).unwrap_or_else(|reason| {
-                        GrpcResponse::error(
-                            INTERNAL,
-                            format!("behavior `{}` failed: {reason}", activation.address()),
-                        )
-                    });
-                // A raw Pipeline leaves base64 in `message`; that is not a decoded body.
-                let decoded = capture && route.decodes_protobuf();
-                let message = (decoded && !response.body.is_empty())
-                    .then(|| decode(&response.body, pipeline(route), &method.output()).ok())
-                    .flatten();
-                GrpcCall {
-                    response,
-                    outcome: capture.then(|| {
-                        Outcome::Hit(Match {
-                            activation,
-                            skipped,
-                            conditions: conditions.clone(),
-                            path_params: BTreeMap::new(),
-                        })
-                    }),
-                    request: decoded.then(|| envelope["message"].take()),
-                    message,
-                }
-            }
-            GrpcResolution::Miss(miss) => GrpcCall {
-                response: GrpcResponse::miss(miss.reason.clone()),
-                outcome: capture.then_some(Outcome::Miss(miss)),
-                request: None,
-                message: None,
-            },
-            GrpcResolution::Failed {
-                response,
-                candidates,
-            } => GrpcCall {
-                outcome: capture.then(|| {
-                    Outcome::Miss(MissDiagnostic {
-                        collection: collection_id.to_owned(),
-                        reason: response.status_message.clone(),
-                        candidates,
-                    })
-                }),
-                response,
-                request: None,
-                message: None,
-            },
-        }
-    }
-
-    /// Resolves with the full explanation; serving uses `execute_grpc`, which skips it.
-    pub fn resolve_grpc(
-        &self,
-        collection_id: &str,
-        overrides: &[Activation],
-        request: &GrpcRequest,
-    ) -> GrpcResolution<'_> {
-        self.resolve_grpc_with(collection_id, overrides, request, true)
-    }
-
-    /// Unexplained (`explain: false`) leaves `skipped` and a miss's `candidates` empty: a gRPC
-    /// miss answers with its reason only.
-    fn resolve_grpc_with(
-        &self,
-        collection_id: &str,
-        overrides: &[Activation],
-        request: &GrpcRequest,
-        explain: bool,
-    ) -> GrpcResolution<'_> {
-        let activations = match self.activations(collection_id, overrides) {
-            Ok(activations) => activations,
-            Err(reason) => {
-                return GrpcResolution::Miss(MissDiagnostic {
-                    collection: collection_id.to_owned(),
-                    reason,
-                    candidates: Vec::new(),
-                });
-            }
-        };
-
-        let mut candidates = explain.then(Vec::new);
-        // Decoded once per call; only another Pipeline needs a fresh decode.
-        let mut decoded: Option<(&[PipelineStep], Value, OnceCell<Rcvar>)> = None;
-        // The first decode error, the answer when no other Route matches.
-        let mut decode_failure = None;
-        for activation in activations.iter().copied().rev() {
-            let Some(route) = self.route(&activation.route) else {
-                reject(&mut candidates, activation, || Rejection::MissingRoute);
-                continue;
-            };
-            let RouteMatch::Grpc(address) = &route.route_match else {
-                reject(&mut candidates, activation, || Rejection::Transport);
-                continue;
-            };
-            if address.service != request.service || address.method != request.method {
-                reject(&mut candidates, activation, || Rejection::Method {
-                    expected: format!("{}/{}", address.service, address.method),
-                });
-                continue;
-            }
-            // Startup checks every gRPC Route against the protos, so this only guards the lookup.
-            let Ok(method) = find_method(&self.runtime().protos, &address.service, &address.method)
-            else {
-                reject(&mut candidates, activation, || Rejection::MissingRoute);
-                continue;
-            };
-            let steps = pipeline(route);
-            let (envelope, jmes) = match &mut decoded {
-                Some((cached, envelope, jmes)) if *cached == steps => (envelope, &*jmes),
-                _ => {
-                    let message = match decode(&request.body, steps, &method.input()) {
-                        Ok(message) => message,
-                        Err(error) => {
-                            decode_failure.get_or_insert_with(|| {
-                                format!(
-                                    "route `{}` could not decode the request: {error}",
-                                    route.id
-                                )
-                            });
-                            reject(&mut candidates, activation, || Rejection::Decode { error });
-                            continue;
-                        }
-                    };
-                    let envelope = json!({
-                        "service": request.service,
-                        "method": request.method,
-                        "metadata": request.metadata,
-                        "message": message,
-                    });
-                    let (_, envelope, jmes) = decoded.insert((steps, envelope, OnceCell::new()));
-                    (envelope, &*jmes)
-                }
-            };
-            let Some(case) = route.cases.get(&activation.case) else {
-                reject(&mut candidates, activation, || Rejection::MissingCase);
-                continue;
-            };
-            if explain {
-                if let Some(failure) = grpc_case_mismatch(&case.case_match, envelope, jmes) {
-                    reject(&mut candidates, activation, || {
-                        Rejection::Condition(failure)
-                    });
-                    continue;
-                }
-            } else if !grpc_case_matches(&case.case_match, envelope, jmes) {
-                continue;
-            }
-            let Some(Behavior::Response(response)) = case.behaviors.get(&activation.behavior)
-            else {
-                reject(&mut candidates, activation, || Rejection::MissingBehavior);
-                continue;
-            };
-            return GrpcResolution::Matched {
-                activation: activation.clone(),
-                skipped: candidates.unwrap_or_default(),
-                conditions: &case.case_match,
-                route,
-                method,
-                response,
-                envelope: std::mem::take(envelope),
-            };
-        }
-
-        let candidates = candidates.unwrap_or_default();
-        match decode_failure {
-            Some(reason) => GrpcResolution::Failed {
-                response: GrpcResponse::error(INVALID_ARGUMENT, reason),
-                candidates,
-            },
-            None => GrpcResolution::Miss(MissDiagnostic {
-                collection: collection_id.to_owned(),
-                reason: "no active route case matched request".to_owned(),
-                candidates,
-            }),
-        }
-    }
-}
-
-fn pipeline(route: &Route) -> &[PipelineStep] {
-    route.pipeline.as_deref().unwrap_or(&DEFAULT_PIPELINE)
-}
-
-fn respond(
-    route: &Route,
-    method: &MethodDescriptor,
-    response: &ResponseBehavior,
-    envelope: &Value,
-) -> Result<GrpcResponse, String> {
-    let jmes = OnceCell::new();
-    let rendered = render_grpc_response(response, &|| {
-        jmes.get_or_init(|| to_rcvar(envelope)).clone()
-    })?;
-    let status = match &rendered.status {
-        None => OK,
-        Some(status) => status_code(status)?,
-    };
-    if status != OK {
-        let message = match rendered.message {
-            None => String::new(),
-            Some(Value::String(text)) => text,
-            Some(other) => return Err(format!("status message must be a string, got {other}")),
-        };
-        return Ok(GrpcResponse {
-            metadata: rendered.metadata,
-            ..GrpcResponse::error(status, message)
-        });
-    }
-    let message = rendered.message.unwrap_or_else(|| json!({}));
-    Ok(GrpcResponse {
-        body: encode(message, pipeline(route), &method.output())?,
-        status: OK,
-        status_message: String::new(),
-        metadata: rendered.metadata,
-    })
-}
-
-/// A status name such as `NOT_FOUND`, or its number.
-fn status_code(status: &Value) -> Result<u8, String> {
-    let code = match status {
-        Value::String(name) => STATUS_CODES.iter().position(|code| code == name),
-        Value::Number(number) => number
-            .as_u64()
-            .and_then(|code| usize::try_from(code).ok())
-            .filter(|code| *code < STATUS_CODES.len()),
-        _ => None,
-    };
-    code.and_then(|code| u8::try_from(code).ok())
-        .ok_or_else(|| format!("status rendered {status}, not a gRPC status name"))
-}
-
-/// Bytes as they flow through a Pipeline: steps turn one into the other.
-enum Data {
-    Bytes(Vec<u8>),
-    Json(Value),
-}
-
-/// Run the Pipeline top to bottom over the request body. Bytes left at the end become a base64
-/// string.
-fn decode(body: &[u8], steps: &[PipelineStep], input: &MessageDescriptor) -> Result<Value, String> {
-    let mut data = Data::Bytes(body.to_vec());
-    for step in steps {
-        data = match (step, data) {
-            (PipelineStep::GrpcFrame, Data::Bytes(bytes)) => Data::Bytes(unframe(&bytes)?),
-            (PipelineStep::Protobuf, Data::Bytes(bytes)) => {
-                let message = DynamicMessage::decode(input.clone(), bytes.as_slice())
-                    .map_err(|error| format!("not a valid {}: {error}", input.full_name()))?;
-                let value = message
-                    .serialize_with_options(serde_json::value::Serializer, &request_json_options())
-                    .map_err(|error| error.to_string())?;
-                Data::Json(value)
-            }
-            (step, Data::Json(_)) => return Err(format!("step `{step:?}` needs bytes, got JSON")),
-        };
-    }
-    Ok(match data {
-        Data::Json(value) => value,
-        Data::Bytes(bytes) => Value::String(BASE64.encode(bytes)),
-    })
-}
-
-/// Run the Pipeline bottom to top over the response message. Without a `protobuf` step the
-/// message must be a base64 string.
-fn encode(
-    message: Value,
-    steps: &[PipelineStep],
-    output: &MessageDescriptor,
-) -> Result<Vec<u8>, String> {
-    let mut data = Data::Json(message);
-    for step in steps.iter().rev() {
-        data = match (step, data) {
-            (PipelineStep::Protobuf, Data::Json(value)) => {
-                let message =
-                    DynamicMessage::deserialize(output.clone(), value).map_err(|error| {
-                        format!("response does not fit {}: {error}", output.full_name())
-                    })?;
-                Data::Bytes(message.encode_to_vec())
-            }
-            (PipelineStep::GrpcFrame, data) => Data::Bytes(frame(&bytes(data)?)),
-            (PipelineStep::Protobuf, Data::Bytes(_)) => {
-                return Err("step `Protobuf` needs JSON, got bytes".to_owned());
-            }
-        };
-    }
-    bytes(data)
-}
-
-fn bytes(data: Data) -> Result<Vec<u8>, String> {
-    match data {
-        Data::Bytes(bytes) => Ok(bytes),
-        Data::Json(Value::String(text)) => BASE64
-            .decode(text)
-            .map_err(|error| format!("message is not base64: {error}")),
-        Data::Json(other) => Err(format!("expected a base64 string, got {other}")),
-    }
-}
-
-/// One uncompressed length-prefixed message.
-fn unframe(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    let [compressed, a, b, c, d, rest @ ..] = bytes else {
-        return Err("gRPC frame shorter than its 5-byte header".to_owned());
-    };
-    if *compressed != 0 {
-        return Err("compressed gRPC messages are not supported".to_owned());
-    }
-    let length = u32::from_be_bytes([*a, *b, *c, *d]) as usize;
-    if rest.len() != length {
-        return Err(format!(
-            "gRPC frame declares {length} bytes but carries {}; unary calls take one message",
-            rest.len()
-        ));
-    }
-    Ok(rest.to_vec())
-}
-
-fn frame(message: &[u8]) -> Vec<u8> {
-    let length = u32::try_from(message.len()).unwrap_or(u32::MAX);
-    let mut framed = Vec::with_capacity(message.len() + 5);
-    framed.push(0);
-    framed.extend_from_slice(&length.to_be_bytes());
-    framed.extend_from_slice(message);
-    framed
-}
-
 #[cfg(test)]
 mod tests {
     use std::path::Path;
 
+    use base64::Engine as _;
+    use base64::engine::general_purpose::STANDARD as BASE64;
+    use prost::Message as _;
+    use prost_reflect::DynamicMessage;
+    use serde_json::{Value, json};
+
+    use super::codec::{decode, encode, frame, unframe};
+    use super::schema::find_method;
     use super::*;
     use crate::collections::CollectionsFile;
     use crate::config::ProtoSources;
+    use crate::engine::{Candidate, Catalog, MissDiagnostic, Rejection};
+    use crate::events::Outcome;
     use crate::http::RuntimeConfig;
     use crate::protos::load_descriptor_pool;
+    use crate::schema::Route;
 
     fn catalog(cases: &str, collection: &str) -> Catalog {
         catalog_with_pipeline(None, cases, collection)
