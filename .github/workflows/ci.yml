@@ -67,8 +67,8 @@ jobs:
               - 'package.json'
               - 'pnpm-*.yaml'
               - 'tsconfig*.json'
-      # Example workspaces (the e2e tier, `test:e2e`); ones depending on @playwright/test get the
-      # browser job, which installs Chromium. An empty list skips that job.
+      # Example workspaces (the e2e tier, `test:e2e`); ones depending on @playwright/test or
+      # testplane get the browser job, which installs Chromium. An empty list skips that job.
       - id: find
         run: |
           shopt -s nullglob
@@ -78,8 +78,8 @@ jobs:
             pkg="${dir}package.json"
             [ -f "$pkg" ] || continue
             name="$(basename "$dir")"
-            # @playwright/test ⇒ real Chromium ⇒ the dedicated browser job.
-            if jq -e '(.devDependencies["@playwright/test"] // .dependencies["@playwright/test"]) != null' "$pkg" >/dev/null; then
+            # @playwright/test or testplane ⇒ real Chromium ⇒ the dedicated browser job.
+            if jq -e '[.devDependencies, .dependencies] | map(. // {} | has("@playwright/test") or has("testplane")) | any' "$pkg" >/dev/null; then
               browser+=("$name")
             else
               plain+=("$name")
@@ -148,7 +148,7 @@ jobs:
 
       - name: Check published package shape (publint, are-the-types-wrong)
         if: needs.changes.outputs.js == 'true'
-        run: pnpm --filter @decoyhq/playwright run check:package
+        run: pnpm --filter @decoyhq/playwright --filter @decoyhq/testplane run check:package
 
       - name: Test
         if: needs.changes.outputs.js == 'true'
@@ -391,7 +391,15 @@ jobs:
       - name: Install Chromium (+ system deps)
         env:
           EXAMPLE: ${{ matrix.example }}
-        run: pnpm --filter "./examples/$EXAMPLE" exec playwright install --with-deps chromium
+        run: |
+          pkg="examples/$EXAMPLE/package.json"
+          if jq -e '.devDependencies["@playwright/test"] != null' "$pkg" >/dev/null; then
+            pnpm --filter "./examples/$EXAMPLE" exec playwright install --with-deps chromium
+          fi
+          # Testplane downloads Chrome for Testing and chromedriver for its `gridUrl: 'local'`.
+          if jq -e '.devDependencies.testplane != null' "$pkg" >/dev/null; then
+            pnpm --filter "./examples/$EXAMPLE" exec testplane install-deps
+          fi
 
       - name: e2e
         env:

@@ -1,7 +1,8 @@
 # Testplane support
 
-Status: research prototype (`packages/testplane`, `examples/testplane-ts-e2e`). The example's 8
-tests pass locally against real headless Chrome, also with `testplane_sessions_per_browser=3`.
+Status: shipped as `@decoyhq/testplane` (`packages/testplane`, `examples/testplane-ts-e2e`); user
+docs in `docs/guide/testplane.md`. The example's 9 tests pass against headless Chrome in WebDriver
+Classic and BiDi sessions, also with `testplane_sessions_per_browser=3`.
 
 ## Goal
 
@@ -81,6 +82,5 @@ Gotchas the prototype hit:
    this with a fresh context per test.
 5. **Leak.** One registry entry per WebDriver session, never removed. Small, but a worker-side
    session-end hook would clean it.
-6. **Shipping.** CI (browser job detection keys on `@playwright/test`), release pack/smoke/publish,
-   coverage upload, and user docs (`docs/guide/testplane.md`) are not wired. The package is marked
-   `private` until then.
+6. **Shipping.** Done: CI runs the example in the browser job and checks the package shape; the
+   release packs, smoke-installs, and publishes it with the others.

@@ -50,4 +50,4 @@ curl -i localhost:8080/orders      # 501, x-mock-miss: true: nothing mocks it, n
 ```
 
 Next: [Sessions and control](sessions-and-control.md) for per-test isolation, or
-[Playwright](playwright.md) to drive it from browser tests.
+[Playwright](playwright.md) or [Testplane](testplane.md) to drive it from browser tests.
