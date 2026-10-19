@@ -321,6 +321,57 @@ cases:
     upstream.join().unwrap();
 }
 
+/// HTTP/2 carries the authority in the URI, not `Host`; a miss must still fail closed.
+#[tokio::test]
+async fn unmatched_http2_request_fails_closed_without_forwarding() {
+    let upstream = TcpListener::bind("127.0.0.1:0").unwrap();
+    upstream.set_nonblocking(true).unwrap();
+    let upstream_url = format!("http://{}", upstream.local_addr().unwrap());
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "users.yml",
+        r#"
+id: users
+transport: http
+match:
+  method: GET
+  path: /users
+cases:
+  any:
+    behaviors:
+      forward:
+        kind: passthrough
+"#,
+    );
+    fixture.write_collections(
+        r#"
+- id: default
+  routes:
+    - users:any:forward
+"#,
+    );
+    let port = unused_port();
+    let _server = fixture.spawn(port, &["--passthrough-base-url", &upstream_url]);
+    wait_for_server(port).await;
+
+    let response = reqwest::Client::builder()
+        .http2_prior_knowledge()
+        .build()
+        .unwrap()
+        .get(format!("http://127.0.0.1:{port}/orders"))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.version(), reqwest::Version::HTTP_2);
+    assert_eq!(response.status(), 501);
+    assert_eq!(response.headers()["x-mock-miss"], "true");
+    assert_eq!(
+        upstream.accept().unwrap_err().kind(),
+        std::io::ErrorKind::WouldBlock
+    );
+}
+
 #[tokio::test]
 async fn serve_reads_native_config_file_and_uses_first_collection_by_default() {
     let fixture = Fixture::new();
