@@ -240,9 +240,9 @@ pub fn predicate_holds(predicate: &str, envelope: &Value) -> bool {
                 .lock()
                 .is_ok_and(|mut logged| logged.insert(predicate.to_owned()))
             {
-                eprintln!(
-                    "decoy serve: predicate `{predicate}` failed, treated as false (logged once): {error}"
-                );
+                crate::events::warn(format!(
+                    "predicate `{predicate}` failed, treated as false (logged once): {error}"
+                ));
             }
             false
         }

@@ -1,0 +1,12 @@
+---
+source: crates/decoy-tui/src/ui.rs
+expression: "plain(&render(&mut app(), 80, 8))"
+---
+
+
+
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│› type / for commands                                                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+ http://127.0.0.1:4010 · session default · collection happy-path · 0 overrides

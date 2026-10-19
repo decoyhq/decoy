@@ -1,5 +1,6 @@
 //! The in-process event broadcast (design: `docs/design/tui.md`): one [`RequestEvent`] per
-//! finished HTTP request or unary gRPC call, and a [`SessionEvent`] per Selection change. Sending
+//! finished HTTP request or unary gRPC call, a [`SessionEvent`] per Selection change, and a
+//! [`LogEvent`] per runtime warning or error (on stderr instead while nobody listens). Sending
 //! never blocks; a subscriber that falls more than [`CAPACITY`] events behind gets
 //! `RecvError::Lagged` and loses the oldest ones. With no subscriber nothing is captured.
 
@@ -25,6 +26,7 @@ pub type Sender = tokio::sync::broadcast::Sender<Event>;
 pub enum Event {
     Request(Arc<RequestEvent>),
     Session(SessionEvent),
+    Log(LogEvent),
 }
 
 /// One finished HTTP request or unary gRPC call.
@@ -138,6 +140,51 @@ pub enum SessionSource {
     #[default]
     InProcess,
     ControlApi,
+}
+
+/// A runtime warning or error, e.g. a predicate that failed to evaluate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogEvent {
+    pub level: Level,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Level {
+    Warn,
+    Error,
+}
+
+tokio::task_local! {
+    /// The broadcast of the server whose request (or accept loop) is running.
+    static SINK: Sender;
+}
+
+/// Runs `future` with [`warn`] and [`error`] going to `events`; the sites that log (matching,
+/// forwarding, accept loops) don't hold a `Controller`.
+pub(crate) async fn logging_to<F: Future>(events: Sender, future: F) -> F::Output {
+    SINK.scope(events, future).await
+}
+
+pub(crate) fn warn(message: impl Into<String>) {
+    log(Level::Warn, message.into());
+}
+
+pub(crate) fn error(message: impl Into<String>) {
+    log(Level::Error, message.into());
+}
+
+/// An [`Event::Log`] while someone subscribes; otherwise stderr, as headless `decoy serve` prints it.
+fn log(level: Level, message: String) {
+    let event = Event::Log(LogEvent { level, message });
+    // `send` fails (and hands the event back) when nobody subscribes.
+    let unsent = match SINK.try_with(Sender::clone) {
+        Ok(events) => events.send(event).err().map(|unsent| unsent.0),
+        Err(_) => Some(event),
+    };
+    if let Some(Event::Log(LogEvent { message, .. })) = unsent {
+        eprintln!("decoy serve: {message}");
+    }
 }
 
 pub(crate) fn channel() -> Sender {

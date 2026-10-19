@@ -8,13 +8,18 @@ mod upgrade;
 #[derive(Debug, Parser)]
 #[command(name = "decoy", version)]
 #[command(about = "Decoy native runtime")]
+#[command(args_conflicts_with_subcommands = true)]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
+    /// Without a subcommand: `serve` plus the interactive terminal UI
+    #[command(flatten)]
+    serve: ServeArgs,
 }
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Serve the mocks headless
     Serve(ServeArgs),
     /// Replace this binary with the newest (or given) release
     Upgrade {
@@ -23,7 +28,7 @@ enum Command {
     },
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, clap::Args)]
 struct ServeArgs {
     #[arg(long)]
     config: Option<PathBuf>,
@@ -50,17 +55,57 @@ async fn main() {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    match Cli::parse().command {
-        Command::Serve(args) => serve(args).await?,
-        Command::Upgrade { version } => upgrade::run(version.as_deref())?,
+    let cli = Cli::parse();
+    match cli.command {
+        None => tui(cli.serve).await?,
+        Some(Command::Serve(args)) => serve(args).await?,
+        Some(Command::Upgrade { version }) => upgrade::run(version.as_deref())?,
     }
 
     Ok(())
 }
 
+async fn tui(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() || !std::io::stdout().is_terminal() {
+        eprintln!("decoy: no terminal; use `decoy serve`");
+        std::process::exit(1);
+    }
+    let (quit, quitted) = tokio::sync::oneshot::channel();
+    let shutdown = async {
+        tokio::select! {
+            _ = quitted => {}
+            () = shutdown_signal() => {}
+        }
+    };
+    let server = decoy_runtime::serve(serve_config(args)?, shutdown)
+        .await
+        .map_err(|error| error as Box<dyn std::error::Error>)?;
+    decoy_tui::run(server, quit)
+        .await
+        .map_err(|error| error as Box<dyn std::error::Error>)
+}
+
 async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let config = serve_config(args)?;
+    let server = decoy_runtime::serve(config, shutdown_signal())
+        .await
+        .map_err(|error| error as Box<dyn std::error::Error>)?;
+    for notice in &server.notices {
+        eprintln!("decoy serve: {notice}");
+    }
+    for listener in &server.listeners {
+        eprintln!("decoy serve listening on {}", listener.label());
+    }
+    server
+        .wait()
+        .await
+        .map_err(|error| error as Box<dyn std::error::Error>)
+}
+
+fn serve_config(args: ServeArgs) -> Result<ServeConfig, Box<dyn std::error::Error>> {
     let cwd = std::env::current_dir()?;
-    let config = ServeConfig::from_options(
+    Ok(ServeConfig::from_options(
         ServeCliOptions {
             config_file: args.config,
             routes: args.routes,
@@ -71,14 +116,7 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             passthrough_base_url: args.passthrough_base_url,
         },
         &cwd,
-    )?;
-    let server = decoy_runtime::serve(config, shutdown_signal())
-        .await
-        .map_err(|error| error as Box<dyn std::error::Error>)?;
-    server
-        .wait()
-        .await
-        .map_err(|error| error as Box<dyn std::error::Error>)
+    )?)
 }
 
 /// Ctrl-C, or SIGTERM (what `kill`, Docker and CI runners send).

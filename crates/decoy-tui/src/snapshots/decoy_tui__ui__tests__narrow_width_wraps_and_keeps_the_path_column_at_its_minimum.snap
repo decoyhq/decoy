@@ -1,0 +1,24 @@
+---
+source: crates/decoy-tui/src/ui.rs
+expression: "plain(&render(&mut app, 60, 20))"
+---
+decoy 0.2.0 · listening on http://127.0.0.1:4010
+ #7 12:01:03 GET     /users/123   →
+users-by-id:user-123:success 200 4ms
+ #8 12:01:03 POST    /orders?pag… MISS no active route
+matched 404 4ms
+ #9 12:01:03 GET     /avatars/ad… → upstream
+http://cdn.local/avatars/ada.png 200 31ms
+#10 12:01:03 GET     /users/123   →
+users-by-id:user-123:success 200 4ms [sess:e2e-worker-1]
+session e2e-worker-1 collection errors (control api)
+warning: predicate `${ abs(path) }` failed, treated as false
+(logged once)
+› hello
+commands start with /
+
+
+╭──────────────────────────────────────────────────────────╮
+│› type / for commands                                     │
+╰──────────────────────────────────────────────────────────╯
+ http://127.0.0.1:4010 · session default · collection happy-

@@ -601,6 +601,13 @@ pub struct RouteOverrideSnapshot {
     pub behavior: String,
 }
 
+impl RouteOverrideSnapshot {
+    /// The override's Behavior address, `route:case:behavior`.
+    pub fn address(&self) -> String {
+        format!("{}:{}:{}", self.route, self.case_id, self.behavior)
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ControlError {
     #[error("unknown collection `{id}`")]
@@ -855,6 +862,11 @@ impl Controller {
         if self.sessions.remove(session).is_some() {
             self.emit(session, SessionChange::Ended);
         }
+        self.selection(session).snapshot()
+    }
+
+    /// The Session's Selection; the defaults for a Session that holds none.
+    pub fn selection_snapshot(&self, session: &str) -> SelectionSnapshot {
         self.selection(session).snapshot()
     }
 
