@@ -7,6 +7,11 @@ use decoy_runtime::watch::{ConfigWatcher, WatchedPaths};
 
 mod upgrade;
 
+// musl's malloc is slow under multithreaded load (#267).
+#[cfg(all(target_os = "linux", target_env = "musl"))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[derive(Debug, Parser)]
 #[command(name = "decoy", version)]
 #[command(about = "Decoy native runtime")]
