@@ -127,10 +127,9 @@ pub fn try_handle_control_request(
     controller: &mut Controller,
     request: ControlApiRequest,
 ) -> Result<SelectionSnapshot, ControlApiError> {
-    let previous = std::mem::replace(&mut controller.source, SessionSource::ControlApi);
-    let result = dispatch(controller, request);
-    controller.source = previous;
-    result
+    controller.with_source(SessionSource::ControlApi, |controller| {
+        dispatch(controller, request)
+    })
 }
 
 fn dispatch(
