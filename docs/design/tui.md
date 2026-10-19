@@ -135,6 +135,10 @@ indented text with stable labels, so a copied detail reads well as text.
   `serve()` prints nothing: `decoy serve` prints the notices and `listening on` lines from
   `Server`, and the TUI shows them as system lines. `decoy serve` passes Ctrl-C/SIGTERM; the TUI
   passes its own quit signal too.
+- `Server::reloader()` returns a `Reloader`. `Reloader::reload(config)` builds the new Catalog
+  from a re-read `ServeConfig` off the lock, swaps it into the `Controller` (which keeps the
+  Selections, see Reload) and returns the warnings. Reloads run one at a time. `decoy_tui::run`
+  gets a closure that re-reads the config from the same flags for `/reload`.
 - The TUI talks to the in-process `Controller` and subscribes to an in-process event broadcast
   (`RequestEvent`, `SessionEvent`, `LogEvent`). The Control API does not change.
 - Runtime warnings and errors are `Event::Log` on the server's broadcast (a task-local set around

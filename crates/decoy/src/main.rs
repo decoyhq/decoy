@@ -28,7 +28,7 @@ enum Command {
     },
 }
 
-#[derive(Debug, clap::Args)]
+#[derive(Debug, Clone, clap::Args)]
 struct ServeArgs {
     #[arg(long)]
     config: Option<PathBuf>,
@@ -78,10 +78,12 @@ async fn tui(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
             () = shutdown_signal() => {}
         }
     };
-    let server = decoy_runtime::serve(serve_config(args)?, shutdown)
+    let server = decoy_runtime::serve(serve_config(args.clone())?, shutdown)
         .await
         .map_err(|error| error as Box<dyn std::error::Error>)?;
-    decoy_tui::run(server, quit)
+    let load_config =
+        Box::new(move || serve_config(args.clone()).map_err(|error| error.to_string().into()));
+    decoy_tui::run(server, quit, load_config)
         .await
         .map_err(|error| error as Box<dyn std::error::Error>)
 }

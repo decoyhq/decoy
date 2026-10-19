@@ -131,6 +131,9 @@ pub enum SessionChange {
     UseRoute,
     Reset,
     Ended,
+    /// A config reload changed the Selection: a new default Collection, or a fallback or dropped
+    /// override because the old one is gone.
+    Reload,
 }
 
 /// Who changed the Selection.

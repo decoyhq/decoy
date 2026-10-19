@@ -38,6 +38,8 @@ pub enum Event {
     Lagged(u64),
     /// An [`Effect::Control`] failed; the Controller's error, as the Control API words it.
     ControlFailed(String),
+    /// An [`Effect::Reload`] finished.
+    Reloaded(Result<decoy_runtime::Reloaded, String>),
 }
 
 /// Something [`App::handle_event`] asks the caller to do.
@@ -51,6 +53,8 @@ pub enum Effect {
         session: String,
         verb: Verb,
     },
+    /// Re-read the config into the server; report back as [`Event::Reloaded`].
+    Reload,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,6 +189,28 @@ impl App {
                 self.push(Entry::Error(error));
                 vec![]
             }
+            Event::Reloaded(Ok(reloaded)) => {
+                self.info(format!(
+                    "reloaded: {}, {}",
+                    plural(reloaded.catalog.routes().count(), "route"),
+                    plural(reloaded.catalog.collection_ids().count(), "collection")
+                ));
+                self.catalog = reloaded.catalog;
+                self.defaults = SelectionSnapshot {
+                    collection: reloaded.default_collection,
+                    overrides: Vec::new(),
+                };
+                for warning in reloaded.warnings {
+                    self.push(Entry::Warn(warning));
+                }
+                vec![]
+            }
+            Event::Reloaded(Err(error)) => {
+                self.push(Entry::Error(format!(
+                    "reload failed, the old config stays live: {error}"
+                )));
+                vec![]
+            }
         }
     }
 
@@ -264,6 +290,11 @@ impl App {
         let before = self.selections.get(&session).unwrap_or(&self.defaults);
         let what = match change {
             SessionChange::Created => return,
+            // The reload's own lines say what changed.
+            SessionChange::Reload => {
+                self.selections.insert(session, selection);
+                return;
+            }
             SessionChange::UseCollection => format!("collection {}", selection.collection),
             SessionChange::UseRoute => {
                 let added: Vec<String> = selection
@@ -475,6 +506,7 @@ impl App {
             Command::Route(address) => return control(Verb::UseRoute(address)),
             Command::Reset => return control(Verb::Reset),
             Command::Quit => return vec![Effect::Quit],
+            Command::Reload => return vec![Effect::Reload],
             Command::Session(id) => {
                 if self.seen.contains(&id) {
                     self.info(format!("session {id} active"));

@@ -10,7 +10,7 @@ expression: "popup(\"/\")"
 │ /sessions    list the Sessions that hold a Selection                    │
 │ /status      show the active Session's Collection and overrides         │
 │ /show        open one request in the detail panel                       │
-│ /help        list commands and keys                                     │
+│ /reload      re-read the config; listeners need a restart               │
 ╰─────────────────────────────────────────────────────────────────────────╯
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │› /                                                                           │

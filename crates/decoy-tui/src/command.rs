@@ -40,6 +40,11 @@ pub const COMMANDS: &[Spec] = &[
         about: "open one request in the detail panel",
     },
     Spec {
+        name: "/reload",
+        args: "",
+        about: "re-read the config; listeners need a restart",
+    },
+    Spec {
         name: "/help",
         args: "",
         about: "list commands and keys",
@@ -67,6 +72,7 @@ pub enum Command {
     Sessions,
     Status,
     Show(u64),
+    Reload,
     Help,
     Quit,
 }
@@ -101,6 +107,7 @@ pub fn parse(input: &str) -> Result<Command, String> {
         "/sessions" => Command::Sessions,
         "/status" => Command::Status,
         "/show" => Command::Show(arg.trim_start_matches('#').parse().map_err(|_| usage())?),
+        "/reload" => Command::Reload,
         "/help" => Command::Help,
         "/quit" => Command::Quit,
         _ => unreachable!("every COMMANDS entry is parsed above"),
@@ -133,6 +140,7 @@ mod tests {
         assert_eq!(parse("/show 12"), Ok(Command::Show(12)));
         assert_eq!(parse("/show #12"), Ok(Command::Show(12)));
         assert_eq!(parse("/show x"), Err("usage: /show <id>".into()));
+        assert_eq!(parse("/reload"), Ok(Command::Reload));
         assert_eq!(parse("/help"), Ok(Command::Help));
         assert_eq!(parse("/quit"), Ok(Command::Quit));
     }

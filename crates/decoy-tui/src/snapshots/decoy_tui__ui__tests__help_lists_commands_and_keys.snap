@@ -10,13 +10,13 @@ expression: "after(&[\"/help\"], |_| {})"
   /sessions                        list the Sessions that hold a Selection
   /status                          show the active Session's Collection and overrides
   /show <id>                       open one request in the detail panel
+  /reload                          re-read the config; listeners need a restart
   /help                            list commands and keys
   /quit                            stop the server and exit
   keys: ↑↓ pick · Tab/→ complete · Enter run · Esc close · ↑↓ history (no popup)
         Ctrl+O recent requests · click a request: details (Esc closes, PgUp/PgDn scroll it)
         PgUp/PgDn/Home/End or wheel scroll · drag select + copy · Shift+drag terminal selection
         Ctrl+U clear line · Ctrl+C clear, twice quits · Ctrl+D quit on empty input
-
 
 ╭──────────────────────────────────────────────────────────────────────────────────────────────────╮
 │› type / for commands · Ctrl+O recent requests                                                    │

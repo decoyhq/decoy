@@ -569,6 +569,8 @@ pub enum CatalogError {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selection {
     collection: String,
+    /// `useCollection` picked `collection`; otherwise it follows the default across reloads.
+    collection_picked: bool,
     route_overrides: BTreeMap<(String, String), String>,
 }
 
@@ -576,6 +578,7 @@ impl Selection {
     fn new(collection: impl Into<String>) -> Self {
         Self {
             collection: collection.into(),
+            collection_picked: false,
             route_overrides: BTreeMap::new(),
         }
     }
@@ -812,7 +815,9 @@ impl Controller {
     }
 
     pub fn use_collection(&mut self, session: &str, collection: impl Into<String>) {
-        self.selection_mut(session).collection = collection.into();
+        let selection = self.selection_mut(session);
+        selection.collection = collection.into();
+        selection.collection_picked = true;
         self.emit(session, SessionChange::UseCollection);
     }
 
@@ -823,7 +828,9 @@ impl Controller {
     ) -> Result<SelectionSnapshot, ControlError> {
         let collection = collection.into();
         self.catalog.validate_collection(&collection)?;
-        self.selection_mut(session).collection = collection;
+        let selection = self.selection_mut(session);
+        selection.collection = collection;
+        selection.collection_picked = true;
         self.emit(session, SessionChange::UseCollection);
         Ok(self.selection(session).snapshot())
     }
@@ -872,6 +879,62 @@ impl Controller {
             self.emit(session, SessionChange::Ended);
         }
         self.selection(session).snapshot()
+    }
+
+    /// Serves `catalog` from now on; requests already running finish against the old one.
+    /// Selections are kept: a Collection that is gone falls back to `default_collection`, a
+    /// Session that never picked one follows the new default, and overrides whose Behavior
+    /// address no longer exists are dropped. Returns one warning per fallback or drop.
+    pub fn reload(
+        &mut self,
+        catalog: Catalog,
+        default_collection: impl Into<String>,
+    ) -> Vec<String> {
+        self.catalog = Arc::new(catalog);
+        self.default_collection = default_collection.into();
+        let mut warnings = Vec::new();
+        let mut changed = Vec::new();
+        for (session, selection) in &mut self.sessions {
+            let before = selection.clone();
+            if !selection.collection_picked {
+                selection.collection.clone_from(&self.default_collection);
+            } else if self
+                .catalog
+                .validate_collection(&selection.collection)
+                .is_err()
+            {
+                warnings.push(format!(
+                    "session {session}: collection `{}` is gone, back to `{}`",
+                    selection.collection, self.default_collection
+                ));
+                selection.collection.clone_from(&self.default_collection);
+                selection.collection_picked = false;
+            }
+            selection.route_overrides.retain(|(route, case), behavior| {
+                let exists = self
+                    .catalog
+                    .validate_behavior_address(route, case, behavior)
+                    .is_ok();
+                if !exists {
+                    warnings.push(format!(
+                        "session {session}: override `{route}:{case}:{behavior}` dropped, it no longer exists"
+                    ));
+                }
+                exists
+            });
+            if *selection != before {
+                changed.push(session.clone());
+            }
+        }
+        for session in changed {
+            self.emit(&session, SessionChange::Reload);
+        }
+        warnings
+    }
+
+    /// What a Session that never picked a Collection uses.
+    pub fn default_collection(&self) -> &str {
+        &self.default_collection
     }
 
     /// The Routes and Collections this Controller serves, for read-only inspection.
