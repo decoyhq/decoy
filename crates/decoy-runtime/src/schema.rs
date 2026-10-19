@@ -99,7 +99,7 @@ impl Route {
         }
 
         if let Some(steps) = &self.pipeline {
-            crate::grpc_schema::validate_pipeline(steps).map_err(|reason| {
+            crate::grpc::schema::validate_pipeline(steps).map_err(|reason| {
                 ValidationError::InvalidPipeline {
                     route: self.id.clone(),
                     reason,
@@ -134,7 +134,7 @@ impl Route {
                         crate::template::validate_response(response)
                     }
                     (Transport::Grpc, Behavior::Response(response)) => {
-                        crate::grpc_schema::validate_response(response, self.decodes_protobuf())
+                        crate::grpc::schema::validate_response(response, self.decodes_protobuf())
                     }
                     (Transport::Http, Behavior::Passthrough(passthrough)) => passthrough
                         .target
