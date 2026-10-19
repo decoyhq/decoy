@@ -27,6 +27,15 @@ what CI gates on). Without it, use the underlying commands:
 
 Examples (`examples/*`) are the e2e tier and run their own `test:e2e` per workspace.
 
+`task e2e` builds the packages and the `decoy` binary, then runs every example's `test:e2e`.
+Examples boot Decoy with `cargo run` against the built `@decoyhq/*` packages, so the Rust
+toolchain must be installed. Browser examples also need Chromium once (`pnpm install` skips the
+download):
+
+```sh
+pnpm --filter ./examples/playwright-ts-e2e exec playwright install --with-deps chromium
+```
+
 ## Automation
 
 Bots and checks on every PR (Renovate, CodeRabbit, autofix.ci, CodeQL, zizmor, Codecov) and the
