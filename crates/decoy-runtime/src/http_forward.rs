@@ -112,6 +112,9 @@ fn instance_id() -> &'static str {
 fn client() -> &'static reqwest::Client {
     static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
     CLIENT.get_or_init(|| {
+        // reqwest brings no crypto provider and panics without one; use `ring`, as the TLS
+        // listeners do. Err means one is installed already.
+        let _ = rustls::crypto::ring::default_provider().install_default();
         reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(CONNECT_TIMEOUT)
@@ -311,6 +314,17 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    /// Tests get reqwest's own fallback provider from dev-dependencies; the binary doesn't.
+    #[test]
+    fn the_client_installs_ring_for_the_binary() {
+        client();
+        let provider = rustls::crypto::CryptoProvider::get_default().expect("a provider");
+        assert_eq!(
+            provider.cipher_suites,
+            rustls::crypto::ring::default_provider().cipher_suites
+        );
+    }
 
     #[derive(Debug)]
     struct CapturedRequest {
