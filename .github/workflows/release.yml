@@ -294,8 +294,11 @@ jobs:
             fi
             pkg_tag="$tag"
             # A backport (0.1.9 after 0.2.0) must not move `latest` back; it gets `v0.1-latest`.
-            # No `latest` yet (first publish) keeps `latest`.
-            current="$(npm view "$name" dist-tags.latest 2> /dev/null || true)"
+            # No `latest` yet (first publish, npm E404) keeps `latest`; any other lookup error stops.
+            if ! current="$(npm view "$name" dist-tags.latest 2> "$RUNNER_TEMP/npm-view.err")"; then
+              grep -q E404 "$RUNNER_TEMP/npm-view.err" || { cat "$RUNNER_TEMP/npm-view.err" >&2; exit 1; }
+              current=
+            fi
             if [ "$tag" = latest ] && [ -n "$current" ] && node -e '
               const [a, b] = process.argv.slice(1).map((v) => v.split("-")[0].split(".").map(Number));
               process.exit((a[0] - b[0] || a[1] - b[1] || a[2] - b[2]) < 0 ? 0 : 1);
