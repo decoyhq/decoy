@@ -11,6 +11,7 @@ publish = false
 clap = { version = "4", features = ["derive"] }
 decoy-runtime = { path = "../decoy-runtime" }
 decoy-tui = { path = "../decoy-tui" }
+semver = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync"] }
 
 [dev-dependencies]

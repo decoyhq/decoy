@@ -28,11 +28,8 @@ struct Cli {
 enum Command {
     /// Serve the mocks headless
     Serve(ServeArgs),
-    /// Replace this binary with the newest (or given) release
-    Upgrade {
-        /// Version to install, e.g. 0.1.0-alpha.6 (default: newest release)
-        version: Option<String>,
-    },
+    /// Replace this binary with the release marked Latest
+    Upgrade,
 }
 
 #[derive(Debug, Clone, clap::Args)]
@@ -73,7 +70,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         None => tui(cli.serve).await?,
         Some(Command::Serve(args)) => serve(args).await?,
-        Some(Command::Upgrade { version }) => upgrade::run(version.as_deref())?,
+        Some(Command::Upgrade) => upgrade::run()?,
     }
 
     Ok(())
