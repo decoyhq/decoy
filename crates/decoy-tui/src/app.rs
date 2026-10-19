@@ -21,6 +21,8 @@ use crate::log::{Entry, Log, RequestLine, Theme};
 
 /// Full request records kept for the detail panel; older ids print `#N expired`.
 pub const RETAIN: usize = 500;
+/// Sessions offered by `/session` completion at most; later ones still work when typed.
+const SEEN: usize = 1_000;
 
 const KEYS: &[&str] = &[
     "keys: ↑↓ pick · Tab/→ complete · Enter run · Esc close · ↑↓ history (no popup)",
@@ -240,6 +242,12 @@ impl App {
         complete(&self.input, &sources)
     }
 
+    fn see(&mut self, session: &str) {
+        if self.seen.len() < SEEN && !self.seen.contains(session) {
+            self.seen.insert(session.to_owned());
+        }
+    }
+
     fn push(&mut self, entry: Entry) {
         if self.log.push(entry) {
             self.selected = self
@@ -256,7 +264,7 @@ impl App {
     fn on_runtime(&mut self, event: RuntimeEvent) {
         match event {
             RuntimeEvent::Request(request) => {
-                self.seen.insert(request.session.clone());
+                self.see(&request.session);
                 self.push(Entry::Request(RequestLine::from(&*request)));
                 if self.records.len() == RETAIN {
                     self.records.pop_front();
@@ -282,7 +290,7 @@ impl App {
             source,
             selection,
         } = event;
-        self.seen.insert(session.clone());
+        self.see(&session);
         let before = self.selections.get(&session).unwrap_or(&self.defaults);
         let what = match change {
             SessionChange::Created => return,
@@ -310,6 +318,9 @@ impl App {
         };
         self.info(format!("session {session} {what}{by}"));
         if change == SessionChange::Ended {
+            if session != decoy_runtime::DEFAULT_SESSION {
+                self.seen.remove(&session);
+            }
             self.selections.remove(&session);
         } else {
             self.selections.insert(session, selection);
@@ -510,7 +521,7 @@ impl App {
                     self.info(format!(
                         "new session {id} active (defaults until its first change)"
                     ));
-                    self.seen.insert(id.clone());
+                    self.see(&id);
                 }
                 self.session = id;
             }
@@ -1105,6 +1116,16 @@ pub(crate) mod tests {
                 verb: Verb::UseCollection("errors".into()),
             }]
         );
+    }
+
+    #[test]
+    fn an_ended_session_is_no_longer_offered() {
+        let mut app = app();
+        app.handle_event(from_session(1, "e2e-1"));
+        typed(&mut app, "/session e2e");
+        assert_eq!(app.completions().len(), 1);
+        app.handle_event(session_event("e2e-1", SessionChange::Ended, &[]));
+        assert!(app.completions().is_empty());
     }
 
     #[test]
