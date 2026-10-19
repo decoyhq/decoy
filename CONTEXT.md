@@ -71,6 +71,18 @@ the next time it is used. Past a fixed cap, the Session changed least recently i
 way.
 _Avoid_: "tenant", "context", "user".
 
+**Catalog**:
+The loaded, immutable authored model: every **Route** with its Cases and Behaviors, the
+**Collections** (inheritance resolved once), and runtime config. Shared by all Sessions and
+replaced whole on reload; a **Selection** chooses within it.
+_Avoid_: "registry", "store", "config" (config is the file the Catalog is loaded from).
+
+**SessionView**:
+The runtime's per-request snapshot: the shared **Catalog** plus a copy of one **Session**'s
+**Selection**, so a request resolves without holding locks across delays or passthrough. Internal
+to `decoy-runtime`.
+_Avoid_: confusing it with the **Router** (the public per-Session handle), "context".
+
 ### Matching & templating
 
 **Request envelope**:
