@@ -327,6 +327,47 @@ async fn shutdown_ends_open_streams_with_unavailable() {
     }
 }
 
+#[test]
+fn stream_on_a_unary_method_fails_startup() {
+    let temp = TempDir::new().unwrap();
+    let protos =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../decoy-runtime/tests/fixtures/proto");
+    fs::create_dir_all(temp.path().join("routes")).unwrap();
+    fs::write(
+        temp.path().join("routes/approvals.yaml"),
+        "id: approvals-get\ntransport: grpc\nmatch: { service: approvals.v1.Approvals, method: GetApproval }\ncases:\n  any:\n    behaviors:\n      ok: { stream: [{ message: { id: a-1 } }] }\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("collections.yaml"),
+        "- id: default\n  routes: [approvals-get:any:ok]\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("decoy.yaml"),
+        format!(
+            "routes: routes\ncollections: collections.yaml\nprotos:\n  roots: [{}]\n",
+            protos.display()
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_decoy"))
+        .args(["serve", "--config", "decoy.yaml"])
+        .current_dir(temp.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "behavior `approvals-get:any:ok`: `stream` needs a server-streaming method; `approvals.v1.Approvals.GetApproval` is unary"
+        ),
+        "{stderr}"
+    );
+}
+
 async fn next(stream: &mut tonic::Streaming<DynamicMessage>) -> Result<Option<Value>, Status> {
     let message = stream.message().await?;
     Ok(message.map(|message| serde_json::to_value(message).unwrap()))
