@@ -81,21 +81,29 @@ export async function startDecoy(
     detached: process.platform !== 'win32',
     stdio: ['ignore', 'ignore', 'inherit'],
   })
-  // Written before health passes, so a runner interrupted mid-start still leaves a trail.
-  writeFileSync(
-    pidFile,
-    JSON.stringify({ pid: child.pid, runner: process.pid, cwd, command: options.command }),
-  )
   try {
+    // Written before health passes, so a runner interrupted mid-start still leaves a trail.
+    writeFileSync(
+      pidFile,
+      JSON.stringify({ pid: child.pid, runner: process.pid, cwd, command: options.command }),
+    )
     await waitForHealth(child, options)
   } catch (error) {
     await stopProcess(child)
-    rmSync(pidFile, { force: true })
+    removePidFile(pidFile)
     throw error
   }
   return async () => {
     await stopProcess(child)
+    removePidFile(pidFile)
+  }
+}
+
+function removePidFile(pidFile: string) {
+  try {
     rmSync(pidFile, { force: true })
+  } catch {
+    // One that can't be removed (another user's, in a shared tmpdir) must not mask the real error.
   }
 }
 
@@ -126,7 +134,7 @@ async function stopOrphan(pidFile: string, options: ResolvedServerOptions, cwd: 
     }
     await stopGroup(recorded.pid)
   }
-  rmSync(pidFile, { force: true })
+  removePidFile(pidFile)
 }
 
 async function waitForHealth(child: ChildProcess, options: ResolvedServerOptions): Promise<void> {
