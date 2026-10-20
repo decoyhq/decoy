@@ -16,10 +16,10 @@ if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne 'X64
 $target = 'x86_64-pc-windows-msvc'
 
 if ($version -eq 'latest') {
-  # releases/latest skips prereleases, so take the newest release from the list instead.
+  # The release marked Latest, the same one `decoy upgrade` installs.
   $headers = @{ Accept = 'application/vnd.github+json' }
   if ($env:GITHUB_TOKEN) { $headers.Authorization = "Bearer $env:GITHUB_TOKEN" }
-  $version = (Invoke-RestMethod -Headers $headers "https://api.github.com/repos/$repo/releases?per_page=1")[0].tag_name
+  $version = (Invoke-RestMethod -Headers $headers "https://api.github.com/repos/$repo/releases/latest").tag_name
 }
 $version = $version.TrimStart('v')
 

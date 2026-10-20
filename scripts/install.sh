@@ -38,10 +38,10 @@ fi
 target="$arch-$os"
 
 if [ "$version" = latest ]; then
-  # releases/latest skips prereleases, so take the newest release from the list instead.
+  # The release marked Latest, the same one `decoy upgrade` installs.
   set -- -fsSL -H "Accept: application/vnd.github+json"
   [ -n "${GITHUB_TOKEN:-}" ] && set -- "$@" -H "Authorization: Bearer $GITHUB_TOKEN"
-  version="$(curl "$@" "https://api.github.com/repos/$repo/releases?per_page=1" |
+  version="$(curl "$@" "https://api.github.com/repos/$repo/releases/latest" |
     sed -n 's/.*"tag_name": *"v\{0,1\}\([^"]*\)".*/\1/p' | head -n 1)"
   [ -n "$version" ] || err "could not resolve the latest version"
 fi
