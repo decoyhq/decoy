@@ -206,14 +206,15 @@ async fn try_send(
     let Some(method) = send_method(catalog, route) else {
         return Err(ControlApiError::SendNotLongLived { route: body.route });
     };
-    // Checked here so a bad message fails the call instead of the client's stream.
-    crate::grpc::encode_response(route, &method, body.message.clone())
+    // Encoded here, against the current Catalog, so a bad message fails the call instead of the
+    // client's stream, and streams opened before a reload write exactly these bytes.
+    let message = crate::grpc::encode_response(route, &method, body.message)
         .map_err(ControlApiError::SendMessage)?;
     let timeout = body
         .timeout
         .map_or(DEFAULT_SEND_TIMEOUT, Duration::from_millis);
     connections
-        .send(&session, &body.route, body.message, timeout)
+        .send(&session, &body.route, message, timeout)
         .await
         .map_err(|error| match error {
             SendError::Timeout => ControlApiError::SendTimeout {

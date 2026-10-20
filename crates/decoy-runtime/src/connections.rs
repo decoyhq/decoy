@@ -2,14 +2,13 @@
 //! push messages to them (`docs/design/transports.md` §9).
 //!
 //! A transport registers each connection with the Session it opened with (§10) and reads the
-//! messages pushed to it from the returned receiver. Encoding through the Route's pipeline is the
-//! transport's job; the registry only carries the message JSON.
+//! messages pushed to it from the returned receiver. `send` encodes each message through the Route's
+//! Pipeline once, against the current Catalog; the registry carries those bytes.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde_json::Value;
 use tokio::sync::{Notify, mpsc};
 
 #[derive(Debug, Clone, Default)]
@@ -29,11 +28,14 @@ struct Live {
     /// Set by [`Connections::close_all`]: later registrations are closed at once.
     closed: bool,
     next_id: u64,
-    by_address: HashMap<Address, Vec<(u64, mpsc::UnboundedSender<Value>)>>,
+    by_address: HashMap<Address, Vec<(u64, Sender)>>,
 }
 
 /// Session + Route id.
 type Address = (String, String);
+
+/// Carries encoded messages to one connection.
+type Sender = mpsc::UnboundedSender<Vec<u8>>;
 
 /// Keeps a connection registered; dropping it unregisters the connection.
 #[derive(Debug)]
@@ -50,7 +52,7 @@ impl Connections {
         &self,
         session: &str,
         route: &str,
-    ) -> (Registration, mpsc::UnboundedReceiver<Value>) {
+    ) -> (Registration, mpsc::UnboundedReceiver<Vec<u8>>) {
         let (sender, receiver) = mpsc::unbounded_channel();
         let address = (session.to_owned(), route.to_owned());
         let mut live = self.inner.live.lock().expect("connections lock");
@@ -78,7 +80,7 @@ impl Connections {
         &self,
         session: &str,
         route: &str,
-        message: Value,
+        message: Vec<u8>,
         timeout: Duration,
     ) -> Result<usize, SendError> {
         let address = (session.to_owned(), route.to_owned());
@@ -107,7 +109,7 @@ impl Connections {
         self.inner.registered.notify_waiters();
     }
 
-    fn deliver(&self, address: &Address, message: &Value) -> Result<usize, SendError> {
+    fn deliver(&self, address: &Address, message: &[u8]) -> Result<usize, SendError> {
         let live = self.inner.live.lock().expect("connections lock");
         if live.closed {
             return Err(SendError::Closed);
@@ -115,7 +117,7 @@ impl Connections {
         Ok(live.by_address.get(address).map_or(0, |senders| {
             senders
                 .iter()
-                .filter(|(_, sender)| sender.send(message.clone()).is_ok())
+                .filter(|(_, sender)| sender.send(message.to_vec()).is_ok())
                 .count()
         }))
     }
@@ -145,8 +147,6 @@ pub enum SendError {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
 
     #[tokio::test]
@@ -156,7 +156,7 @@ mod tests {
             let connections = connections.clone();
             async move {
                 connections
-                    .send("a", "live", json!(1), Duration::from_secs(30))
+                    .send("a", "live", vec![1], Duration::from_secs(30))
                     .await
             }
         });
@@ -177,13 +177,11 @@ mod tests {
         let (_b, mut b) = connections.register("b", "live");
         let (_other, mut other) = connections.register("a", "other");
 
-        let delivered = connections
-            .send("a", "live", json!({ "n": 1 }), SHORT)
-            .await;
+        let delivered = connections.send("a", "live", vec![1], SHORT).await;
 
         assert_eq!(delivered, Ok(2));
-        assert_eq!(a1.try_recv().unwrap(), json!({ "n": 1 }));
-        assert_eq!(a2.try_recv().unwrap(), json!({ "n": 1 }));
+        assert_eq!(a1.try_recv().unwrap(), vec![1]);
+        assert_eq!(a2.try_recv().unwrap(), vec![1]);
         assert!(b.try_recv().is_err());
         assert!(other.try_recv().is_err());
     }
@@ -195,12 +193,12 @@ mod tests {
         let (gone, _gone_rx) = connections.register("a", "live");
         drop(gone);
 
-        assert_eq!(connections.send("a", "live", json!(1), SHORT).await, Ok(1));
-        assert_eq!(kept_rx.try_recv().unwrap(), json!(1));
+        assert_eq!(connections.send("a", "live", vec![1], SHORT).await, Ok(1));
+        assert_eq!(kept_rx.try_recv().unwrap(), vec![1]);
 
         drop(kept);
         assert_eq!(
-            connections.send("a", "live", json!(2), SHORT).await,
+            connections.send("a", "live", vec![2], SHORT).await,
             Err(SendError::Timeout)
         );
     }
@@ -223,7 +221,7 @@ mod tests {
             let connections = connections.clone();
             async move {
                 connections
-                    .send("a", "live", json!("hi"), Duration::from_secs(5))
+                    .send("a", "live", vec![9], Duration::from_secs(5))
                     .await
             }
         });
@@ -231,7 +229,7 @@ mod tests {
         let (_registration, mut receiver) = connections.register("a", "live");
 
         assert_eq!(sending.await.unwrap(), Ok(1));
-        assert_eq!(receiver.recv().await.unwrap(), json!("hi"));
+        assert_eq!(receiver.recv().await.unwrap(), vec![9]);
     }
 
     #[tokio::test]
@@ -240,7 +238,7 @@ mod tests {
         let (_elsewhere, _receiver) = connections.register("b", "live");
 
         assert_eq!(
-            connections.send("a", "live", json!(1), SHORT).await,
+            connections.send("a", "live", vec![1], SHORT).await,
             Err(SendError::Timeout)
         );
     }

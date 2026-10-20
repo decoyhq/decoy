@@ -1,11 +1,16 @@
 //! Reloading config into a running server (#293): everything but the listeners is swapped in.
 
+use std::collections::BTreeMap;
 use std::fs;
 
 use std::path::Path;
 
 use decoy_runtime::config::{ServeCliOptions, ServeConfig};
+use decoy_runtime::connections::Connections;
+use decoy_runtime::control_api::{ControlApiRequest, SEND_PATH, handle_send_request};
+use decoy_runtime::grpc::{GrpcReply, GrpcRequest, StreamPart};
 use decoy_runtime::{Reloaded, Server};
+use futures_util::StreamExt as _;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -260,5 +265,83 @@ async fn broken_yaml_keeps_the_old_config_live() {
     assert_eq!(
         get(&client, format!("{}/users/1", fixture.base)).await,
         (200, r#"{"name":"Ada"}"#.into())
+    );
+}
+
+#[tokio::test]
+async fn a_send_after_a_proto_change_reaches_a_stream_opened_before_it() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let tick = "syntax = \"proto3\";\npackage live;\nservice Live { rpc Watch(Empty) returns (stream Tick); }\nmessage Empty {}\nmessage Tick { string id = 1; }\n";
+    for dir in ["routes", "protos"] {
+        fs::create_dir(temp.path().join(dir)).unwrap();
+    }
+    for (file, contents) in [
+        ("protos/live.proto", tick),
+        (
+            "routes/ticks.yaml",
+            "id: ticks\ntransport: grpc\nmatch: { service: live.Live, method: Watch }\ncases:\n  any:\n    behaviors:\n      open: {}\n",
+        ),
+        (
+            "collections.yaml",
+            "- id: default\n  routes: [ticks:any:open]\n",
+        ),
+        (
+            "decoy.yaml",
+            "routes: routes\ncollections: collections.yaml\nhost: 127.0.0.1\nport: 0\nprotos: { roots: [protos] }\n",
+        ),
+    ] {
+        fs::write(temp.path().join(file), contents).unwrap();
+    }
+    let server = decoy_runtime::serve(config(temp.path()), std::future::pending())
+        .await
+        .unwrap();
+    let connections = Connections::default();
+    let view = server.controller.read().await.session_view("default");
+    let GrpcReply::Stream(mut stream) = view
+        .execute_grpc(
+            GrpcRequest {
+                service: "live.Live".into(),
+                method: "Watch".into(),
+                metadata: BTreeMap::new(),
+                body: vec![0, 0, 0, 0, 0],
+            },
+            &connections,
+        )
+        .await
+    else {
+        panic!("expected a stream")
+    };
+
+    fs::write(
+        temp.path().join("protos/live.proto"),
+        tick.replace("id = 1;", "id = 1; string note = 2;"),
+    )
+    .unwrap();
+    let reloaded = server
+        .reloader()
+        .reload({
+            let dir = temp.path().to_owned();
+            move || Ok(config(&dir))
+        })
+        .await
+        .unwrap();
+    let sent = handle_send_request(
+        &reloaded.catalog,
+        &connections,
+        ControlApiRequest::post(
+            SEND_PATH,
+            r#"{"route":"ticks","message":{"id":"t-1","note":"new"}}"#,
+        ),
+    )
+    .await;
+    assert_eq!(sent.status, 200, "{}", sent.body);
+
+    // `Tick { id: "t-1", note: "new" }`, framed: the stream writes what `send` validated.
+    let tick = [
+        0, 0, 0, 0, 10, 0x0a, 3, b't', b'-', b'1', 0x12, 3, b'n', b'e', b'w',
+    ];
+    assert_eq!(
+        stream.next().await,
+        Some(StreamPart::Message(tick.to_vec()))
     );
 }
