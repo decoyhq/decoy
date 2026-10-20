@@ -27,7 +27,7 @@ use ratatui::backend::Backend;
 use tokio::sync::RwLock;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
-pub use app::{App, Effect, Event, Options, Verb};
+use app::{App, Effect, Event, Options, Verb};
 
 /// Runtime events handled per frame, so a burst of traffic draws once and keys stay responsive.
 const BATCH: usize = 1024;

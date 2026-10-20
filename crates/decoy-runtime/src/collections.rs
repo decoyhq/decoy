@@ -135,10 +135,6 @@ impl CollectionsFile {
         self.collections.get(id)
     }
 
-    pub fn first_id(&self) -> Option<&str> {
-        self.order.first().map(String::as_str)
-    }
-
     pub fn ids(&self) -> impl Iterator<Item = &str> {
         self.collections.keys().map(String::as_str)
     }

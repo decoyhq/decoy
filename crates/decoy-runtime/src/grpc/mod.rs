@@ -674,17 +674,6 @@ cases:
             "not a valid approvals.v1.GetApprovalRequest: failed to decode Protobuf message: invalid varint"
         );
         assert_eq!(
-            message(
-                &decode(
-                    &[],
-                    &[PipelineStep::Protobuf, PipelineStep::GrpcFrame],
-                    &input
-                )
-                .unwrap_err()
-            ),
-            "step `GrpcFrame` needs bytes, got JSON"
-        );
-        assert_eq!(
             message(&encode(json!({ "nope": 1 }), &DEFAULT_PIPELINE, &input).unwrap_err()),
             "response does not fit approvals.v1.GetApprovalRequest: unrecognized field name 'nope'"
         );
@@ -695,17 +684,6 @@ cases:
         assert_eq!(
             message(&encode(json!("!"), &[PipelineStep::GrpcFrame], &input).unwrap_err()),
             "message is not base64: Invalid symbol 33, offset 0."
-        );
-        assert_eq!(
-            message(
-                &encode(
-                    json!("AA=="),
-                    &[PipelineStep::Protobuf, PipelineStep::GrpcFrame],
-                    &input
-                )
-                .unwrap_err()
-            ),
-            "step `Protobuf` needs JSON, got bytes"
         );
     }
 

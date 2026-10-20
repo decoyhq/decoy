@@ -508,7 +508,8 @@ async fn session_changes_emit_their_kind_source_and_selection() {
         .controller
         .write()
         .await
-        .use_route("e2e", "get-user", "user-123", "success");
+        .try_use_route("e2e", "get-user", "user-123", "success")
+        .unwrap();
     let routed = next_session(&mut events).await;
     assert_eq!(
         (routed.change, routed.source),
