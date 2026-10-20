@@ -323,7 +323,9 @@ fn parse_optional_body_json(body: Option<String>) -> Result<(), serde_json::Erro
         return Ok(());
     }
 
-    serde_json::from_str::<EmptyBody>(&body).map(|_| ())
+    // A map first: derived structs also accept a JSON array, so `[]` would pass as `EmptyBody`.
+    let object = serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&body)?;
+    serde_json::from_value::<EmptyBody>(object.into()).map(|_| ())
 }
 
 /// `application/json`, with or without parameters such as `; charset=utf-8`.
@@ -485,6 +487,28 @@ cases:
             selected(&controller, DEFAULT_SESSION),
             "get-user:user-123:missing"
         );
+    }
+
+    #[test]
+    fn reset_and_end_session_reject_non_object_json_without_mutating_selection() {
+        let mut controller = controller();
+        let use_route = handle_control_request(
+            &mut controller,
+            ControlApiRequest::post(
+                "/__decoy__/control/useRoute",
+                r#"{"route":"get-user","case":"user-123","behavior":"missing"}"#,
+            ),
+        );
+        assert_eq!(use_route.status, 200);
+        for path in ["/__decoy__/control/reset", "/__decoy__/control/endSession"] {
+            let response =
+                handle_control_request(&mut controller, ControlApiRequest::post(path, "[]"));
+            assert_eq!(response.status, 400, "{path}: {}", response.body);
+            assert_eq!(
+                selected(&controller, DEFAULT_SESSION),
+                "get-user:user-123:missing"
+            );
+        }
     }
 
     #[test]
