@@ -120,7 +120,9 @@ pub enum ControlApiError {
     SendNotLongLived { route: String },
     #[error(transparent)]
     SendMessage(GrpcCodecError),
-    #[error("no live connection of route `{route}` in session `{session}` within {timeout_ms}ms")]
+    #[error(
+        "no live connection of route `{route}` in session `{session}` took the message within {timeout_ms}ms (none open, every queue full, or opened before a reload changed the output type)"
+    )]
     SendTimeout {
         route: String,
         session: String,
@@ -182,8 +184,8 @@ impl From<ControlApiError> for ControlApiResponse {
 
 /// `POST /__decoy__/control/send` with `{ "route": "...", "message": ..., "timeout"?: <ms> }`:
 /// delivers `message` to every live connection of the Route in the request's Session and answers
-/// `{ "delivered": <n> }`. With no live connection it waits up to `timeout` (default 5000) and
-/// fails with `408` (Q5). Unknown Route: `404`; a Route without long-lived connections: `409`; a
+/// `{ "delivered": <n> }`; a connection whose queue is full is skipped and not counted. With no
+/// live connection it waits up to `timeout` (default 5000) and fails with `408` (Q5). Unknown Route: `404`; a Route without long-lived connections: `409`; a
 /// `message` that doesn't encode for the Route: `400`.
 ///
 /// Unlike the other verbs it waits, so the server calls it without holding the Controller.
