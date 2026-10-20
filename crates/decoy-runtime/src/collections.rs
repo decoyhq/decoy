@@ -169,20 +169,20 @@ impl CollectionsFile {
         };
 
         // A child entry replaces an inherited one in place, keeping its bottom-to-top priority.
+        // Only the first child entry per route+case replaces; later duplicates append.
         let inherited = resolved.len();
-        let mut replaced = vec![false; inherited];
+        let mut replaced = BTreeSet::new();
         for route_ref in &collection.routes {
             let activation = route_ref.activation()?;
-            let slot = (0..inherited).find(|&i| {
-                !replaced[i]
-                    && resolved[i].route == activation.route
-                    && resolved[i].case == activation.case
-            });
+            let slot = if replaced.insert((activation.route.clone(), activation.case.clone())) {
+                (0..inherited).find(|&i| {
+                    resolved[i].route == activation.route && resolved[i].case == activation.case
+                })
+            } else {
+                None
+            };
             match slot {
-                Some(i) => {
-                    replaced[i] = true;
-                    resolved[i] = activation;
-                }
+                Some(i) => resolved[i] = activation,
                 None => resolved.push(activation),
             }
         }
@@ -311,6 +311,37 @@ mod tests {
         assert_eq!(
             resolved.iter().map(Activation::address).collect::<Vec<_>>(),
             vec!["get-user:user-123:not-found", "get-user:user-123:slow"]
+        );
+    }
+
+    #[test]
+    fn child_duplicates_append_after_the_first_replaces_even_when_parent_has_duplicates() {
+        let collections = CollectionsFile::from_yaml(
+            r#"
+- id: base
+  routes:
+    - get-user:any:a
+    - get-user:any:b
+    - get-user:user-123:success
+
+- id: child
+  from: base
+  routes:
+    - get-user:any:x
+    - get-user:any:y
+"#,
+        )
+        .unwrap();
+
+        let resolved = collections.resolve("child").unwrap();
+        assert_eq!(
+            resolved.iter().map(Activation::address).collect::<Vec<_>>(),
+            vec![
+                "get-user:any:x",
+                "get-user:any:b",
+                "get-user:user-123:success",
+                "get-user:any:y"
+            ]
         );
     }
 
