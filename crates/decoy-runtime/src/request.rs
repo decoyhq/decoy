@@ -9,22 +9,38 @@ use crate::schema::HttpMethod;
 
 /// The request envelope: what Case matching, predicates, and templates see about an HTTP request,
 /// besides method, path, and path params.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct RequestEnvelope {
     /// Full URL as Decoy received it, e.g. `http://127.0.0.1:8080/api/users?verbose=true`.
     pub url: String,
     /// Decoded query parameters; a repeated key keeps every value in order.
     pub query: BTreeMap<String, Vec<String>>,
-    /// Lowercased header names; repeated headers are joined with `", "`.
-    pub headers: BTreeMap<String, String>,
+    /// Lowercased header names; repeated headers are joined with `", "`. Read-only outside the
+    /// crate: `content-type` feeds the cached [`Self::body`].
+    pub(crate) headers: BTreeMap<String, String>,
     /// Parsed from the `cookie` header.
     pub cookies: BTreeMap<String, String>,
     /// The body as received; [`Self::body`] parses it on first use.
-    pub raw_body: Bytes,
+    pub(crate) raw_body: Bytes,
     pub(crate) parsed_body: OnceLock<Value>,
 }
 
+/// Compares the request inputs, not whether [`RequestEnvelope::body`] has run.
+impl PartialEq for RequestEnvelope {
+    fn eq(&self, other: &Self) -> bool {
+        self.url == other.url
+            && self.query == other.query
+            && self.headers == other.headers
+            && self.cookies == other.cookies
+            && self.raw_body == other.raw_body
+    }
+}
+
 impl RequestEnvelope {
+    pub fn headers(&self) -> &BTreeMap<String, String> {
+        &self.headers
+    }
+
     /// JSON when the content type is JSON and it parses, text otherwise, `null` when empty.
     /// Parsed once, on first use: passthrough and Cases that never read `body` skip it.
     pub fn body(&self) -> &Value {
@@ -213,5 +229,21 @@ mod tests {
         let first: *const Value = envelope.body();
         assert_eq!(envelope.body(), &json!({ "a": 1 }));
         assert!(std::ptr::eq(first, envelope.body()));
+    }
+
+    #[test]
+    fn equality_ignores_whether_the_body_was_parsed() {
+        let envelope = || {
+            RequestEnvelope::from_parts(
+                None,
+                "/",
+                &headers(&[("content-type", "application/json")]),
+                r#"{"a":1}"#.into(),
+            )
+        };
+        let parsed = envelope();
+        parsed.body();
+
+        assert_eq!(parsed, envelope());
     }
 }
