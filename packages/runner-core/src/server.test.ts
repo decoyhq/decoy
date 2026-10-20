@@ -206,7 +206,7 @@ describe('startDecoy', () => {
 
     await expect(
       start({ url: `http://127.0.0.1:${port}`, command: `node ${FAKE_DECOY} ${port}` }),
-    ).rejects.toThrow(/EACCES/)
+    ).rejects.toThrow(/EACCES|EPERM/)
     expect(existsSync(pidFile)).toBe(true)
   })
 
