@@ -168,8 +168,23 @@ impl CollectionsFile {
             Vec::new()
         };
 
+        // A child entry replaces an inherited one in place, keeping its bottom-to-top priority.
+        // Only the first child entry per route+case replaces; later duplicates append.
+        let inherited = resolved.len();
+        let mut replaced = BTreeSet::new();
         for route_ref in &collection.routes {
-            resolved.push(route_ref.activation()?);
+            let activation = route_ref.activation()?;
+            let slot = if replaced.insert((activation.route.clone(), activation.case.clone())) {
+                (0..inherited).find(|&i| {
+                    resolved[i].route == activation.route && resolved[i].case == activation.case
+                })
+            } else {
+                None
+            };
+            match slot {
+                Some(i) => resolved[i] = activation,
+                None => resolved.push(activation),
+            }
         }
 
         visiting.remove(id);
@@ -221,7 +236,7 @@ mod tests {
     }
 
     #[test]
-    fn child_collection_appends_after_parent_so_bottom_to_top_matching_can_select_it() {
+    fn child_entry_replaces_parent_entry_for_same_route_and_case_in_place() {
         let collections = CollectionsFile::from_yaml(
             r#"
 - id: base
@@ -234,6 +249,7 @@ mod tests {
   from: base
   routes:
     - get-user:user-123:not-found
+    - get-user:user-456:success
 "#,
         )
         .unwrap();
@@ -243,9 +259,88 @@ mod tests {
             resolved.iter().map(Activation::address).collect::<Vec<_>>(),
             vec![
                 "get-user:any:success",
-                "get-user:user-123:success",
+                "get-user:user-123:not-found",
                 "list-users:any:success",
-                "get-user:user-123:not-found"
+                "get-user:user-456:success"
+            ]
+        );
+    }
+
+    #[test]
+    fn child_override_of_fallback_keeps_specific_parent_case_matching_first() {
+        let collections = CollectionsFile::from_yaml(
+            r#"
+- id: base
+  routes:
+    - get-user:any:fallback
+    - get-user:user-123:success
+
+- id: slow
+  from: base
+  routes:
+    - get-user:any:slow
+"#,
+        )
+        .unwrap();
+
+        let resolved = collections.resolve("slow").unwrap();
+        assert_eq!(
+            resolved.iter().map(Activation::address).collect::<Vec<_>>(),
+            vec!["get-user:any:slow", "get-user:user-123:success"]
+        );
+    }
+
+    #[test]
+    fn child_duplicates_of_an_inherited_entry_are_all_kept() {
+        let collections = CollectionsFile::from_yaml(
+            r#"
+- id: base
+  routes:
+    - get-user:user-123:success
+
+- id: child
+  from: base
+  routes:
+    - get-user:user-123:not-found
+    - get-user:user-123:slow
+"#,
+        )
+        .unwrap();
+
+        let resolved = collections.resolve("child").unwrap();
+        assert_eq!(
+            resolved.iter().map(Activation::address).collect::<Vec<_>>(),
+            vec!["get-user:user-123:not-found", "get-user:user-123:slow"]
+        );
+    }
+
+    #[test]
+    fn child_duplicates_append_after_the_first_replaces_even_when_parent_has_duplicates() {
+        let collections = CollectionsFile::from_yaml(
+            r#"
+- id: base
+  routes:
+    - get-user:any:a
+    - get-user:any:b
+    - get-user:user-123:success
+
+- id: child
+  from: base
+  routes:
+    - get-user:any:x
+    - get-user:any:y
+"#,
+        )
+        .unwrap();
+
+        let resolved = collections.resolve("child").unwrap();
+        assert_eq!(
+            resolved.iter().map(Activation::address).collect::<Vec<_>>(),
+            vec![
+                "get-user:any:x",
+                "get-user:any:b",
+                "get-user:user-123:success",
+                "get-user:any:y"
             ]
         );
     }

@@ -93,7 +93,7 @@ async fn serves_unary_grpc_calls_with_matching_templates_statuses_and_sessions()
             .is_ok()
     );
 
-    // s2 stays on happy-path: in approvals-down the broad `any:not-found` sits above `pending`.
+    // s2 stays on happy-path.
     server
         .control(
             "useRoute",
@@ -159,7 +159,7 @@ async fn serves_grpc_over_tls_with_alpn_h2() {
         .control("useCollection", r#"{"collection":"approvals-down"}"#, "s1")
         .await;
     let status = client
-        .get(json!({ "id": "a-1" }), &[("x-mock-session", "s1")])
+        .get(json!({ "id": "a-7" }), &[("x-mock-session", "s1")])
         .await
         .unwrap_err();
     assert_eq!(status.code(), Code::NotFound);
