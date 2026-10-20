@@ -3,3 +3,4 @@ target/
 **/dist/
 **/test-results/
 **/playwright-report/
+**/.rstack/

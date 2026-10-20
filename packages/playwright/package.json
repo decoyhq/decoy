@@ -35,6 +35,8 @@
     "@playwright/test": ">=1.40 <2"
   },
   "devDependencies": {
+    "@decoyhq/runner-core": "workspace:*",
+    "@microsoft/api-extractor": "catalog:",
     "@playwright/test": "catalog:",
     "@types/node": "catalog:",
     "expect-type": "^1.4.0"

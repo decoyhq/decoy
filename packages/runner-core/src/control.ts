@@ -1,4 +1,4 @@
-import { SESSION_HEADER } from './routing'
+export const SESSION_HEADER = 'x-mock-session'
 
 /** The per-test handle to one Decoy Session. Every method calls the Control API immediately. */
 export interface DecoyRouter {

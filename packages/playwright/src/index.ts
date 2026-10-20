@@ -1,7 +1,7 @@
 import { test as base } from '@playwright/test'
 import { createDecoyFixtures, type DecoyFixtures } from './fixtures'
 
-export type { DecoyRouter } from './control'
+export type { DecoyRouter } from '@decoyhq/runner-core'
 export { createDecoyFixtures, type DecoyFixtures, type DecoyTestOptions } from './fixtures'
 export type { DecoyOptions } from './options'
 export { type SetupConfig, setup, type Teardown } from './setup'

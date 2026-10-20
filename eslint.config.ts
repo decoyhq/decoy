@@ -5,7 +5,13 @@ import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
 export default defineConfig(
-  globalIgnores(['**/dist/', 'target/', '**/test-results/', '**/playwright-report/']),
+  globalIgnores([
+    '**/dist/',
+    'target/',
+    '**/test-results/',
+    '**/playwright-report/',
+    '**/.rstack/',
+  ]),
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   tseslint.configs.stylisticTypeChecked,

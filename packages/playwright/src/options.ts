@@ -19,36 +19,8 @@ export interface DecoyOptions {
   collection?: string
 }
 
-export interface ResolvedDecoyOptions {
-  url: string
-  command: string
-  cwd: string | undefined
-  reuseExistingServer: boolean
-  timeout: number
-}
-
-export const DEFAULT_URL = 'http://127.0.0.1:8080'
-export const HEALTH_PATH = '/__decoy__/health'
-
-export function resolveOptions(
-  options: DecoyOptions,
-  env: NodeJS.ProcessEnv = process.env,
-): ResolvedDecoyOptions {
-  return {
-    url: (options.url ?? DEFAULT_URL).replace(/\/+$/, ''),
-    command: options.command ?? 'decoy serve',
-    cwd: options.cwd,
-    reuseExistingServer: options.reuseExistingServer ?? !env.CI,
-    timeout: options.timeout ?? 60_000,
-  }
-}
-
-/** True when Decoy answers its liveness probe at `url`. */
-export async function isHealthy(url: string): Promise<boolean> {
-  try {
-    const response = await fetch(`${url}${HEALTH_PATH}`, { signal: AbortSignal.timeout(1_000) })
-    return response.ok
-  } catch {
-    return false
-  }
-}
+export {
+  DEFAULT_URL,
+  isHealthy,
+  resolveServerOptions as resolveOptions,
+} from '@decoyhq/runner-core'

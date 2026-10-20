@@ -7,6 +7,7 @@ catalog:
   '@grpc/proto-loader': ^0.8.0
   '@playwright/test': ^1.56.0
   testplane: ^9.3.0
+  '@microsoft/api-extractor': ^7.59.4
   '@types/node': ^24.19.2
 # pnpm 11+ reads its settings here, not from .npmrc.
 engineStrict: true

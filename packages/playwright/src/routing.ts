@@ -1,7 +1,7 @@
 import type { Request, Route } from '@playwright/test'
 import type { DecoyOptions } from './options'
 
-export const SESSION_HEADER = 'x-mock-session'
+import { SESSION_HEADER } from '@decoyhq/runner-core'
 
 /** The response shape forwarding needs; Playwright's `APIResponse` satisfies it. */
 export interface DecoyResponse {

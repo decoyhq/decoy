@@ -57,9 +57,9 @@ Gotchas the prototype hit:
 
 ## Open questions
 
-1. **Shared core.** `control.ts`, `process.ts`, health and start logic are copied from
-   `@decoyhq/playwright`. Before publishing, extract them (e.g. a private `packages/node-core`
-   bundled into both, or a public `@decoyhq/node`).
+1. **Shared core.** Done: `packages/runner-core` (private) holds start/stop, health, and the Control
+   API client. rslib bundles it into each package's code and declarations (api-extractor
+   `bundledPackages`), so consumers never install it.
 2. **Non-Chromium.** CDP routing is Chromium only. The cross-browser path is BiDi
    `network.addIntercept` + `network.continueRequest({ url, headers })`, used when
    `browser.isBidi`. Check that Firefox honours `url` in `continueRequest`.

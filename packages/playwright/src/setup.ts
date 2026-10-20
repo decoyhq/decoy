@@ -1,13 +1,10 @@
-import { type ChildProcess, spawn } from 'node:child_process'
-import { readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname } from 'node:path'
+import { startDecoy, type Teardown } from '@decoyhq/runner-core'
 import type { FullConfig, FullProject } from '@playwright/test'
 import type { DecoyTestOptions } from './fixtures'
-import { type DecoyOptions, isHealthy, type ResolvedDecoyOptions, resolveOptions } from './options'
-import { isAlive, stopGroup, stopProcess, withLocalBins } from './process'
+import { type DecoyOptions, resolveOptions } from './options'
 
-export type Teardown = () => Promise<void>
+export type { Teardown }
 
 const keepRunning: Teardown = () => Promise.resolve()
 
@@ -42,70 +39,10 @@ export async function setup(config: SetupConfig): Promise<Teardown> {
   return teardowns.length === 0 ? keepRunning : stopAll
 }
 
-async function start(decoyOptions: DecoyOptions, config: SetupConfig): Promise<Teardown> {
+function start(decoyOptions: DecoyOptions, config: SetupConfig): Promise<Teardown> {
   const options = resolveOptions(decoyOptions)
-  // Absolute, so the PATH entries and the walk up to the root don't depend on process.cwd().
-  const cwd = resolve(
-    options.cwd ?? (config.configFile ? dirname(config.configFile) : process.cwd()),
-  )
-
-  const pidFile = join(tmpdir(), `decoy-playwright-${new URL(options.url).port || '80'}.json`)
-  await stopOrphan(pidFile, options, cwd)
-
-  if (await isHealthy(options.url)) {
-    if (options.reuseExistingServer) {
-      return keepRunning
-    }
-    throw new Error(
-      `Decoy is already serving at ${options.url}. Stop it, or set decoyOptions.reuseExistingServer to true.`,
-    )
-  }
-
-  const child = spawn(options.command, {
-    cwd,
-    env: withLocalBins(cwd, process.env),
-    shell: true,
-    detached: process.platform !== 'win32',
-    stdio: ['ignore', 'ignore', 'inherit'],
-  })
-  try {
-    await waitForHealth(child, options)
-  } catch (error) {
-    await stopProcess(child)
-    throw error
-  }
-  writeFileSync(pidFile, JSON.stringify({ pid: child.pid, cwd, command: options.command }))
-  return async () => {
-    await stopProcess(child)
-    rmSync(pidFile, { force: true })
-  }
-}
-
-/**
- * Stops a Decoy that an earlier `setup` spawned with the same command and cwd but never tore down
- * (its runner was hard-killed), so it isn't silently reused. A Decoy the user started has no
- * pidfile and is left alone.
- */
-async function stopOrphan(pidFile: string, options: ResolvedDecoyOptions, cwd: string) {
-  let recorded: { pid: number; cwd: string; command: string }
-  try {
-    recorded = JSON.parse(readFileSync(pidFile, 'utf8')) as typeof recorded
-  } catch {
-    return
-  }
-  // shortcut: a recycled pid is told apart only by Decoy still serving at url, check the process's
-  // own command line if that ever kills the wrong group.
-  if (isAlive(recorded.pid)) {
-    if (
-      recorded.command !== options.command ||
-      recorded.cwd !== cwd ||
-      !(await isHealthy(options.url))
-    ) {
-      return
-    }
-    await stopGroup(recorded.pid)
-  }
-  rmSync(pidFile, { force: true })
+  const cwd = options.cwd ?? (config.configFile ? dirname(config.configFile) : process.cwd())
+  return startDecoy({ ...options, cwd })
 }
 
 /**
@@ -139,29 +76,5 @@ function sameStart(a: DecoyOptions, b: DecoyOptions): boolean {
     left.cwd === right.cwd &&
     left.reuseExistingServer === right.reuseExistingServer &&
     left.timeout === right.timeout
-  )
-}
-
-async function waitForHealth(child: ChildProcess, options: ResolvedDecoyOptions): Promise<void> {
-  let exit: string | undefined
-  child.once('exit', (code, signal) => {
-    exit = signal ? `signal ${signal}` : `code ${code}`
-  })
-  child.once('error', (error) => {
-    exit = error.message
-  })
-
-  const deadline = Date.now() + options.timeout
-  while (Date.now() < deadline) {
-    if (exit !== undefined) {
-      throw new Error(`Decoy command \`${options.command}\` exited before serving (${exit}).`)
-    }
-    if (await isHealthy(options.url)) {
-      return
-    }
-    await new Promise((resolve) => setTimeout(resolve, 100))
-  }
-  throw new Error(
-    `Decoy did not become healthy at ${options.url} within ${options.timeout}ms (command: \`${options.command}\`).`,
   )
 }

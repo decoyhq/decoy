@@ -1,8 +1,8 @@
 import type { test as base } from '@playwright/test'
 import { describe, expect, test } from '@rstest/core'
 import { expectTypeOf } from 'expect-type'
-import { startFakeDecoy } from '../fixtures/fake-decoy-server'
-import type { DecoyRouter } from './control'
+import { startFakeDecoy } from '@decoyhq/runner-core/testing'
+import type { DecoyRouter } from '@decoyhq/runner-core'
 import {
   createDecoyFixtures,
   type DecoyFixtures,

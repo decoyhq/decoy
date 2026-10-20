@@ -7,7 +7,7 @@ import type {
   PlaywrightWorkerOptions,
   TestInfo,
 } from '@playwright/test'
-import { createRouter, type DecoyRouter } from './control'
+import { createRouter, type DecoyRouter } from '@decoyhq/runner-core'
 import { type DecoyOptions, isHealthy, resolveOptions } from './options'
 import { fetchWithoutCookies, routeToDecoy } from './routing'
 

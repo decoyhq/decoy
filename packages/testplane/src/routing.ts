@@ -1,6 +1,5 @@
+import { SESSION_HEADER } from '@decoyhq/runner-core'
 import type { DecoyOptions } from './options'
-
-export const SESSION_HEADER = 'x-mock-session'
 
 /** The slice of a Puppeteer `HTTPRequest` routing needs. */
 export interface InterceptedRequest {
