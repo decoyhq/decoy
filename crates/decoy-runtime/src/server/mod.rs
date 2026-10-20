@@ -77,6 +77,7 @@ pub async fn serve(
         .fallback(any(handle_request))
         .with_state(controller.clone())
         .layer(Extension(MaxBodyBytes(max_body_bytes.clone())))
+        .layer(Extension(crate::connections::Connections::default()))
         .layer(Extension(events.clone()));
     let tls_config = match &config.tls {
         None => None,

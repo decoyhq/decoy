@@ -5,6 +5,7 @@
 
 pub mod collections;
 pub mod config;
+pub mod connections;
 pub mod control_api;
 pub mod engine;
 pub mod events;
@@ -23,8 +24,8 @@ pub mod watch;
 
 pub use collections::{Activation, Collection, CollectionRouteRef, CollectionsFile};
 pub use control_api::{
-    CONTROL_PREFIX, ControlApiRequest, ControlApiResponse, DEFAULT_SESSION, SESSION_HEADER,
-    handle_control_request, try_handle_control_request,
+    CONTROL_PREFIX, ControlApiRequest, ControlApiResponse, DEFAULT_SESSION, SEND_PATH,
+    SESSION_HEADER, handle_control_request, handle_send_request, try_handle_control_request,
 };
 pub use engine::{
     Candidate, Catalog, ControlError, Controller, MissDiagnostic, Rejection, RouteOverrideSnapshot,
