@@ -1,0 +1,12 @@
+id: echo
+transport: http
+match:
+  method: POST
+  path: /api/echo
+cases:
+  any:
+    match: {}
+    behaviors:
+      request: # proves the routed request kept its body, cookies, and headers
+        body:
+          name: '${ body.name } / ${ cookies.sid } / ${ headers."x-client" }'

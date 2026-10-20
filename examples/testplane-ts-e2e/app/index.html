@@ -10,13 +10,14 @@
     <button id="load-user-2" type="button">Load second user</button>
     <button id="load-orders" type="button">Load orders</button>
     <button id="load-profile" type="button">Load profile</button>
+    <button id="send-echo" type="button">Send echo</button>
     <p id="result" role="status"></p>
     <script type="module">
       const result = document.querySelector('#result')
 
       // Success shows the payload's name; failures show status, Decoy's miss marker, and error.
-      async function show(path) {
-        const response = await fetch(path)
+      async function show(path, init) {
+        const response = await fetch(path, init)
         const body = await response.json().catch(() => ({}))
         if (response.ok) {
           result.textContent = body.name
@@ -32,6 +33,15 @@
       document.querySelector('#load-orders').addEventListener('click', () => show('/api/orders'))
       // Decoy forwards /api/profile to the example's local upstream (Passthrough).
       document.querySelector('#load-profile').addEventListener('click', () => show('/api/profile'))
+      // Decoy echoes the body, a cookie, and a custom header back (mocks/routes/echo.yaml).
+      document.querySelector('#send-echo').addEventListener('click', () => {
+        document.cookie = 'sid=abc'
+        show('/api/echo', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-client': 'app' },
+          body: JSON.stringify({ name: 'Ada' }),
+        })
+      })
     </script>
   </body>
 </html>

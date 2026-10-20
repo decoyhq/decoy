@@ -6,18 +6,25 @@ import type { ConfigInput } from 'testplane'
 /** Fixed port of the example's own upstream, targeted by the Passthrough Behavior in mocks/. */
 const UPSTREAM_PORT = 4174
 let upstream: Server | undefined
+// As Playwright does by default: CI runners (Ubuntu 24 AppArmor) block Chrome's sandbox.
+const chromeOptions = { args: ['--no-sandbox'] }
 
 export default {
   gridUrl: 'local',
   baseUrl: 'http://127.0.0.1:4173',
   sets: { all: { files: 'tests/**/*.testplane.ts' } },
+  // Routing runs over CDP in both session kinds: WebDriver Classic (Testplane's default) and BiDi.
   browsers: {
     chrome: {
       headless: true,
+      desiredCapabilities: { browserName: 'chrome', 'goog:chromeOptions': chromeOptions },
+    },
+    'chrome-bidi': {
+      headless: true,
       desiredCapabilities: {
         browserName: 'chrome',
-        // As Playwright does by default: CI runners (Ubuntu 24 AppArmor) block Chrome's sandbox.
-        'goog:chromeOptions': { args: ['--no-sandbox'] },
+        'goog:chromeOptions': chromeOptions,
+        webSocketUrl: true,
       },
     },
   },

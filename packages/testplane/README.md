@@ -35,4 +35,6 @@ it('empty state', async ({ browser }) => {
   `x-mock-session` set. Chrome rewrites the request URL itself (CDP `Fetch.continueRequest`), so
   method, headers, and body are kept and the page sees its own origin. If Decoy is unreachable the
   request fails; it never reaches the real network. Requests between tests are aborted.
-- Chromium only for now (CDP through `browser.getPuppeteer()`).
+- Chrome/Chromium only for now (CDP through `browser.getPuppeteer()`), in WebDriver Classic and
+  BiDi (`webSocketUrl: true`) sessions. With `urls` on another browser, each test fails with a
+  clear error.
