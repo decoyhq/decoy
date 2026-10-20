@@ -174,7 +174,7 @@ function globToRegExp(glob: string): RegExp {
     } else if (char === ',' && inGroup) {
       source += '|'
     } else {
-      source += char.replace(/[.+?^${}()|[\]\\/]/, '\\$&')
+      source += char.replace(/[.+?^${}()|[\]\\/]/g, '\\$&')
     }
   }
   if (inGroup) fail('has an unclosed `{`')
