@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use futures_util::StreamExt as _;
 use futures_util::stream::{self, BoxStream};
-use prost_reflect::{MessageDescriptor, MethodDescriptor};
+use prost_reflect::MethodDescriptor;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
@@ -17,7 +17,7 @@ use crate::connections::{Connections, Registration};
 use crate::engine::{Catalog, MissDiagnostic};
 use crate::events::{Match, Outcome};
 use crate::expression::to_rcvar;
-use crate::schema::{PipelineStep, ResponseBehavior, Route};
+use crate::schema::{ResponseBehavior, Route};
 use crate::template::render_grpc_response;
 
 /// A served call and what an event needs to explain it.
@@ -125,12 +125,10 @@ pub(crate) struct GrpcStream {
     messages: Vec<(Option<Duration>, Vec<u8>)>,
     /// `None`: after `messages` the call stays open for Control API `send`.
     end: Option<GrpcResponse>,
-    steps: Vec<PipelineStep>,
-    output: MessageDescriptor,
     /// The Route id, which `send` addresses.
     route: String,
-    /// `route:case:behavior`, for error text.
-    address: String,
+    /// Full name of the output type, so `send` skips this stream once a reload changes it.
+    output: String,
 }
 
 impl GrpcStream {
@@ -150,13 +148,11 @@ impl GrpcStream {
         let rest = match self.end {
             Some(end) => stream::iter([StreamPart::End(end)]).boxed(),
             None => {
-                let (registration, receiver) = connections.register(session, &self.route);
+                let (registration, receiver) =
+                    connections.register(session, &self.route, &self.output);
                 let open = Open {
                     _registration: registration,
                     receiver,
-                    steps: self.steps,
-                    output: self.output,
-                    address: self.address,
                 };
                 stream::unfold(Some(open), |open| async move {
                     let mut open = open?;
@@ -165,13 +161,7 @@ impl GrpcStream {
                         let end = GrpcResponse::error(UNAVAILABLE, "decoy is shutting down");
                         return Some((StreamPart::End(end), None));
                     };
-                    Some(match encode(message, &open.steps, &open.output) {
-                        Ok(bytes) => (StreamPart::Message(bytes), Some(open)),
-                        Err(error) => {
-                            let end = behavior_failed(&open.address, error);
-                            (StreamPart::End(end), None)
-                        }
-                    })
+                    Some((StreamPart::Message(message), Some(open)))
                 })
                 .boxed()
             }
@@ -183,10 +173,7 @@ impl GrpcStream {
 /// An open stream's link to Control API `send`; dropping it unregisters the call.
 struct Open {
     _registration: Registration,
-    receiver: mpsc::UnboundedReceiver<Value>,
-    steps: Vec<PipelineStep>,
-    output: MessageDescriptor,
-    address: String,
+    receiver: mpsc::UnboundedReceiver<Vec<u8>>,
 }
 
 fn render(response: &ResponseBehavior, envelope: &Value) -> Result<ResponseBehavior, String> {
@@ -226,10 +213,8 @@ fn respond_stream(
     Ok(GrpcStream {
         messages,
         end,
-        steps: steps.to_vec(),
-        output: method.output(),
         route: activation.route.clone(),
-        address: activation.address(),
+        output: method.output().full_name().to_owned(),
     })
 }
 
