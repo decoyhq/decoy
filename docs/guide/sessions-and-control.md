@@ -60,14 +60,14 @@ curl -X POST localhost:8080/__decoy__/control/send \
   streams opened before it; an older client skips fields it doesn't know. A stream whose Route now
   answers with a different message type doesn't get it.
 
-| status | when                                                           |
-| ------ | -------------------------------------------------------------- |
-| `200`  | `{"delivered":<n>}`: how many connections got the message      |
-| `400`  | `message` doesn't encode for the Route                         |
-| `404`  | unknown Route                                                  |
-| `409`  | the Route has no long-lived connections (HTTP, unary gRPC)     |
-| `408`  | no live connection of the Route in this Session within timeout |
-| `503`  | Decoy is shutting down                                         |
+| status | when                                                                                                   |
+| ------ | ------------------------------------------------------------------------------------------------------ |
+| `200`  | `{"delivered":<n>}`: how many connections got the message                                              |
+| `400`  | `message` doesn't encode for the Route                                                                 |
+| `404`  | unknown Route                                                                                          |
+| `409`  | the Route has no long-lived connections (HTTP, unary gRPC)                                             |
+| `408`  | no live connection of the Route in this Session took it within timeout (none, all full, or older type) |
+| `503`  | Decoy is shutting down                                                                                 |
 
 Malformed JSON or an unknown body field returns `400` and a missing JSON content type `415`, as
 for the other verbs.

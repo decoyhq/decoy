@@ -120,7 +120,9 @@ pub enum ControlApiError {
     SendNotLongLived { route: String },
     #[error(transparent)]
     SendMessage(GrpcCodecError),
-    #[error("no live connection of route `{route}` in session `{session}` within {timeout_ms}ms")]
+    #[error(
+        "no live connection of route `{route}` in session `{session}` took the message within {timeout_ms}ms (none open, every queue full, or opened before a reload changed the output type)"
+    )]
     SendTimeout {
         route: String,
         session: String,

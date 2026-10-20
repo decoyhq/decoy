@@ -156,7 +156,7 @@ impl Drop for Registration {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SendError {
     /// No live connection with room in its queue appeared before the `send` timeout.
-    #[error("no live connection before the timeout")]
+    #[error("no live connection took the message before the timeout")]
     Timeout,
     /// Decoy is shutting down; no connection will come.
     #[error("decoy is shutting down")]
