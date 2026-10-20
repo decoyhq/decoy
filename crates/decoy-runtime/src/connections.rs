@@ -36,7 +36,10 @@ struct Live {
 type Address = (String, String);
 
 /// Carries encoded messages to one connection.
-type Sender = mpsc::UnboundedSender<Vec<u8>>;
+type Sender = mpsc::Sender<Vec<u8>>;
+
+/// Messages a connection may have queued and unread; past it, `send` skips that connection.
+const SEND_QUEUE: usize = 64;
 
 /// Keeps a connection registered; dropping it unregisters the connection.
 #[derive(Debug)]
@@ -55,8 +58,8 @@ impl Connections {
         session: &str,
         route: &str,
         output: &str,
-    ) -> (Registration, mpsc::UnboundedReceiver<Vec<u8>>) {
-        let (sender, receiver) = mpsc::unbounded_channel();
+    ) -> (Registration, mpsc::Receiver<Vec<u8>>) {
+        let (sender, receiver) = mpsc::channel(SEND_QUEUE);
         let address = (session.to_owned(), route.to_owned());
         let mut live = self.inner.live.lock().expect("connections lock");
         let id = live.next_id;
@@ -80,7 +83,8 @@ impl Connections {
 
     /// Delivers `message`, encoded as `output`, to every live connection of `route` in `session`
     /// opened with that output type; one opened before a reload changed it is skipped. With none,
-    /// waits up to `timeout` for one (Q5). Returns how many connections got it.
+    /// waits up to `timeout` for one (Q5). Returns how many connections got it; a connection whose
+    /// queue is full does not.
     pub async fn send(
         &self,
         session: &str,
@@ -124,7 +128,7 @@ impl Connections {
             senders
                 .iter()
                 .filter(|(_, opened, sender)| {
-                    opened == output && sender.send(message.to_vec()).is_ok()
+                    opened == output && sender.try_send(message.to_vec()).is_ok()
                 })
                 .count()
         }))
@@ -145,7 +149,7 @@ impl Drop for Registration {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum SendError {
-    /// No live connection appeared before the `send` timeout.
+    /// No live connection with room in its queue appeared before the `send` timeout.
     #[error("no live connection before the timeout")]
     Timeout,
     /// Decoy is shutting down; no connection will come.
@@ -247,6 +251,20 @@ mod tests {
 
         assert_eq!(sending.await.unwrap(), Ok(1));
         assert_eq!(receiver.recv().await.unwrap(), vec![9]);
+    }
+
+    #[tokio::test]
+    async fn a_connection_with_a_full_queue_does_not_count_as_delivered() {
+        let connections = Connections::default();
+        let (_slow, mut slow) = connections.register("a", "live", "live.Tick");
+        let send = |message| connections.send("a", "live", "live.Tick", message, SHORT);
+        for _ in 0..SEND_QUEUE {
+            assert_eq!(send(vec![1]).await, Ok(1));
+        }
+
+        assert_eq!(send(vec![2]).await, Err(SendError::Timeout));
+        slow.recv().await.unwrap();
+        assert_eq!(send(vec![3]).await, Ok(1));
     }
 
     #[tokio::test]

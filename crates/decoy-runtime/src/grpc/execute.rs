@@ -173,7 +173,7 @@ impl GrpcStream {
 /// An open stream's link to Control API `send`; dropping it unregisters the call.
 struct Open {
     _registration: Registration,
-    receiver: mpsc::UnboundedReceiver<Vec<u8>>,
+    receiver: mpsc::Receiver<Vec<u8>>,
 }
 
 fn render(response: &ResponseBehavior, envelope: &Value) -> Result<ResponseBehavior, String> {
