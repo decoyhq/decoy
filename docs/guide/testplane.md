@@ -75,7 +75,8 @@ sends SIGTERM and, if Decoy hasn't exited after 8s, SIGKILL (Windows: `taskkill 
 - Browser requests matching `urls`, from every tab, popup, cross-site iframe, and worker (dedicated,
   shared, service), go to Decoy with method, path and query, headers, cookies, and body kept, and
   `x-mock-session` set. Chrome rewrites the URL itself, so the page sees its own origin (no CORS).
-  Decoy's answer, including a 501 miss, reaches the page as-is. If Decoy is unreachable the request
+  Decoy's answer, including a 501 miss, reaches the page as-is; a redirect's relative `Location`
+  resolves against the page's URL, not Decoy's. If Decoy is unreachable the request
   fails, never sent to the real network. New tabs stay paused until routing is on, so even their
   first request is covered. Matching requests fired between tests are aborted.
 - `decoy(browser)`: `sessionId`, `useCollection(id)`, `useRoute(address)` with a Behavior address

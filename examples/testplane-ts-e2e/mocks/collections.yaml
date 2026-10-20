@@ -4,6 +4,7 @@
     - users-by-id:user-1:ada
     - profile:any:upstream
     - echo:any:request
+    - redirect:any:to-user-2
 
 - id: no-users
   from: happy-path

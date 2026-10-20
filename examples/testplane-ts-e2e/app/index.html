@@ -11,6 +11,7 @@
     <button id="load-orders" type="button">Load orders</button>
     <button id="load-profile" type="button">Load profile</button>
     <button id="send-echo" type="button">Send echo</button>
+    <button id="load-redirected" type="button">Load a redirected user</button>
     <button id="open-popup" type="button" onclick="window.open('/popup.html')">Open popup</button>
     <button id="load-user-in-worker" type="button">Load user in a worker</button>
     <button id="load-user-in-shared-worker" type="button">Load user in a shared worker</button>
@@ -37,6 +38,10 @@
       document.querySelector('#load-orders').addEventListener('click', () => show('/api/orders'))
       // Decoy forwards /api/profile to the example's local upstream (Passthrough).
       document.querySelector('#load-profile').addEventListener('click', () => show('/api/profile'))
+      // Decoy answers /api/redirect with a relative redirect to /api/users/2.
+      document
+        .querySelector('#load-redirected')
+        .addEventListener('click', () => show('/api/redirect'))
       // The worker's own fetch is routed too (app/worker.js).
       document.querySelector('#load-user-in-worker').addEventListener('click', () => {
         const worker = new Worker('/worker.js', { type: 'module' })
