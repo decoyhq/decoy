@@ -54,6 +54,15 @@ describe('toMatchers', () => {
   test('RegExps pass through', () => {
     expect(toMatchers([/users/])[0]?.test('http://app.test/users')).toBe(true)
   })
+
+  test('a global or sticky RegExp matches every request, not every other one', () => {
+    for (const pattern of [/users/g, /users/y, /USERS/gi]) {
+      const [matcher] = toMatchers(pattern)
+      const url = pattern.sticky ? 'users' : 'http://app.test/users'
+      expect([matcher?.test(url), matcher?.test(url)]).toEqual([true, true])
+    }
+    expect(toMatchers(/users/gi)[0]?.flags).toBe('i')
+  })
 })
 
 describe('decide', () => {

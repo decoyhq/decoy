@@ -105,7 +105,13 @@ async function beginSession(
   )
   if (options.urls !== undefined) {
     const { urls } = options
-    state.routing ??= cdpOf(browser).then((root) => routeToDecoy(root, url, urls, state.holder))
+    // A failed setup isn't cached, so the next test in this browser tries again.
+    state.routing ??= cdpOf(browser)
+      .then((root) => routeToDecoy(root, url, urls, state.holder))
+      .catch((error: unknown) => {
+        state.routing = undefined
+        throw error
+      })
     await state.routing
   }
   state.holder.sessionId = sessionId

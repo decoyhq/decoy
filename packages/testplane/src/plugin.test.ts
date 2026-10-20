@@ -123,4 +123,32 @@ describe('decoyPlugin (worker)', () => {
     expect(decoy.calls.map((call) => call.path)).toEqual(['/__decoy__/control/endSession'])
     await decoy.close()
   })
+
+  test('a failed routing setup is retried by the next test in that browser', async () => {
+    const decoy = await startFakeDecoy()
+    const hooks: Hook[] = []
+    const { testplane, readTests, afterEachHooks } = fakeWorker(hooks)
+    decoyPlugin(testplane, { url: decoy.url, urls: '**/api/**' })
+    readTests()
+    let attempts = 0
+    const ctx = {
+      browser: {
+        sessionId: 'wd-2',
+        capabilities: { browserName: 'chrome' },
+        getPuppeteer: () => {
+          attempts++
+          return Promise.reject(new Error('CDP not ready'))
+        },
+      },
+      currentTest: { browserId: 'chrome', fullTitle: () => 'a test' },
+    }
+
+    for (let test = 0; test < 2; test++) {
+      await expect(hooks[0]?.call(ctx)).rejects.toThrow(/needs Chrome or Chromium/)
+      await afterEachHooks[0]?.call(ctx)
+    }
+
+    expect(attempts).toBe(2)
+    await decoy.close()
+  })
 })

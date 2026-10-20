@@ -137,7 +137,12 @@ export async function forwardToDecoy(
 /** Playwright-style globs (`*` within a path segment, `**` across them) or RegExps. */
 export function toMatchers(urls: NonNullable<DecoyOptions['urls']>): RegExp[] {
   const patterns = typeof urls === 'string' || urls instanceof RegExp ? [urls] : urls
-  return patterns.map((pattern) => (typeof pattern === 'string' ? globToRegExp(pattern) : pattern))
+  // Without `g`/`y`: `test()` on those resumes at `lastIndex`, so every other request would miss.
+  return patterns.map((pattern) =>
+    typeof pattern === 'string'
+      ? globToRegExp(pattern)
+      : new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, '')),
+  )
 }
 
 function globToRegExp(glob: string): RegExp {

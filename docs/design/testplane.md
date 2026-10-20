@@ -8,7 +8,7 @@ Classic and BiDi sessions, also with `testplane_sessions_per_browser=3`.
 
 Same contract as `@decoyhq/playwright`: Decoy starts once per run, each test gets its own Session,
 matching browser requests go to Decoy, misses fail closed. For the user it is one config entry
-plus mocks:
+plus Route and Collection files:
 
 ```ts
 // .testplane.conf.ts
