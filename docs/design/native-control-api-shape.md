@@ -10,8 +10,8 @@ The native prototype exposes command-shaped Controller verbs below the reserved 
 | --------------- | --------------------------------------- | ----------------------------------------------------------------------------- |
 | `useCollection` | `POST /__decoy__/control/useCollection` | `{ "collection": "<collection-id>" }`                                         |
 | `useRoute`      | `POST /__decoy__/control/useRoute`      | `{ "route": "<route-id>", "case": "<case-id>", "behavior": "<behavior-id>" }` |
-| `reset`         | `POST /__decoy__/control/reset`         | empty or omitted JSON body                                                    |
-| `endSession`    | `POST /__decoy__/control/endSession`    | empty or omitted JSON body; ends the Session (added for #267)                 |
+| `reset`         | `POST /__decoy__/control/reset`         | empty, omitted or `{}` JSON body                                              |
+| `endSession`    | `POST /__decoy__/control/endSession`    | empty, omitted or `{}` JSON body; ends the Session (added for #267)           |
 
 Liveness: `GET /__decoy__/health` returns `200 {"status":"ok"}` while the runtime serves. It is not Session-scoped and does not touch Selection.
 
@@ -19,7 +19,7 @@ Callers identify the Session to mutate with the canonical `x-mock-session` heade
 
 Every control `POST`, bodiless `reset` and `endSession` included, needs `content-type: application/json` (parameters such as `; charset=utf-8` are fine) and otherwise gets HTTP `415`. A cross-site page can send `text/plain` or no content type without a CORS preflight; requiring JSON forces a preflight, which fails because Decoy sends no CORS headers, so the page can't change Selection.
 
-Successful responses return HTTP `200` with the resulting Selection snapshot as JSON. Invalid JSON, unknown Collections, and unknown Behavior addresses return HTTP `400` with `{ "error": "<clear message>" }`. Unknown control paths return HTTP `404` with the same error envelope.
+Successful responses return HTTP `200` with the resulting Selection snapshot as JSON. Invalid JSON, unknown body fields (so a `session` field cannot silently change the default Session), unknown Collections, and unknown Behavior addresses return HTTP `400` with `{ "error": "<clear message>" }`. Unknown control paths return HTTP `404` with the same error envelope.
 
 ## Rationale
 

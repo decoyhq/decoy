@@ -64,11 +64,13 @@ impl ControlApiResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UseCollectionBody {
     collection: String,
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct UseRouteBody {
     route: String,
     #[serde(rename = "case")]
@@ -77,12 +79,18 @@ struct UseRouteBody {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SendBody {
     route: String,
     message: serde_json::Value,
     /// Milliseconds.
     timeout: Option<u64>,
 }
+
+/// The body of `reset` and `endSession`: no fields, so a stray `session` is an error.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EmptyBody {}
 
 #[derive(Debug, Serialize)]
 struct SendResponseBody {
@@ -315,7 +323,7 @@ fn parse_optional_body_json(body: Option<String>) -> Result<(), serde_json::Erro
         return Ok(());
     }
 
-    serde_json::from_str::<serde_json::Value>(&body).map(|_| ())
+    serde_json::from_str::<EmptyBody>(&body).map(|_| ())
 }
 
 /// `application/json`, with or without parameters such as `; charset=utf-8`.
@@ -480,6 +488,40 @@ cases:
     }
 
     #[test]
+    fn native_control_api_rejects_unknown_body_fields_without_mutating_selection() {
+        let mut controller = controller();
+        // A Session in the body instead of the header must not silently hit the default Session.
+        for (path, body) in [
+            (
+                "/__decoy__/control/useCollection",
+                r#"{"collection":"not-found","session":"w7"}"#,
+            ),
+            (
+                "/__decoy__/control/useRoute",
+                r#"{"route":"get-user","case":"user-123","behavior":"missing","session":"w7"}"#,
+            ),
+            ("/__decoy__/control/reset", r#"{"session":"w7"}"#),
+            ("/__decoy__/control/endSession", r#"{"session":"w7"}"#),
+        ] {
+            let response =
+                handle_control_request(&mut controller, ControlApiRequest::post(path, body));
+            assert_eq!(response.status, 400, "{path}: {}", response.body);
+            assert!(response.body.contains("unknown field `session`"), "{path}");
+            assert_eq!(
+                selected(&controller, DEFAULT_SESSION),
+                "get-user:user-123:success"
+            );
+        }
+        for body in ["", "{}"] {
+            let response = handle_control_request(
+                &mut controller,
+                ControlApiRequest::post("/__decoy__/control/reset", body),
+            );
+            assert_eq!(response.status, 200, "{body:?}");
+        }
+    }
+
+    #[test]
     fn native_control_api_takes_only_json_posts() {
         let mut controller = controller();
         let post = |content_type: Option<&str>| {
@@ -575,6 +617,15 @@ cases:
         assert!(missing_message.body.contains("missing field `message`"));
 
         assert_eq!(send_response(send("{")).await.status, 400);
+
+        let extra =
+            send_response(send(r#"{"route":"get-user","message":{},"session":"w7"}"#)).await;
+        assert_eq!(extra.status, 400);
+        assert!(
+            extra.body.contains("unknown field `session`"),
+            "{}",
+            extra.body
+        );
 
         let mut plain = send(r#"{"route":"get-user","message":{}}"#);
         plain
