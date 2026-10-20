@@ -81,16 +81,21 @@ export async function startDecoy(
     detached: process.platform !== 'win32',
     stdio: ['ignore', 'ignore', 'inherit'],
   })
+  let wrotePidFile = false
   try {
     // Written before health passes, so a runner interrupted mid-start still leaves a trail.
     writeFileSync(
       pidFile,
       JSON.stringify({ pid: child.pid, runner: process.pid, cwd, command: options.command }),
     )
+    wrotePidFile = true
     await waitForHealth(child, options)
   } catch (error) {
     await stopProcess(child)
-    removePidFile(pidFile)
+    // A pidfile this start couldn't write is another runner's: leave it.
+    if (wrotePidFile) {
+      removePidFile(pidFile)
+    }
     throw error
   }
   return async () => {

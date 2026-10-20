@@ -194,6 +194,22 @@ describe('startDecoy', () => {
     expect(await isHealthy(url)).toBe(false)
   })
 
+  test("leaves a running runner's pidfile it could not overwrite", async () => {
+    const port = await freePort()
+    // Another live runner's pidfile, read-only to this start.
+    const runner = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
+    cleanups.push(() => Promise.resolve(runner.kill()))
+    const pidFile = join(tmpdir(), `decoy-runner-${port}.json`)
+    writeFileSync(pidFile, JSON.stringify({ pid: runner.pid, runner: runner.pid }))
+    chmodSync(pidFile, 0o444)
+    cleanups.push(() => rm(pidFile, { force: true }))
+
+    await expect(
+      start({ url: `http://127.0.0.1:${port}`, command: `node ${FAKE_DECOY} ${port}` }),
+    ).rejects.toThrow(/EACCES/)
+    expect(existsSync(pidFile)).toBe(true)
+  })
+
   test('fails clearly and stops the command when health never succeeds', async () => {
     const port = await freePort()
     const other = await freePort()
