@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 use thiserror::Error;
 
 use crate::expression::{ExprError, Segment, evaluate, segments, validate_expression};
-use crate::schema::ResponseBehavior;
+use crate::schema::{ResponseBehavior, StreamItem};
 
 /// Whether rendering could change anything (`\${` escapes count, so they get unescaped).
 pub fn has_templates(response: &ResponseBehavior) -> bool {
@@ -33,6 +33,9 @@ pub fn validate_response(response: &ResponseBehavior) -> Result<(), String> {
         return Err(
             "`message` and `metadata` are for gRPC Routes; use `body` and `headers`".to_owned(),
         );
+    }
+    if response.stream.is_some() {
+        return Err("`stream` is for server-streaming gRPC Routes".to_owned());
     }
     match &response.status {
         None => {}
@@ -123,11 +126,12 @@ pub fn render_response(
         body,
         message: response.message.clone(),
         metadata: response.metadata.clone(),
+        stream: response.stream.clone(),
         delay: response.delay,
     })
 }
 
-/// Render a gRPC response Behavior: `status`, `message`, and `metadata` values. Whether the result
+/// Render a gRPC response Behavior: `status`, `message`, `metadata`, and `stream` messages. Whether the result
 /// is a valid status or message is checked when it is encoded.
 pub fn render_grpc_response(
     response: &ResponseBehavior,
@@ -147,6 +151,21 @@ pub fn render_grpc_response(
             .iter()
             .map(|(name, value)| Ok((name.clone(), render_text(value, request)?)))
             .collect::<Result<_, ExprError>>()?,
+        stream: response
+            .stream
+            .as_ref()
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|item| {
+                        Ok(StreamItem {
+                            message: render_value(&item.message, request)?,
+                            delay: item.delay,
+                        })
+                    })
+                    .collect::<Result<_, ExprError>>()
+            })
+            .transpose()?,
         ..response.clone()
     })
 }
@@ -219,6 +238,7 @@ mod tests {
             body: Some(body),
             message: None,
             metadata: BTreeMap::new(),
+            stream: None,
             delay: None,
         }
     }

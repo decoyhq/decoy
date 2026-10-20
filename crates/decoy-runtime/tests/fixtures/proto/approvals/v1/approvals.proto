@@ -5,6 +5,7 @@ package approvals.v1;
 service Approvals {
   rpc GetApproval(GetApprovalRequest) returns (Approval);
   rpc WatchApprovals(WatchRequest) returns (stream Approval);
+  rpc UploadEvidence(stream Approval) returns (Approval);
 }
 
 message GetApprovalRequest { string id = 1; }

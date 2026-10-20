@@ -1,7 +1,8 @@
 //! gRPC Route checks. Shape checks run with the rest of Route validation; proto checks run at
 //! startup against the loaded `DescriptorPool` (design note `docs/design/transports.md` §4, Q3):
-//! the service and method exist, and literal `match.message` / response `message` values fit the
-//! method's input / output types as protobuf JSON. `${ }` strings are skipped (checked at render).
+//! the service and method exist, and literal `match.message` / response `message` and
+//! `stream[].message` values fit the method's input / output types as protobuf JSON. `${ }` strings
+//! are skipped (checked at render).
 //!
 //! Response literals may use any form protobuf JSON accepts. Match literals are compared with the
 //! decoded request as [`request_json_options`] renders it, so they must use that canonical form:
@@ -122,6 +123,21 @@ pub fn validate_response(response: &ResponseBehavior, decoded: bool) -> Result<(
         }
         (Some(_), _) => return Err("`message` must be a mapping of response fields".into()),
     }
+    for (index, item) in response.stream.iter().flatten().enumerate() {
+        let path = format!("stream[{index}].message");
+        match &item.message {
+            Value::String(text) if text.contains("${") => {}
+            Value::String(text) if !decoded => {
+                BASE64
+                    .decode(text)
+                    .map_err(|error| format!("`{path}` must be base64 bytes: {error}"))?;
+            }
+            Value::Object(_) if decoded => {}
+            _ if decoded => return Err(format!("`{path}` must be a mapping of response fields")),
+            _ => return Err(format!("`{path}` is base64 bytes, not a mapping")),
+        }
+        validate_value(&item.message)?;
+    }
     for (name, value) in &response.metadata {
         // A templated value is checked once rendered, when the request comes in.
         if !value.contains("${") && !valid_metadata_value(value) {
@@ -169,7 +185,7 @@ pub fn check_route(route: &Route, pool: &DescriptorPool) -> Result<(), String> {
     }
     let method = find_method(pool, &address.service, &address.method)
         .map_err(|reason| format!("route `{}`: {reason}", route.id))?;
-    if method.is_client_streaming() || method.is_server_streaming() {
+    if method.is_client_streaming() {
         return Err(format!(
             "route `{}`: streaming method `{}` is not supported yet",
             route.id,
@@ -178,16 +194,11 @@ pub fn check_route(route: &Route, pool: &DescriptorPool) -> Result<(), String> {
     }
 
     // Literals are protobuf JSON only where a `protobuf` step runs (Q3).
-    if route
-        .pipeline
-        .as_ref()
-        .is_some_and(|steps| !steps.contains(&PipelineStep::Protobuf))
-    {
-        return Ok(());
-    }
+    let decoded = route.decodes_protobuf();
 
     for (case_id, case) in &route.cases {
-        if let Some(pattern) = case.case_match.get("message")
+        if decoded
+            && let Some(pattern) = case.case_match.get("message")
             && !is_template(pattern)
         {
             check_message(pattern, &method.input(), "message", Form::Canonical)
@@ -197,13 +208,59 @@ pub fn check_route(route: &Route, pool: &DescriptorPool) -> Result<(), String> {
             let Behavior::Response(response) = behavior else {
                 continue;
             };
-            let Some(message @ Value::Object(_)) = &response.message else {
-                continue;
-            };
-            check_response_message(message, &method.output()).map_err(|reason| {
+            check_behavior(response, &method, decoded).map_err(|reason| {
                 format!("behavior `{}:{case_id}:{behavior_id}`: {reason}", route.id)
             })?;
         }
+    }
+    Ok(())
+}
+
+fn check_behavior(
+    response: &ResponseBehavior,
+    method: &MethodDescriptor,
+    decoded: bool,
+) -> Result<(), String> {
+    if method.is_server_streaming() {
+        streamed_shape(response)?;
+    } else if response.stream.is_some() {
+        return Err(format!(
+            "`stream` needs a server-streaming method; `{}` is unary",
+            method.full_name()
+        ));
+    }
+    if !decoded {
+        return Ok(());
+    }
+    if let Some(message @ Value::Object(_)) = &response.message {
+        check_response_message(message, &method.output(), "message")?;
+    }
+    for (index, item) in response.stream.iter().flatten().enumerate() {
+        if item.message.is_object() {
+            let path = format!("stream[{index}].message");
+            check_response_message(&item.message, &method.output(), &path)?;
+        }
+    }
+    Ok(())
+}
+
+/// A server-streaming answer sends its messages in `stream`; `message` and `metadata` belong to
+/// the `status` that ends the call.
+fn streamed_shape(response: &ResponseBehavior) -> Result<(), String> {
+    match (&response.message, status_kind(response)) {
+        (None, _) | (Some(Value::String(_)), StatusKind::Error | StatusKind::Templated) => {}
+        _ => {
+            return Err(
+                "server-streaming messages go in `stream`; `message` is only the text of an error `status`"
+                    .into(),
+            );
+        }
+    }
+    if response.status.is_none() && !response.metadata.is_empty() {
+        return Err(
+            "`metadata` is sent with `status`; without one the stream stays open and never sends it"
+                .into(),
+        );
     }
     Ok(())
 }
@@ -246,11 +303,15 @@ enum Form {
 
 /// The field walk gives paths for the common mistakes; a fully literal message is then parsed
 /// for real, which also catches oneof conflicts, bad base64, map keys, and well-known types.
-fn check_response_message(value: &Value, message: &MessageDescriptor) -> Result<(), String> {
-    check_message(value, message, "message", Form::Any)?;
+fn check_response_message(
+    value: &Value,
+    message: &MessageDescriptor,
+    path: &str,
+) -> Result<(), String> {
+    check_message(value, message, path, Form::Any)?;
     if !has_template(value) {
         DynamicMessage::deserialize(message.clone(), value.clone())
-            .map_err(|error| format!("`message` does not fit {}: {error}", message.full_name()))?;
+            .map_err(|error| format!("`{path}` does not fit {}: {error}", message.full_name()))?;
     }
     Ok(())
 }
@@ -803,13 +864,126 @@ cases:
             check_route(&route("Get", cases), &pool()).unwrap_err(),
             "route `approvals-get`: unknown method `Get` on gRPC service `approvals.v1.Approvals`"
         );
-        assert!(
-            check_route(&route("WatchApprovals", cases), &pool())
-                .unwrap_err()
-                .contains(
-                    "streaming method `approvals.v1.Approvals.WatchApprovals` is not supported yet"
-                )
+        assert_eq!(
+            check_route(&route("UploadEvidence", cases), &pool()).unwrap_err(),
+            "route `approvals-get`: streaming method `approvals.v1.Approvals.UploadEvidence` is not supported yet"
         );
+    }
+
+    fn check_watch(cases: &str) -> Result<(), String> {
+        check_route(&route("WatchApprovals", cases), &pool())
+    }
+
+    #[test]
+    fn server_streaming_methods_take_a_stream_list() {
+        check_watch(
+            r#"
+  any:
+    behaviors:
+      then-ok:
+        stream:
+          - { message: { id: a-1, state: PENDING } }
+          - { message: { id: '${ message.ids[0] }' }, delay: 10ms }
+        status: OK
+      then-aborted:
+        stream: [{ message: { id: a-1 } }]
+        status: ABORTED
+        message: 'gave up on ${ message.ids[0] }'
+        metadata: { x-reason: gone }
+      open: { stream: [{ message: { id: a-1 } }] }
+      open-empty: {}
+      fails-at-once: { status: UNAVAILABLE }
+"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn stream_messages_are_checked_against_the_output_type() {
+        let error = check_watch(
+            "  any:
+    behaviors:
+      ok:
+        stream: [{ message: { id: a-1 } }, { message: { nope: 1 } }]
+",
+        )
+        .unwrap_err();
+        assert_eq!(
+            error,
+            "behavior `approvals-get:any:ok`: unknown field `stream[1].message.nope` in approvals.v1.Approval"
+        );
+        let error = check_watch(
+            "  any:
+    behaviors:
+      ok:
+        stream: [{ message: { evidence: 'not base64!' } }]
+",
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("`stream[0].message` does not fit approvals.v1.Approval"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn streamed_answers_send_messages_only_in_stream() {
+        for (behavior, expected) in [
+            (
+                "{ message: { id: a-1 } }",
+                "`message` is only the text of an error `status`",
+            ),
+            (
+                "{ stream: [], status: OK, message: { id: a-1 } }",
+                "`message` is only the text of an error `status`",
+            ),
+            (
+                "{ stream: [], metadata: { x-reason: gone } }",
+                "`metadata` is sent with `status`",
+            ),
+        ] {
+            let error = check_watch(&format!("  any:\n    behaviors:\n      ok: {behavior}\n"))
+                .unwrap_err();
+            assert!(error.contains(expected), "{behavior}: {error}");
+        }
+        let error =
+            check("  any:\n    behaviors:\n      ok: { stream: [{ message: { id: a-1 } }] }\n")
+                .unwrap_err();
+        assert_eq!(
+            error,
+            "behavior `approvals-get:any:ok`: `stream` needs a server-streaming method; `approvals.v1.Approvals.GetApproval` is unary"
+        );
+    }
+
+    #[test]
+    fn stream_message_shapes_are_checked_with_the_route() {
+        let invalid = |pipeline: &str, behavior: &str| {
+            Route::from_yaml(&format!(
+                "id: r\ntransport: grpc\nmatch: {{ service: s, method: m }}\n{pipeline}cases:\n  any:\n    behaviors:\n      ok: {behavior}\n"
+            ))
+            .unwrap_err()
+            .to_string()
+        };
+        assert!(
+            invalid("", "{ stream: [{ message: plain }] }")
+                .contains("`stream[0].message` must be a mapping of response fields")
+        );
+        assert!(
+            invalid(
+                "pipeline: [grpc-frame]\n",
+                "{ stream: [{ message: { id: x } }] }"
+            )
+            .contains("`stream[0].message` is base64 bytes, not a mapping")
+        );
+        assert!(
+            invalid(
+                "pipeline: [grpc-frame]\n",
+                "{ stream: [{ message: 'not base64!' }] }"
+            )
+            .contains("`stream[0].message` must be base64 bytes")
+        );
+        // Templates in stream messages are parsed at load time too.
+        invalid("", "{ stream: [{ message: { id: '${ nope(' } }] }");
     }
 
     #[test]

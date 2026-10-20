@@ -268,8 +268,48 @@ pub struct ResponseBehavior {
     /// gRPC: response metadata (sent as trailers).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub metadata: BTreeMap<String, String>,
+    /// Server-streaming gRPC: response messages sent in order. The call then ends with `status`,
+    /// or without one stays open for Control API `send`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<Vec<StreamItem>>,
     #[serde(skip)]
     pub delay: Option<Duration>,
+}
+
+/// One message of a server-streaming answer, sent `delay` after the one before it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "RawStreamItem", into = "RawStreamItem")]
+pub struct StreamItem {
+    pub message: Value,
+    pub delay: Option<Duration>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawStreamItem {
+    message: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    delay: Option<Value>,
+}
+
+impl TryFrom<RawStreamItem> for StreamItem {
+    type Error = ValidationError;
+
+    fn try_from(raw: RawStreamItem) -> Result<Self, Self::Error> {
+        Ok(Self {
+            message: raw.message,
+            delay: raw.delay.as_ref().map(parse_delay).transpose()?,
+        })
+    }
+}
+
+impl From<StreamItem> for RawStreamItem {
+    fn from(item: StreamItem) -> Self {
+        Self {
+            message: item.message,
+            delay: item.delay.map(format_delay),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -315,6 +355,8 @@ struct RawBehavior {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     metadata: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    stream: Option<Vec<StreamItem>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     target: Option<PassthroughTarget>,
     /// Integer milliseconds or a duration string such as `500ms` or `2s`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -335,6 +377,7 @@ impl TryFrom<RawBehavior> for Behavior {
                 ("body", raw.body.is_some()),
                 ("message", raw.message.is_some()),
                 ("metadata", !raw.metadata.is_empty()),
+                ("stream", raw.stream.is_some()),
             ]
             .into_iter()
             .find_map(|(field, set)| set.then_some(field)),
@@ -353,6 +396,7 @@ impl TryFrom<RawBehavior> for Behavior {
                 body: raw.body,
                 message: raw.message,
                 metadata: raw.metadata,
+                stream: raw.stream,
                 delay,
             })),
             BehaviorKind::Passthrough => Ok(Self::Passthrough(PassthroughBehavior {
@@ -387,6 +431,7 @@ impl From<Behavior> for RawBehavior {
                 body: response.body,
                 message: response.message,
                 metadata: response.metadata,
+                stream: response.stream,
                 target: None,
                 delay,
             },
@@ -397,6 +442,7 @@ impl From<Behavior> for RawBehavior {
                 body: None,
                 message: None,
                 metadata: BTreeMap::new(),
+                stream: None,
                 target: passthrough.target,
                 delay,
             },
@@ -620,6 +666,53 @@ cases:
         .to_string();
         assert!(
             error.contains("`message` and `metadata` are for gRPC Routes"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn parses_a_stream_list_with_per_message_delays() {
+        let route = Route::from_yaml(
+            r#"
+id: watch
+transport: grpc
+match: { service: approvals.v1.Approvals, method: WatchApprovals }
+cases:
+  any:
+    behaviors:
+      progress:
+        stream:
+          - { message: { id: a-1 } }
+          - { message: { id: a-2 }, delay: 500ms }
+        status: ABORTED
+"#,
+        )
+        .unwrap();
+        let Behavior::Response(response) = &route.cases["any"].behaviors["progress"] else {
+            panic!("expected a response behavior")
+        };
+        assert_eq!(
+            response.stream,
+            Some(vec![
+                StreamItem {
+                    message: serde_json::json!({ "id": "a-1" }),
+                    delay: None,
+                },
+                StreamItem {
+                    message: serde_json::json!({ "id": "a-2" }),
+                    delay: Some(Duration::from_millis(500)),
+                },
+            ])
+        );
+
+        let error = route_error("", "        stream: [{ message: { id: 1 } }]");
+        assert!(
+            error.contains("`stream` is for server-streaming gRPC Routes"),
+            "{error}"
+        );
+        let error = route_error("", "        kind: passthrough\n        stream: []");
+        assert!(
+            error.contains("passthrough behavior does not take `stream`"),
             "{error}"
         );
     }
