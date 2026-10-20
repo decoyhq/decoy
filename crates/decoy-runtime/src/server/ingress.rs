@@ -63,7 +63,7 @@ async fn respond(
             max.0.load(Ordering::Relaxed)
         });
     let body = match to_bytes(request.into_body(), max_body_bytes).await {
-        Ok(body) => body.to_vec(),
+        Ok(body) => body,
         Err(error)
             if std::error::Error::source(&error)
                 .is_some_and(|source| source.is::<http_body_util::LengthLimitError>()) =>
@@ -100,7 +100,7 @@ async fn respond(
                     service,
                     method,
                     metadata: headers,
-                    body,
+                    body: body.into(),
                 },
                 &connections,
             )

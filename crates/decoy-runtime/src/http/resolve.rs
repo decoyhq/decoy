@@ -587,4 +587,26 @@ cases:
             })
         );
     }
+
+    #[test]
+    fn a_case_that_does_not_read_the_body_leaves_it_unparsed() {
+        let catalog = catalog("- id: local\n  routes:\n    - get-user:any:fallback\n");
+        let request = HttpRequest {
+            method: HttpMethod::Get,
+            path: "/users/123".to_owned(),
+            envelope: RequestEnvelope::from_parts(
+                None,
+                "/users/123",
+                &BTreeMap::from([("content-type".to_owned(), "application/json".to_owned())]),
+                "{not json".into(),
+            ),
+        };
+
+        let ResolveOutcome::Matched { activation, .. } = catalog.resolve_http("local", &request)
+        else {
+            panic!("expected match")
+        };
+        assert_eq!(activation.address(), "get-user:any:fallback");
+        assert_eq!(request.envelope.parsed_body.get(), None);
+    }
 }

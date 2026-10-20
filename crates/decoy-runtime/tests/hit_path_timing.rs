@@ -49,7 +49,7 @@ async fn hit_path_with_many_entries_ahead_of_the_winner() {
         path: "/users/x".into(),
         path_and_query: "/users/x".into(),
         headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
-        body: br#"{"user":{"name":"someone"}}"#.to_vec(),
+        body: br#"{"user":{"name":"someone"}}"#.as_slice().into(),
         metadata: Default::default(),
     };
 

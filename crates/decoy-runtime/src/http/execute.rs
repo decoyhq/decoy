@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use bytes::Bytes;
+
 use super::forward::{
     ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough, target_url,
 };
@@ -17,7 +19,7 @@ pub struct HttpExecutionRequest {
     pub path: String,
     pub path_and_query: String,
     pub headers: BTreeMap<String, String>,
-    pub body: Vec<u8>,
+    pub body: Bytes,
     pub metadata: RequestMetadata,
 }
 
@@ -59,7 +61,7 @@ impl Catalog {
                 request.metadata.original_base_url.as_deref(),
                 &request.path_and_query,
                 &request.headers,
-                &request.body,
+                request.body.clone(),
             ),
         };
 
@@ -178,7 +180,7 @@ mod tests {
             path: path.to_owned(),
             path_and_query: path_and_query.to_owned(),
             headers: BTreeMap::new(),
-            body: Vec::new(),
+            body: Bytes::new(),
             metadata: RequestMetadata::default(),
         }
     }
@@ -226,7 +228,7 @@ cases:
 
         let mut request = execution_request("/users/123", "/users/123?expand=true");
         request.headers = BTreeMap::from([("x-keep".to_owned(), "yes".to_owned())]);
-        request.body = b"body-from-caller".to_vec();
+        request.body = Bytes::from_static(b"body-from-caller");
         let outcome = catalog.execute_http("local", request).await;
 
         let HttpExecutionOutcome::Response {

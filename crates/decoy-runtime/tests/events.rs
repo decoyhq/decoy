@@ -546,7 +546,7 @@ async fn a_lagging_subscriber_loses_the_oldest_events_without_blocking_requests(
             path: "/users/123".into(),
             path_and_query: "/users/123".into(),
             headers: BTreeMap::new(),
-            body: Vec::new(),
+            body: Default::default(),
             metadata: Default::default(),
         })
         .await;
