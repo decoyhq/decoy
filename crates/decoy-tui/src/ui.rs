@@ -66,15 +66,52 @@ impl App {
                 " Esc close · PgUp/PgDn or wheel scroll ",
                 theme.dim(),
             ));
-        let paragraph = Paragraph::new(detail.lines.clone()).wrap(Wrap { trim: false });
-        let last_page = (paragraph.line_count(area.width.saturating_sub(2)) as u16)
-            .saturating_sub(area.height.saturating_sub(2));
+        let detail = self.detail.as_mut().expect("checked above");
+        let width = area.width.saturating_sub(2);
+        let rows = usize::from(area.height.saturating_sub(2));
+        let wrap = Wrap { trim: false };
+        let heights = match &mut detail.heights {
+            Some((wrapped_at, heights)) if *wrapped_at == width => heights,
+            slot => {
+                let heights = detail
+                    .lines
+                    .iter()
+                    .map(|line| Paragraph::new(line.clone()).wrap(wrap).line_count(width))
+                    .collect();
+                &mut slot.insert((width, heights)).1
+            }
+        };
+        let total: usize = heights.iter().sum();
+        let last_page = u16::try_from(total.saturating_sub(rows)).unwrap_or(u16::MAX);
         let scroll = detail.scroll.min(last_page);
+        detail.scroll = scroll;
+        // Wrap only the lines in view: skip whole lines above it, then the first one's top rows.
+        let mut skip = usize::from(scroll);
+        let first = heights
+            .iter()
+            .position(|&height| {
+                let shown = height > skip;
+                if !shown {
+                    skip -= height;
+                }
+                shown
+            })
+            .unwrap_or(heights.len());
+        let mut filled = 0;
+        let visible: Vec<Line> = detail.lines[first..]
+            .iter()
+            .zip(&heights[first..])
+            .take_while(|(_, height)| {
+                let needed = filled < skip + rows;
+                filled += **height;
+                needed
+            })
+            .map(|(line, _)| line.clone())
+            .collect();
+        let paragraph = Paragraph::new(visible).wrap(wrap).block(block);
         frame.render_widget(Clear, area);
-        frame.render_widget(paragraph.block(block).scroll((scroll, 0)), area);
-        if let Some(detail) = self.detail.as_mut() {
-            detail.scroll = scroll;
-        }
+        // `skip` is under `scroll`, so it fits.
+        frame.render_widget(paragraph.scroll((skip as u16, 0)), area);
     }
 
     /// Recent requests over the bottom of the log, the newest last, just above the input.
@@ -715,6 +752,56 @@ mod tests {
             app.scroll, 0,
             "the wheel over the panel leaves the log alone"
         );
+    }
+
+    #[test]
+    fn the_detail_shows_the_same_rows_as_wrapping_the_whole_body() {
+        use ratatui::text::Line;
+        use ratatui::widgets::{Paragraph, Wrap};
+
+        let lines: Vec<Line<'static>> = (0..40)
+            .map(|i| match i % 4 {
+                0 => Line::default(),
+                1 => Line::raw(format!("line {i} ").repeat(i)),
+                2 => Line::raw(format!("short {i}")),
+                _ => Line::raw("x".repeat(i * 7)),
+            })
+            .collect();
+        let mut app = app();
+        app.detail = Some(crate::app::Detail {
+            title: String::new(),
+            lines: lines.clone(),
+            scroll: 0,
+            heights: None,
+        });
+        // Narrow, then wide, then narrow again: the panel re-wraps when its width changes.
+        for (width, height) in [(60, 20), (140, 24), (60, 20)] {
+            for scroll in [0, 1, 7, 33, 100, u16::MAX] {
+                app.detail.as_mut().unwrap().scroll = scroll;
+                let screen = render(&mut app, width, height);
+                let area = app.detail_area.unwrap();
+                let inner = ratatui::layout::Rect::new(0, 0, area.width - 2, area.height - 2);
+                let whole = Paragraph::new(lines.clone()).wrap(Wrap { trim: false });
+                let last_page = (whole.line_count(inner.width) as u16).saturating_sub(inner.height);
+                let expected_scroll = scroll.min(last_page);
+                assert_eq!(app.detail.as_ref().unwrap().scroll, expected_scroll);
+                let mut expected = Buffer::empty(inner);
+                ratatui::widgets::Widget::render(
+                    whole.scroll((expected_scroll, 0)),
+                    inner,
+                    &mut expected,
+                );
+                for y in 0..inner.height {
+                    for x in 0..inner.width {
+                        assert_eq!(
+                            screen[(area.x + 1 + x, area.y + 1 + y)].symbol(),
+                            expected[(x, y)].symbol(),
+                            "width {width}, scroll {scroll}, at ({x}, {y})"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
