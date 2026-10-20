@@ -332,7 +332,7 @@ fn value_failure<F: Failure>(pattern: &Value, actual: &Value) -> Option<F> {
 }
 
 /// `value_failure` without building the failure, for array elements tried one by one.
-fn value_matches(pattern: &Value, actual: &Value) -> bool {
+pub(crate) fn value_matches(pattern: &Value, actual: &Value) -> bool {
     match (pattern, actual) {
         (Value::Object(pattern), Value::Object(actual)) => pattern.iter().all(|(key, expected)| {
             actual

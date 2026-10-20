@@ -2,6 +2,9 @@ syntax = "proto3";
 
 package approvals.v1;
 
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
 service Approvals {
   rpc GetApproval(GetApprovalRequest) returns (Approval);
   rpc WatchApprovals(WatchRequest) returns (stream Approval);
@@ -22,6 +25,15 @@ message Approval {
   int64 created_at_ms = 7;
   bytes evidence = 8;
   double score = 9;
+}
+
+message Sample {
+  float ratio = 1;
+  repeated float ratios = 2;
+  map<string, float> weights = 3;
+  google.protobuf.FloatValue boxed_ratio = 4;
+  google.protobuf.Int64Value limit = 5;
+  google.protobuf.Timestamp at = 6;
 }
 
 message Reviewer {

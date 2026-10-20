@@ -645,6 +645,31 @@ cases:
     }
 
     #[test]
+    fn float_fields_decode_as_written() {
+        let pool = load_descriptor_pool(&ProtoSources {
+            roots: vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proto")],
+            descriptor_sets: vec![],
+        })
+        .unwrap();
+        let input = pool.get_message_by_name("approvals.v1.Sample").unwrap();
+        let sample = json!({
+            "ratio": 0.1,
+            "ratios": [0.1, 2.5],
+            "weights": { "a": 0.3 },
+            "boxedRatio": 0.7,
+        });
+        let bytes = DynamicMessage::deserialize(input.clone(), sample)
+            .unwrap()
+            .encode_to_vec();
+
+        let message = decode(&frame(&bytes), &DEFAULT_PIPELINE, &input).unwrap();
+        assert_eq!(message["ratio"], json!(0.1));
+        assert_eq!(message["ratios"], json!([0.1, 2.5]));
+        assert_eq!(message["weights"], json!({ "a": 0.3 }));
+        assert_eq!(message["boxedRatio"], json!(0.7));
+    }
+
+    #[test]
     fn codec_error_messages_are_stable() {
         // These reach grpc-message and miss reasons on the wire.
         let pool = load_descriptor_pool(&ProtoSources {

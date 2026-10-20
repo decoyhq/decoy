@@ -132,7 +132,9 @@ cases:
   parsed as protobuf JSON.
 - Literal `match.message` values fit the input type in the envelope's form above. `created_at_ms`
   or `createdAtMs: 5` would never match a decoded request, so they fail: use JSON names, and write
-  64-bit values as strings (`createdAtMs: '5'`).
+  64-bit values as strings (`createdAtMs: '5'`). Well-known types must be written as the request
+  renders them, too: an `Int64Value` as `'5'`, a `Timestamp` in UTC as `'2024-01-01T00:00:00Z'`.
+  The error shows the form to use.
 - Metadata names are lowercase header names and not `grpc-*`.
 - Literal metadata values are printable ASCII (`0x20`–`0x7E`). A rendered value outside that range
   is dropped from the trailers with a warning.
