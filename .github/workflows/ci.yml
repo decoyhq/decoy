@@ -131,9 +131,11 @@ jobs:
 
       - name: Audit npm dependencies
         if: needs.changes.outputs.js == 'true'
-        # Production dependencies only: dev tooling (e.g. Testplane, which pins old transitive
-        # versions) never reaches users of the published packages.
-        run: pnpm audit --prod --audit-level high
+        # Testplane pins old transitive versions with high advisories; it is a dev dependency and
+        # peer there, never shipped, so those two workspaces audit production dependencies only.
+        run: |
+          pnpm audit --audit-level high --filter '!@decoyhq/testplane' --filter '!@decoyhq-examples/testplane-ts-e2e'
+          pnpm audit --prod --audit-level high --filter @decoyhq/testplane --filter @decoyhq-examples/testplane-ts-e2e
 
       - name: Lint & format check
         run: pnpm check
