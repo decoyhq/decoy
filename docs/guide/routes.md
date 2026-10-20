@@ -180,7 +180,9 @@ long-poll and large downloads work. An upstream that doesn't connect within 10s 
 headers for 60s gets `504`; a body that stalls for 60s is cut off. A request that comes back to the
 same Decoy (e.g. the request's own `Host` is Decoy) gets `508` instead of looping: each Decoy adds
 its id to `x-decoy-via`. `x-mock-session` is not forwarded, so a Decoy further down a chain answers
-from its default Session. Every repeated response header (such as `set-cookie`) comes back.
+from its default Session. Every repeated response header (such as `set-cookie`) comes back. A path
+with a `.` or `..` segment, even percent-encoded (`%2e%2e`, `..%2f`) or split by `\`, gets `502`
+instead of reaching the upstream, so it can't leave the base path.
 
 ## Misses are fail-closed
 
