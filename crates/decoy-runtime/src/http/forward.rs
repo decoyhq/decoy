@@ -341,7 +341,7 @@ fn forwardable_response_headers(headers: &HeaderMap) -> Vec<(String, String)> {
         {
             continue;
         }
-        match value.to_str() {
+        match std::str::from_utf8(value.as_bytes()) {
             Ok(value) => out.push((name.as_str().to_owned(), value.to_owned())),
             Err(_) => crate::events::warn(format!(
                 "passthrough left out upstream header `{name}`: not valid UTF-8"
@@ -597,6 +597,22 @@ mod tests {
         assert_eq!(
             url.as_str(),
             "http://127.0.0.1:1/base/files/%7Bid%7D%2F..x?q=1"
+        );
+    }
+
+    #[test]
+    fn non_ascii_upstream_headers_are_kept() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "content-disposition",
+            HeaderValue::from_bytes("attachment; filename=\"résumé.pdf\"".as_bytes()).unwrap(),
+        );
+        assert_eq!(
+            forwardable_response_headers(&headers),
+            [(
+                "content-disposition".to_owned(),
+                "attachment; filename=\"résumé.pdf\"".to_owned()
+            )]
         );
     }
 
