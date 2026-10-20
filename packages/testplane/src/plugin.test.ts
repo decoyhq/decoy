@@ -160,4 +160,45 @@ describe('decoyPlugin (worker)', () => {
     expect(attempts).toBe(2)
     await decoy.close()
   })
+
+  test('forgets a browser once its CDP connection closes, so a reused session id routes again', async () => {
+    const decoy = await startFakeDecoy()
+    const hooks: Hook[] = []
+    const { testplane, readTests, afterEachHooks } = fakeWorker(hooks)
+    decoyPlugin(testplane, { url: decoy.url, urls: '**/api/**' })
+    readTests()
+    let attempts = 0
+    let disconnect = () => undefined as unknown
+    const cdp = {
+      send: () => Promise.resolve({}),
+      on: () => undefined,
+      connection: () => undefined,
+    }
+    const puppeteer = {
+      once: (event: string, handler: () => unknown) => {
+        if (event === 'disconnected') disconnect = handler
+      },
+      target: () => ({ createCDPSession: () => Promise.resolve(cdp) }),
+    }
+    const ctx = {
+      browser: {
+        sessionId: 'wd-3',
+        capabilities: { browserName: 'chrome' },
+        getPuppeteer: () => {
+          attempts++
+          return Promise.resolve(puppeteer)
+        },
+      },
+      currentTest: { browserId: 'chrome', fullTitle: () => 'a test' },
+    }
+
+    await hooks[0]?.call(ctx)
+    await afterEachHooks[0]?.call(ctx)
+    disconnect()
+    await hooks[0]?.call(ctx)
+    await afterEachHooks[0]?.call(ctx)
+
+    expect(attempts).toBe(2)
+    await decoy.close()
+  })
 })

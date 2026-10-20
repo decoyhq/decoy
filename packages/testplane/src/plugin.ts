@@ -137,6 +137,8 @@ async function cdpOf(browser: WebdriverIO.Browser): Promise<CdpSession> {
       : `@decoyhq/testplane routes \`urls\` over CDP, which needs Chrome or Chromium; ${name} is not supported yet.`
     throw new Error(message, { cause: error })
   }
+  // Workers get no session-end event; the connection closes when the WebDriver session ends.
+  puppeteer.once('disconnected', () => states.delete(browser.sessionId))
   return (await puppeteer.target().createCDPSession()) as unknown as CdpSession
 }
 
@@ -149,6 +151,9 @@ async function endSession(browser: WebdriverIO.Browser): Promise<void> {
   }
   state.router = undefined
   state.holder.sessionId = undefined
+  if (state.routing === undefined) {
+    states.delete(browser.sessionId) // nothing to keep for the next test in this browser
+  }
   await router.endSession().catch(() => undefined)
 }
 

@@ -248,6 +248,36 @@ describe('routeToDecoy', () => {
     ])
   })
 
+  test('only the newest 1000 routed requests awaiting a response are remembered', async () => {
+    const root = fakeSession()
+    const page = fakeSession()
+    root.children.set('child', page)
+    await routeToDecoy(root.session, decoyUrl, '**/api/**', { sessionId: 's-1' })
+    root.emit('Target.attachedToTarget', attach('page'))
+    await settle()
+
+    // Cancelled requests never get a response; the oldest is dropped rather than kept forever.
+    for (let i = 0; i <= 1000; i++) {
+      page.emit('Fetch.requestPaused', {
+        requestId: `r-${i}`,
+        request: { url: 'http://app.test/api/old', headers: {} },
+      })
+    }
+    for (const requestId of ['r-0', 'r-1']) {
+      page.emit('Fetch.requestPaused', {
+        requestId,
+        request: { url: 'http://127.0.0.1:8080/api/old', headers: {} },
+        responseStatusCode: 302,
+        responseHeaders: [{ name: 'location', value: 'new' }],
+      })
+    }
+    await settle()
+    expect(page.sent.slice(-2)).toEqual([
+      ['Fetch.continueRequest', { requestId: 'r-0' }],
+      ['Fetch.continueRequest', { requestId: 'r-1', url: 'http://app.test/api/new' }],
+    ])
+  })
+
   test('a page whose interception fails is closed, never resumed', async () => {
     const root = fakeSession()
     const page = fakeSession(['Fetch.enable'])
