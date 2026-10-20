@@ -111,6 +111,19 @@ impl Route {
             target.validate()?;
         }
 
+        let path_params = match &self.route_match {
+            RouteMatch::Http(http) => Some((
+                http.path.as_str(),
+                crate::http::path::template_params(&http.path).map_err(|reason| {
+                    ValidationError::InvalidPath {
+                        route: self.id.clone(),
+                        reason,
+                    }
+                })?,
+            )),
+            RouteMatch::Grpc(_) => None,
+        };
+
         if self.cases.is_empty() {
             return Err(ValidationError::EmptyCases {
                 route: self.id.clone(),
@@ -151,13 +164,25 @@ impl Route {
                 })?;
             }
 
-            crate::matching::validate_case_match(&self.transport, &case.case_match).map_err(
-                |reason| ValidationError::InvalidMatch {
+            crate::matching::validate_case_match(&self.transport, &case.case_match)
+                .and_then(|()| {
+                    let (Some((path, params)), Some(Value::Object(patterns))) =
+                        (&path_params, case.case_match.get("pathParams"))
+                    else {
+                        return Ok(());
+                    };
+                    match patterns.keys().find(|key| !params.contains(&key.as_str())) {
+                        Some(key) => Err(format!(
+                            "`pathParams.{key}` is not a parameter of path `{path}`"
+                        )),
+                        None => Ok(()),
+                    }
+                })
+                .map_err(|reason| ValidationError::InvalidMatch {
                     route: self.id.clone(),
                     case: case_id.clone(),
                     reason,
-                },
-            )?;
+                })?;
         }
 
         Ok(())
@@ -466,6 +491,8 @@ pub enum ValidationError {
     EmptyBehaviors { route: String, case: String },
     #[error("delay {0} must be integer milliseconds or a duration such as `500ms` or `2s`")]
     InvalidDelay(String),
+    #[error("route `{route}` has an invalid path: {reason}")]
+    InvalidPath { route: String, reason: String },
     #[error("route `{route}` has an invalid pipeline: {reason}")]
     InvalidPipeline { route: String, reason: String },
     #[error("{kind} behavior does not take `{field}`")]
@@ -646,6 +673,39 @@ cases:
         .unwrap_err()
         .to_string();
         assert!(error.contains("unknown field `path`"), "{error}");
+    }
+
+    #[test]
+    fn http_paths_take_params_only_as_whole_segments() {
+        let route = |path: &str| {
+            Route::from_yaml(&format!(
+                "id: files\ntransport: http\nmatch: {{ method: GET, path: '{path}' }}\ncases:\n  any:\n    behaviors:\n      ok: {{ status: 200 }}\n"
+            ))
+        };
+        assert!(route("/files/{name}").is_ok());
+        let error = route("/files/{name}.json").unwrap_err().to_string();
+        assert_eq!(
+            error,
+            "route `files` has an invalid path: segment `{name}.json` must be literal text or a whole `{param}`"
+        );
+        assert!(route("/files/{}").is_err());
+        assert!(route("/files/{a}{b}").is_err());
+    }
+
+    #[test]
+    fn path_params_must_name_params_of_the_path() {
+        let route = |params: &str| {
+            Route::from_yaml(&format!(
+                "id: users\ntransport: http\nmatch: {{ method: GET, path: '/users/{{id}}' }}\ncases:\n  one:\n    match: {{ pathParams: {params} }}\n    behaviors:\n      ok: {{ status: 200 }}\n"
+            ))
+        };
+        assert!(route("{ id: '1' }").is_ok());
+        assert!(route("'${ pathParams.id == `1` }'").is_ok());
+        let error = route("{ userId: '1' }").unwrap_err().to_string();
+        assert_eq!(
+            error,
+            "case `users:one` has an invalid match: `pathParams.userId` is not a parameter of path `/users/{id}`"
+        );
     }
 
     #[test]

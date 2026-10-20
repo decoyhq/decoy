@@ -1,5 +1,26 @@
 use std::collections::BTreeMap;
 
+/// The param names of a path template, or why a segment is neither literal text nor a whole
+/// `{param}` (params only bind whole segments, so `/files/{name}.json` could never match).
+pub(crate) fn template_params(pattern: &str) -> Result<Vec<&str>, String> {
+    let mut params = Vec::new();
+    for part in split_path(pattern) {
+        let name = part
+            .strip_prefix('{')
+            .and_then(|rest| rest.strip_suffix('}'));
+        match name {
+            Some(name) if !name.is_empty() && !name.contains(['{', '}']) => params.push(name),
+            None if !part.contains(['{', '}']) => {}
+            _ => {
+                return Err(format!(
+                    "segment `{part}` must be literal text or a whole `{{param}}`"
+                ));
+            }
+        }
+    }
+    Ok(params)
+}
+
 pub(super) fn match_path(pattern: &str, actual: &str) -> Option<BTreeMap<String, String>> {
     let pattern_parts = split_path(pattern);
     let actual_parts = split_path(actual);

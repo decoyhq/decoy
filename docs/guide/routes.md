@@ -13,7 +13,7 @@ id: users-by-id # stable id; no ':' allowed
 transport: http # the only transport today
 match:
   method: GET # GET POST PUT PATCH DELETE HEAD OPTIONS
-  path: /api/users/{id} # {name} captures one path segment
+  path: /api/users/{id} # {name} captures one whole path segment; /files/{name}.json fails startup
 cases:
   user-1:
     match:
@@ -50,17 +50,18 @@ cases:
       body: { items: [{ sku: gold }] } # deep partial match
 ```
 
-| field                                       | how it matches                                                                                                                                                      |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pathParams`, `query`, `headers`, `cookies` | each listed key must be present; values compare as strings (`page: 5` matches `?page=5`); a repeated query key matches if any value does                            |
-| `body`                                      | objects: listed keys must match, others are ignored. Arrays: the request array must contain each listed element, in any order. Scalars: exactly equal (`1` ≠ `"1"`) |
+| field                                       | how it matches                                                                                                                                                                |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pathParams`, `query`, `headers`, `cookies` | each listed key must be present; values are strings, numbers or booleans and compare as strings (`page: 5` matches `?page=5`); a repeated query key matches if any value does |
+| `body`                                      | objects: listed keys must match, others are ignored. Arrays: the request array must contain each listed element, in any order. Scalars: exactly equal (`1` ≠ `"1"`)           |
 
 Path segments and `pathParams` compare percent-decoded, like `query` (`/users/a%20b` gives `id: a
 b`; `%2F` stays inside one segment). The envelope `path` stays as sent.
 
 `body` is the parsed JSON when the request's `content-type` is JSON (`application/json`,
 `*+json`), otherwise the raw text. Repeated request headers are joined with `", "`. An unknown
-field, such as a misspelled `querry`, fails startup.
+field, such as a misspelled `querry`, fails startup, and so does a list or null value in
+`pathParams`, `query`, `headers` or `cookies`, or a `pathParams` key the Route path doesn't define.
 
 ### Predicates
 

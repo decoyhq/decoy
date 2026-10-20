@@ -60,7 +60,18 @@ pub fn validate_case_match(transport: &Transport, case_match: &Value) -> Result<
             Value::String(text) if is_predicate(text) => {
                 validate_predicate(text).map_err(|error| error.to_string())?;
             }
-            _ if field == free_form || pattern.is_object() => {}
+            _ if field == free_form => {}
+            Value::Object(values) => {
+                // Matched against request strings, so a list or null could never match.
+                if let Some((key, value)) =
+                    values.iter().find(|(_, value)| as_string(value).is_none())
+                {
+                    return Err(format!(
+                        "match field `{field}.{key}` must be a string, number or boolean, got {}",
+                        kind(value)
+                    ));
+                }
+            }
             _ => {
                 return Err(format!(
                     "match field `{field}` must be a mapping or a `${{ }}` predicate, got {}",
@@ -579,6 +590,37 @@ mod tests {
             validate_case_match(&Transport::Http, &json!({ "query": "${ query.[ }" }))
                 .unwrap_err()
                 .contains("invalid JMESPath")
+        );
+    }
+
+    #[test]
+    fn validation_rejects_lists_and_nulls_in_string_fields() {
+        let error =
+            validate_case_match(&Transport::Http, &json!({ "query": { "tag": ["a", "b"] } }))
+                .unwrap_err();
+        assert_eq!(
+            error,
+            "match field `query.tag` must be a string, number or boolean, got a list"
+        );
+        assert!(
+            validate_case_match(&Transport::Http, &json!({ "query": { "flag": null } }))
+                .unwrap_err()
+                .contains("`query.flag` must be a string, number or boolean, got null")
+        );
+        assert!(
+            validate_case_match(
+                &Transport::Grpc,
+                &json!({ "metadata": { "x": { "y": 1 } } })
+            )
+            .unwrap_err()
+            .contains("`metadata.x`")
+        );
+        assert!(
+            validate_case_match(
+                &Transport::Http,
+                &json!({ "headers": { "x-n": 1, "x-b": true, "x-s": "*" } })
+            )
+            .is_ok()
         );
     }
 
