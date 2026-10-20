@@ -7,12 +7,16 @@ const pages = {
   '/': new URL('./index.html', import.meta.url),
   '/index.html': new URL('./index.html', import.meta.url),
   '/popup.html': new URL('./popup.html', import.meta.url),
+  '/worker.js': new URL('./worker.js', import.meta.url),
+  '/shared.js': new URL('./shared.js', import.meta.url),
+  '/sw.js': new URL('./sw.js', import.meta.url),
 }
 
 createServer(async (req, res) => {
   const page = pages[req.url]
   if (page) {
-    res.writeHead(200, { 'content-type': 'text/html' }).end(await readFile(page))
+    const type = req.url.endsWith('.js') ? 'text/javascript' : 'text/html'
+    res.writeHead(200, { 'content-type': type }).end(await readFile(page))
   } else {
     res.writeHead(404).end()
   }

@@ -76,9 +76,12 @@ Gotchas the prototype hit:
      WebdriverIO types yet), or rebuild the `Cookie` header from `storage.getCookies`.
 3. **Verified end to end** (`echo.testplane.ts`, both session kinds): POST body, cookies, and
    custom headers reach Decoy; so does a popup's first request (`popup.testplane.ts`): new targets
-   are auto-attached paused (`waitForDebuggerOnStart`) and resumed only after `Fetch.enable`. Still
-   unverified: requests from workers, HTTPS app origins rewritten to an `http://` Decoy, and
-   Selenium grids or cloud providers where `getPuppeteer()` can't connect.
+   are auto-attached paused (`waitForDebuggerOnStart`) and resumed only after `Fetch.enable`; and
+   so do worker requests (`worker.testplane.ts`). A dedicated worker's requests pause on its page
+   (the worker target has no Fetch domain); shared and service workers get their own
+   `Fetch.enable`, and without it their requests reached the real network. Still unverified: HTTPS
+   app origins rewritten to an `http://` Decoy, and Selenium grids or cloud providers where
+   `getPuppeteer()` can't connect.
 4. **Bleed between tests.** The browser is reused, so a request still in flight from test N could
    land in test N+1's Session; it is aborted only if it fires between the hooks. Playwright avoids
    this with a fresh context per test.

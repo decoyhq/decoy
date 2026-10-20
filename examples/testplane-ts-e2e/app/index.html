@@ -12,6 +12,9 @@
     <button id="load-profile" type="button">Load profile</button>
     <button id="send-echo" type="button">Send echo</button>
     <button id="open-popup" type="button" onclick="window.open('/popup.html')">Open popup</button>
+    <button id="load-user-in-worker" type="button">Load user in a worker</button>
+    <button id="load-user-in-shared-worker" type="button">Load user in a shared worker</button>
+    <button id="load-user-in-service-worker" type="button">Load user in a service worker</button>
     <p id="result" role="status"></p>
     <script type="module">
       const result = document.querySelector('#result')
@@ -34,6 +37,32 @@
       document.querySelector('#load-orders').addEventListener('click', () => show('/api/orders'))
       // Decoy forwards /api/profile to the example's local upstream (Passthrough).
       document.querySelector('#load-profile').addEventListener('click', () => show('/api/profile'))
+      // The worker's own fetch is routed too (app/worker.js).
+      document.querySelector('#load-user-in-worker').addEventListener('click', () => {
+        const worker = new Worker('/worker.js', { type: 'module' })
+        worker.onmessage = (event) => {
+          result.textContent = event.data
+        }
+      })
+      document.querySelector('#load-user-in-shared-worker').addEventListener('click', () => {
+        const worker = new SharedWorker('/shared.js')
+        worker.port.onmessage = (event) => {
+          result.textContent = event.data
+        }
+      })
+      document.querySelector('#load-user-in-service-worker').addEventListener('click', async () => {
+        navigator.serviceWorker.onmessage = (event) => {
+          result.textContent = event.data
+        }
+        const registration = await navigator.serviceWorker.register('/sw.js')
+        const worker = registration.active ?? registration.installing ?? registration.waiting
+        if (worker.state !== 'activated') {
+          await new Promise((done) =>
+            worker.addEventListener('statechange', () => worker.state === 'activated' && done()),
+          )
+        }
+        worker.postMessage('load')
+      })
       // Decoy echoes the body, a cookie, and a custom header back (mocks/routes/echo.yaml).
       document.querySelector('#send-echo').addEventListener('click', () => {
         document.cookie = 'sid=abc'

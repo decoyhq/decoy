@@ -29,8 +29,12 @@ export interface SessionHolder {
 export type Decision =
   { kind: 'continue' } | { kind: 'abort' } | { kind: 'decoy'; url: string; sessionId: string }
 
+// Targets whose requests no page's interception sees. A dedicated `worker` has no Fetch domain;
+// its requests pause on the page that started it, so it is only resumed, like any other target.
+const ROUTED_TARGETS = new Set(['page', 'iframe', 'shared_worker', 'service_worker'])
+
 /**
- * Send every request matching `urls`, from every page and out-of-process frame of the browser
+ * Send every request matching `urls`, from every page, out-of-process frame and worker of the browser
  * behind `root` (a browser-level CDP session), to Decoy at `decoyUrl`, stamped with the holder's
  * current Session. New tabs and popups start paused (auto-attach with `waitForDebuggerOnStart`)
  * and only run once interception is on, so even their first request is routed. The rewrite
@@ -59,7 +63,7 @@ export async function routeToDecoy(
     if (!target) {
       return
     }
-    if (event.targetInfo.type === 'page' || event.targetInfo.type === 'iframe') {
+    if (ROUTED_TARGETS.has(event.targetInfo.type)) {
       try {
         target.on('Fetch.requestPaused', (paused: RequestPaused) => {
           void forwardToDecoy(
@@ -71,7 +75,7 @@ export async function routeToDecoy(
         await target.send('Fetch.enable', {
           patterns: [{ urlPattern: '*', requestStage: 'Request' }],
         })
-        await autoAttach(target) // out-of-process iframes
+        await autoAttach(target) // out-of-process iframes, a page's workers
       } catch {
         // Unroutable, so it must not run: close it rather than let it reach the real network.
         await root

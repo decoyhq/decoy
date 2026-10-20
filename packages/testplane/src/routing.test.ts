@@ -176,14 +176,32 @@ describe('routeToDecoy', () => {
     expect(root.sent.at(-1)).toEqual(['Target.closeTarget', { targetId: 't-1' }])
   })
 
-  test('other targets (workers) are only resumed', async () => {
+  test.each(['shared_worker', 'service_worker'])(
+    'a %s runs only after interception is on',
+    async (type) => {
+      const root = fakeSession()
+      const worker = fakeSession()
+      root.children.set('child', worker)
+      await routeToDecoy(root.session, decoyUrl, '**/api/**', { sessionId: 's-1' })
+
+      root.emit('Target.attachedToTarget', attach(type))
+      await settle()
+      expect(worker.sent.map(([method]) => method)).toEqual([
+        'Fetch.enable',
+        'Target.setAutoAttach',
+        'Runtime.runIfWaitingForDebugger',
+      ])
+    },
+  )
+
+  test('other targets (dedicated workers, routed by their page) are only resumed', async () => {
     const root = fakeSession()
-    const worker = fakeSession()
-    root.children.set('child', worker)
+    const other = fakeSession()
+    root.children.set('child', other)
     await routeToDecoy(root.session, decoyUrl, '**/api/**', { sessionId: 's-1' })
 
-    root.emit('Target.attachedToTarget', attach('service_worker'))
+    root.emit('Target.attachedToTarget', attach('worker'))
     await settle()
-    expect(worker.sent).toEqual([['Runtime.runIfWaitingForDebugger', undefined]])
+    expect(other.sent).toEqual([['Runtime.runIfWaitingForDebugger', undefined]])
   })
 })
