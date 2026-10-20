@@ -6,6 +6,8 @@ Author mock **Routes** as YAML files, group their Behaviors into switchable **Co
 point your app or tests at `decoy`. Fail-closed by default: a request with no matching mock gets a
 diagnostic miss, never the real upstream.
 
+![The Decoy terminal UI: a live request log, switching Collections and opening a request's details](docs/assets/tui.gif)
+
 ## Status
 
 Alpha. The native Rust runtime (`crates/decoy-runtime`, binary in `crates/decoy`) serves HTTP today. Install with
