@@ -76,7 +76,7 @@ impl Connections {
         route: &str,
         message: Value,
         timeout: Duration,
-    ) -> Result<usize, SendTimeout> {
+    ) -> Result<usize, SendError> {
         let address = (session.to_owned(), route.to_owned());
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
@@ -87,7 +87,7 @@ impl Connections {
                 return Ok(delivered);
             }
             if tokio::time::timeout_at(deadline, registered).await.is_err() {
-                return Err(SendTimeout);
+                return Err(SendError::Timeout);
             }
         }
     }
@@ -115,9 +115,12 @@ impl Drop for Registration {
     }
 }
 
-/// No live connection appeared before the `send` timeout.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct SendTimeout;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum SendError {
+    /// No live connection appeared before the `send` timeout.
+    #[error("no live connection before the timeout")]
+    Timeout,
+}
 
 #[cfg(test)]
 mod tests {
@@ -159,7 +162,7 @@ mod tests {
         drop(kept);
         assert_eq!(
             connections.send("a", "live", json!(2), SHORT).await,
-            Err(SendTimeout)
+            Err(SendError::Timeout)
         );
     }
 
@@ -188,7 +191,7 @@ mod tests {
 
         assert_eq!(
             connections.send("a", "live", json!(1), SHORT).await,
-            Err(SendTimeout)
+            Err(SendError::Timeout)
         );
     }
 }

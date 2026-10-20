@@ -4,7 +4,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::connections::{Connections, SendTimeout};
+use crate::connections::{Connections, SendError};
 pub use crate::engine::session::{DEFAULT_SESSION, SESSION_HEADER};
 use crate::engine::{Catalog, ControlError, Controller, SelectionSnapshot};
 use crate::events::SessionSource;
@@ -203,7 +203,7 @@ async fn try_send(
     connections
         .send(&session, &body.route, body.message, timeout)
         .await
-        .map_err(|SendTimeout| ControlApiError::SendTimeout {
+        .map_err(|SendError::Timeout| ControlApiError::SendTimeout {
             route: body.route,
             session,
             timeout_ms: timeout.as_millis(),
@@ -534,32 +534,32 @@ cases:
         ControlApiRequest::post(SEND_PATH, body)
     }
 
-    async fn send_status(request: ControlApiRequest) -> ControlApiResponse {
+    async fn send_response(request: ControlApiRequest) -> ControlApiResponse {
         handle_send_request(&controller().catalog(), &Connections::default(), request).await
     }
 
     #[tokio::test]
     async fn send_rejects_unknown_routes_and_routes_without_live_connections() {
-        let unknown = send_status(send(r#"{"route":"ghost","message":{}}"#)).await;
+        let unknown = send_response(send(r#"{"route":"ghost","message":{}}"#)).await;
         assert_eq!(unknown.status, 404);
         assert_eq!(unknown.body, r#"{"error":"unknown route `ghost`"}"#);
 
-        let http = send_status(send(r#"{"route":"get-user","message":{}}"#)).await;
+        let http = send_response(send(r#"{"route":"get-user","message":{}}"#)).await;
         assert_eq!(http.status, 409, "{}", http.body);
     }
 
     #[tokio::test]
     async fn send_takes_only_a_well_formed_json_body() {
-        let missing_message = send_status(send(r#"{"route":"get-user"}"#)).await;
+        let missing_message = send_response(send(r#"{"route":"get-user"}"#)).await;
         assert_eq!(missing_message.status, 400);
         assert!(missing_message.body.contains("missing field `message`"));
 
-        assert_eq!(send_status(send("{")).await.status, 400);
+        assert_eq!(send_response(send("{")).await.status, 400);
 
         let mut plain = send(r#"{"route":"get-user","message":{}}"#);
         plain
             .headers
             .insert("content-type".to_owned(), "text/plain".to_owned());
-        assert_eq!(send_status(plain).await.status, 415);
+        assert_eq!(send_response(plain).await.status, 415);
     }
 }

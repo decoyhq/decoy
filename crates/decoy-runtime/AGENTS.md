@@ -5,14 +5,14 @@ The layout below is the target; code still in flat files moves there in behaviou
 
 ## Where code goes
 
-| layer            | path                                                                               | owns                                                  |
-| ---------------- | ---------------------------------------------------------------------------------- | ----------------------------------------------------- |
-| core             | `engine/`                                                                          | Catalog, Session, Selection, Controller, SessionView  |
-| transport        | `http/`, `grpc/` (later `ws/`, `sse/`)                                             | resolve (pure), execute (I/O shell), wire codec       |
-| outbound adapter | `http/forward.rs`                                                                  | passthrough to a real upstream                        |
-| inbound adapter  | `server/`, `control_api.rs`                                                        | axum ingress, lifecycle, reload, Control API dispatch |
-| load and model   | `schema`, `config`, `startup`, `collections`, `matching`, `expression`, `template` | decoy.yaml, Route files, Cases, JMESPath              |
-| shared (flat)    | `events`, `request`, `protos`, `tls`, `watch`                                      | event capture, request envelope, protos, TLS, watch   |
+| layer            | path                                                                               | owns                                                                  |
+| ---------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| core             | `engine/`                                                                          | Catalog, Session, Selection, Controller, SessionView                  |
+| transport        | `http/`, `grpc/` (later `ws/`, `sse/`)                                             | resolve (pure), execute (I/O shell), wire codec                       |
+| outbound adapter | `http/forward.rs`                                                                  | passthrough to a real upstream                                        |
+| inbound adapter  | `server/`, `control_api.rs`                                                        | axum ingress, lifecycle, reload, Control API dispatch                 |
+| load and model   | `schema`, `config`, `startup`, `collections`, `matching`, `expression`, `template` | decoy.yaml, Route files, Cases, JMESPath                              |
+| shared (flat)    | `events`, `request`, `protos`, `tls`, `watch`, `connections`                       | event capture, request envelope, protos, TLS, watch, live connections |
 
 ## Rules
 
