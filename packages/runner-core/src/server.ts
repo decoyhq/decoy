@@ -7,12 +7,17 @@ import { isAlive, stopGroup, stopProcess, withLocalBins } from './process'
 
 export type Teardown = () => Promise<void>
 
-/** How to reach or start Decoy; every integration's options carry these. */
+/** How to reach or start Decoy; every integration's options extend these. */
 export interface ServerOptions {
+  /** Base URL of the native Decoy runtime. Default `http://127.0.0.1:8080`. */
   url?: string
+  /** Shell command run when Decoy is not already serving. Default `decoy serve`. */
   command?: string
+  /** Working directory for `command` (relative: to `process.cwd()`). Default: the config file's directory. */
   cwd?: string
+  /** Reuse a Decoy already serving at `url`. Default: `true` locally, `false` when `CI` is set. */
   reuseExistingServer?: boolean
+  /** How long to wait for health after starting `command`, in ms. Default 60000. */
   timeout?: number
 }
 
@@ -76,13 +81,18 @@ export async function startDecoy(
     detached: process.platform !== 'win32',
     stdio: ['ignore', 'ignore', 'inherit'],
   })
+  // Written before health passes, so a runner interrupted mid-start still leaves a trail.
+  writeFileSync(
+    pidFile,
+    JSON.stringify({ pid: child.pid, runner: process.pid, cwd, command: options.command }),
+  )
   try {
     await waitForHealth(child, options)
   } catch (error) {
     await stopProcess(child)
+    rmSync(pidFile, { force: true })
     throw error
   }
-  writeFileSync(pidFile, JSON.stringify({ pid: child.pid, cwd, command: options.command }))
   return async () => {
     await stopProcess(child)
     rmSync(pidFile, { force: true })
@@ -92,13 +102,16 @@ export async function startDecoy(
 /**
  * Stops a Decoy that an earlier `startDecoy` spawned with the same command and cwd but never tore
  * down (its runner was hard-killed), so it isn't silently reused. A Decoy the user started has no
- * pidfile and is left alone.
+ * pidfile, and one whose runner is still running isn't an orphan; both are left alone.
  */
 async function stopOrphan(pidFile: string, options: ResolvedServerOptions, cwd: string) {
-  let recorded: { pid: number; cwd: string; command: string }
+  let recorded: { pid: number; runner: number; cwd: string; command: string }
   try {
     recorded = JSON.parse(readFileSync(pidFile, 'utf8')) as typeof recorded
   } catch {
+    return
+  }
+  if (processExists(recorded.runner)) {
     return
   }
   // shortcut: a recycled pid is told apart only by Decoy still serving at url, check the process's
@@ -138,4 +151,13 @@ async function waitForHealth(child: ChildProcess, options: ResolvedServerOptions
   throw new Error(
     `Decoy did not become healthy at ${options.url} within ${options.timeout}ms (command: \`${options.command}\`).`,
   )
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
 }
