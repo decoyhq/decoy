@@ -72,8 +72,8 @@ pub enum ForwardingError {
         #[source]
         source: reqwest::header::InvalidHeaderValue,
     },
-    #[error("passthrough path `{path}` would reach the upstream as `{forwarded}`")]
-    PathChanged { path: String, forwarded: String },
+    #[error("passthrough path `{path}` has a `.` or `..` segment")]
+    PathEscapesBase { path: String },
     #[error("passthrough loop: this Decoy already forwarded the request (`{VIA_HEADER}`)")]
     Loop,
     #[error("passthrough upstream timed out: {0}")]
@@ -243,26 +243,23 @@ pub(crate) fn target_url(
     } else {
         format!("/{path_and_query}")
     };
-    let base = base_url.trim_end_matches('/');
-    let joined = format!("{base}{normalized_path}");
-    let parse = |url: &str| {
-        url::Url::parse(url).map_err(|source| ForwardingError::InvalidTargetUrl {
-            url: url.to_owned(),
-            source,
-        })
-    };
-    let url = parse(&joined)?;
-    // Parsing resolves dot segments and turns `\` into `/`, so `/files/%2e%2e` would leave the
-    // base path. Only percent-encoding may differ, hence the decoded comparison.
+    // Parsing resolves dot segments, and an upstream may decode `%2f`/`%5c` before resolving
+    // them, so any decoded `.` or `..` segment could leave the base path.
     let raw_path = normalized_path.split('?').next().unwrap_or_default();
-    let expected = format!("{}{raw_path}", parse(base)?.path().trim_end_matches('/'));
-    if !percent_decode_str(url.path()).eq(percent_decode_str(&expected)) {
-        return Err(ForwardingError::PathChanged {
+    let decoded = percent_decode_str(raw_path).decode_utf8_lossy();
+    if decoded
+        .split(['/', '\\'])
+        .any(|segment| segment == "." || segment == "..")
+    {
+        return Err(ForwardingError::PathEscapesBase {
             path: raw_path.to_owned(),
-            forwarded: url.path().to_owned(),
         });
     }
-    Ok(url)
+    let joined = format!("{}{normalized_path}", base_url.trim_end_matches('/'));
+    url::Url::parse(&joined).map_err(|source| ForwardingError::InvalidTargetUrl {
+        url: joined,
+        source,
+    })
 }
 
 fn reqwest_method(method: &HttpMethod) -> reqwest::Method {
@@ -579,10 +576,16 @@ mod tests {
 
     #[test]
     fn a_path_that_climbs_out_of_the_base_path_is_a_forwarding_error() {
-        for path in ["/files/%2e%2e", "/files/..\\..\\admin", "/files/./x"] {
+        for path in [
+            "/files/%2e%2e",
+            "/files/..\\..\\admin",
+            "/files/./x",
+            "/..%2fadmin",
+            "/files/..%5Cadmin",
+        ] {
             let error = target_url("http://127.0.0.1:1/base", path).unwrap_err();
             assert!(
-                matches!(error, ForwardingError::PathChanged { .. }),
+                matches!(error, ForwardingError::PathEscapesBase { .. }),
                 "{path}: {error}"
             );
         }
@@ -590,10 +593,10 @@ mod tests {
 
     #[test]
     fn a_path_the_url_only_percent_encodes_is_forwarded() {
-        let url = target_url("http://127.0.0.1:1/base/", "/files/{id}%2F..?q=1").unwrap();
+        let url = target_url("http://127.0.0.1:1/base/", "/files/{id}%2F..x?q=1").unwrap();
         assert_eq!(
             url.as_str(),
-            "http://127.0.0.1:1/base/files/%7Bid%7D%2F..?q=1"
+            "http://127.0.0.1:1/base/files/%7Bid%7D%2F..x?q=1"
         );
     }
 
