@@ -5,6 +5,7 @@ use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::app::{App, overrides};
 use crate::log::{Entry, RequestLine};
@@ -316,14 +317,30 @@ impl App {
                     .add_modifier(Modifier::BOLD),
             ),
         );
+        // Show the tail that fits beside the prompt, keeping a cell for the cursor.
+        let room = usize::from(inner.width).saturating_sub(prompt.width() + 1);
+        // Whole graphemes, so `👍🏽` isn't split into a lone modifier.
+        let mut start = self.input.len();
+        let mut used = 0;
+        for (index, grapheme) in self.input.grapheme_indices(true).rev() {
+            used += Span::raw(grapheme).width();
+            if used > room {
+                break;
+            }
+            start = index;
+        }
+        let tail = Span::raw(&self.input[start..]);
+        let cursor = Line::from(vec![prompt.clone(), tail.clone()]).width();
         let text = if self.input.is_empty() {
             Span::styled("type / for commands · Ctrl+O recent requests", theme.dim())
         } else {
-            Span::raw(self.input.clone())
+            tail
         };
         frame.render_widget(Line::from(vec![prompt, text]), inner);
         if inner.width > 0 {
-            let x = inner.x + 2 + self.input.chars().count() as u16;
+            let x = inner
+                .x
+                .saturating_add(u16::try_from(cursor).unwrap_or(u16::MAX));
             frame.set_cursor_position(Position::new(x.min(inner.right() - 1), inner.y));
         }
     }
@@ -802,6 +819,51 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The input row's text and the cursor's column.
+    fn input_row(input: &str, width: u16) -> (String, u16) {
+        let mut app = app();
+        app.input = input.to_owned();
+        let mut terminal = Terminal::new(TestBackend::new(width, 6)).unwrap();
+        terminal.draw(|frame| app.draw(frame)).unwrap();
+        let cursor = terminal.get_cursor_position().unwrap();
+        assert_eq!(cursor.y, 3);
+        let screen = plain(terminal.backend().buffer());
+        (screen.lines().nth(3).unwrap().to_owned(), cursor.x)
+    }
+
+    #[test]
+    fn long_input_shows_its_tail_with_the_cursor_after_it() {
+        assert_eq!(
+            input_row("/route users-by-id:user-1:missing", 20),
+            ("│› :user-1:missing │".to_owned(), 18)
+        );
+    }
+
+    #[test]
+    fn the_cursor_counts_wide_characters_as_two_columns() {
+        assert_eq!(input_row("日本語", 20).1, 9);
+        // Room for 7 columns after the prompt: three wide characters fit, a fourth does not.
+        assert_eq!(input_row("日本語日本語日本語", 12).1, 9);
+    }
+
+    #[test]
+    fn the_tail_keeps_an_emoji_with_its_modifier() {
+        // Room for 15 columns: `👍🏽` (2) and 13 `a` fit; the row must not start with a lone `🏽`. The
+        // buffer prints a wide grapheme's second cell as a space.
+        let (row, cursor) = input_row(&format!("x👍🏽{}", "a".repeat(13)), 20);
+        assert_eq!(
+            (row.as_str(), cursor),
+            (format!("│› 👍🏽 {} │", "a".repeat(13)).as_str(), 18)
+        );
+    }
+
+    #[test]
+    fn very_long_input_does_not_overflow_the_cursor() {
+        // Past u16::MAX columns once the box's border and prompt are added.
+        let (row, cursor) = input_row(&"a".repeat(65_534), 20);
+        assert_eq!((row.as_str(), cursor), ("│› aaaaaaaaaaaaaaa │", 18));
     }
 
     #[test]
