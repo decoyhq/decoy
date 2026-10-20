@@ -127,6 +127,8 @@ pub(crate) struct GrpcStream {
     end: Option<GrpcResponse>,
     /// The Route id, which `send` addresses.
     route: String,
+    /// Full name of the output type, so `send` skips this stream once a reload changes it.
+    output: String,
 }
 
 impl GrpcStream {
@@ -146,7 +148,8 @@ impl GrpcStream {
         let rest = match self.end {
             Some(end) => stream::iter([StreamPart::End(end)]).boxed(),
             None => {
-                let (registration, receiver) = connections.register(session, &self.route);
+                let (registration, receiver) =
+                    connections.register(session, &self.route, &self.output);
                 let open = Open {
                     _registration: registration,
                     receiver,
@@ -211,6 +214,7 @@ fn respond_stream(
         messages,
         end,
         route: activation.route.clone(),
+        output: method.output().full_name().to_owned(),
     })
 }
 

@@ -28,7 +28,8 @@ struct Live {
     /// Set by [`Connections::close_all`]: later registrations are closed at once.
     closed: bool,
     next_id: u64,
-    by_address: HashMap<Address, Vec<(u64, Sender)>>,
+    /// Each connection with the full name of the output type it opened with.
+    by_address: HashMap<Address, Vec<(u64, String, Sender)>>,
 }
 
 /// Session + Route id.
@@ -46,12 +47,14 @@ pub struct Registration {
 }
 
 impl Connections {
-    /// Registers a live connection of `route` in `session`. Messages pushed by [`Self::send`]
-    /// arrive on the receiver until the [`Registration`] drops.
+    /// Registers a live connection of `route` in `session` that writes `output` messages (the
+    /// type's full name). Messages pushed by [`Self::send`] arrive on the receiver until the
+    /// [`Registration`] drops.
     pub fn register(
         &self,
         session: &str,
         route: &str,
+        output: &str,
     ) -> (Registration, mpsc::UnboundedReceiver<Vec<u8>>) {
         let (sender, receiver) = mpsc::unbounded_channel();
         let address = (session.to_owned(), route.to_owned());
@@ -59,10 +62,11 @@ impl Connections {
         let id = live.next_id;
         live.next_id += 1;
         if !live.closed {
-            live.by_address
-                .entry(address.clone())
-                .or_default()
-                .push((id, sender));
+            live.by_address.entry(address.clone()).or_default().push((
+                id,
+                output.to_owned(),
+                sender,
+            ));
         }
         drop(live);
         self.inner.registered.notify_waiters();
@@ -74,12 +78,14 @@ impl Connections {
         (registration, receiver)
     }
 
-    /// Delivers `message` to every live connection of `route` in `session`. With none, waits up
-    /// to `timeout` for one (Q5). Returns how many connections got it.
+    /// Delivers `message`, encoded as `output`, to every live connection of `route` in `session`
+    /// opened with that output type; one opened before a reload changed it is skipped. With none,
+    /// waits up to `timeout` for one (Q5). Returns how many connections got it.
     pub async fn send(
         &self,
         session: &str,
         route: &str,
+        output: &str,
         message: Vec<u8>,
         timeout: Duration,
     ) -> Result<usize, SendError> {
@@ -88,7 +94,7 @@ impl Connections {
         loop {
             // Listen before checking, so a registration between the check and the wait still wakes us.
             let registered = self.inner.registered.notified();
-            let delivered = self.deliver(&address, &message)?;
+            let delivered = self.deliver(&address, output, &message)?;
             if delivered > 0 {
                 return Ok(delivered);
             }
@@ -109,7 +115,7 @@ impl Connections {
         self.inner.registered.notify_waiters();
     }
 
-    fn deliver(&self, address: &Address, message: &[u8]) -> Result<usize, SendError> {
+    fn deliver(&self, address: &Address, output: &str, message: &[u8]) -> Result<usize, SendError> {
         let live = self.inner.live.lock().expect("connections lock");
         if live.closed {
             return Err(SendError::Closed);
@@ -117,7 +123,9 @@ impl Connections {
         Ok(live.by_address.get(address).map_or(0, |senders| {
             senders
                 .iter()
-                .filter(|(_, sender)| sender.send(message.to_vec()).is_ok())
+                .filter(|(_, opened, sender)| {
+                    opened == output && sender.send(message.to_vec()).is_ok()
+                })
                 .count()
         }))
     }
@@ -127,7 +135,7 @@ impl Drop for Registration {
     fn drop(&mut self) {
         let mut live = self.inner.live.lock().expect("connections lock");
         if let Some(senders) = live.by_address.get_mut(&self.address) {
-            senders.retain(|(id, _)| *id != self.id);
+            senders.retain(|(id, _, _)| *id != self.id);
             if senders.is_empty() {
                 live.by_address.remove(&self.address);
             }
@@ -156,7 +164,7 @@ mod tests {
             let connections = connections.clone();
             async move {
                 connections
-                    .send("a", "live", vec![1], Duration::from_secs(30))
+                    .send("a", "live", "live.Tick", vec![1], Duration::from_secs(30))
                     .await
             }
         });
@@ -172,12 +180,14 @@ mod tests {
     #[tokio::test]
     async fn send_reaches_every_connection_of_the_route_in_that_session_only() {
         let connections = Connections::default();
-        let (_a1, mut a1) = connections.register("a", "live");
-        let (_a2, mut a2) = connections.register("a", "live");
-        let (_b, mut b) = connections.register("b", "live");
-        let (_other, mut other) = connections.register("a", "other");
+        let (_a1, mut a1) = connections.register("a", "live", "live.Tick");
+        let (_a2, mut a2) = connections.register("a", "live", "live.Tick");
+        let (_b, mut b) = connections.register("b", "live", "live.Tick");
+        let (_other, mut other) = connections.register("a", "other", "live.Tick");
 
-        let delivered = connections.send("a", "live", vec![1], SHORT).await;
+        let delivered = connections
+            .send("a", "live", "live.Tick", vec![1], SHORT)
+            .await;
 
         assert_eq!(delivered, Ok(2));
         assert_eq!(a1.try_recv().unwrap(), vec![1]);
@@ -189,16 +199,23 @@ mod tests {
     #[tokio::test]
     async fn a_dropped_registration_no_longer_receives() {
         let connections = Connections::default();
-        let (kept, mut kept_rx) = connections.register("a", "live");
-        let (gone, _gone_rx) = connections.register("a", "live");
+        let (kept, mut kept_rx) = connections.register("a", "live", "live.Tick");
+        let (gone, _gone_rx) = connections.register("a", "live", "live.Tick");
         drop(gone);
 
-        assert_eq!(connections.send("a", "live", vec![1], SHORT).await, Ok(1));
+        assert_eq!(
+            connections
+                .send("a", "live", "live.Tick", vec![1], SHORT)
+                .await,
+            Ok(1)
+        );
         assert_eq!(kept_rx.try_recv().unwrap(), vec![1]);
 
         drop(kept);
         assert_eq!(
-            connections.send("a", "live", vec![2], SHORT).await,
+            connections
+                .send("a", "live", "live.Tick", vec![2], SHORT)
+                .await,
             Err(SendError::Timeout)
         );
     }
@@ -206,9 +223,9 @@ mod tests {
     #[tokio::test]
     async fn close_all_ends_every_connection_and_later_ones() {
         let connections = Connections::default();
-        let (_open, mut open) = connections.register("a", "live");
+        let (_open, mut open) = connections.register("a", "live", "live.Tick");
         connections.close_all();
-        let (_late, mut late) = connections.register("a", "live");
+        let (_late, mut late) = connections.register("a", "live", "live.Tick");
 
         assert_eq!(open.recv().await, None);
         assert_eq!(late.recv().await, None);
@@ -221,24 +238,40 @@ mod tests {
             let connections = connections.clone();
             async move {
                 connections
-                    .send("a", "live", vec![9], Duration::from_secs(5))
+                    .send("a", "live", "live.Tick", vec![9], Duration::from_secs(5))
                     .await
             }
         });
         tokio::task::yield_now().await;
-        let (_registration, mut receiver) = connections.register("a", "live");
+        let (_registration, mut receiver) = connections.register("a", "live", "live.Tick");
 
         assert_eq!(sending.await.unwrap(), Ok(1));
         assert_eq!(receiver.recv().await.unwrap(), vec![9]);
     }
 
     #[tokio::test]
-    async fn send_times_out_without_a_connection_in_that_session() {
+    async fn send_skips_connections_opened_with_another_output_type() {
         let connections = Connections::default();
-        let (_elsewhere, _receiver) = connections.register("b", "live");
+        let (_old, mut old) = connections.register("a", "live", "live.Old");
 
         assert_eq!(
-            connections.send("a", "live", vec![1], SHORT).await,
+            connections
+                .send("a", "live", "live.New", vec![1], SHORT)
+                .await,
+            Err(SendError::Timeout)
+        );
+        assert!(old.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn send_times_out_without_a_connection_in_that_session() {
+        let connections = Connections::default();
+        let (_elsewhere, _receiver) = connections.register("b", "live", "live.Tick");
+
+        assert_eq!(
+            connections
+                .send("a", "live", "live.Tick", vec![1], SHORT)
+                .await,
             Err(SendError::Timeout)
         );
     }

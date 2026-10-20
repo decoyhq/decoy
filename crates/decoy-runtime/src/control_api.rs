@@ -214,7 +214,13 @@ async fn try_send(
         .timeout
         .map_or(DEFAULT_SEND_TIMEOUT, Duration::from_millis);
     connections
-        .send(&session, &body.route, message, timeout)
+        .send(
+            &session,
+            &body.route,
+            method.output().full_name(),
+            message,
+            timeout,
+        )
         .await
         .map_err(|error| match error {
             SendError::Timeout => ControlApiError::SendTimeout {

@@ -54,8 +54,9 @@ curl -X POST localhost:8080/__decoy__/control/send \
   that doesn't fit the method's output type gets `400` with the reason, and nothing is sent.
 - Only connections opened in the same Session (`x-mock-session`) get it.
 - With no live connection yet, `send` waits for one up to `timeout` milliseconds (default `5000`).
-- A stream opened before a [reload](config.md#reloading) keeps the message type it opened with; a `send` that
-  fits only the new type ends that stream with `INTERNAL`.
+- After a [reload](config.md#reloading), `message` is encoded with the current output type, also for
+  streams opened before it; an older client skips fields it doesn't know. A stream whose Route now
+  answers with a different message type doesn't get it.
 
 | status | when                                                           |
 | ------ | -------------------------------------------------------------- |
