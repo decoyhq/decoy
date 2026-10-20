@@ -31,15 +31,11 @@ pub enum GrpcCodecError {
     },
     #[error("{0}")]
     ToJson(serde_json::Error),
-    #[error("step `{0:?}` needs bytes, got JSON")]
-    NeedsBytes(PipelineStep),
     #[error("response does not fit {message}: {error}")]
     DoesNotFit {
         message: String,
         error: serde_json::Error,
     },
-    #[error("step `Protobuf` needs JSON, got bytes")]
-    NeedsJson,
     #[error("message is not base64: {0}")]
     NotBase64(base64::DecodeError),
     #[error("expected a base64 string, got {0}")]
@@ -73,7 +69,8 @@ pub(super) fn decode(
                     })?;
                 Data::Json(request_json(&message).map_err(GrpcCodecError::ToJson)?)
             }
-            (step, Data::Json(_)) => return Err(GrpcCodecError::NeedsBytes(*step)),
+            // `validate_pipeline` keeps `protobuf` last and each step once.
+            (_, Data::Json(_)) => unreachable!("no step follows `protobuf`"),
         };
     }
     Ok(match data {
@@ -103,9 +100,7 @@ pub(super) fn encode(
                 Data::Bytes(message.encode_to_vec())
             }
             (PipelineStep::GrpcFrame, data) => Data::Bytes(frame(&bytes(data)?)),
-            (PipelineStep::Protobuf, Data::Bytes(_)) => {
-                return Err(GrpcCodecError::NeedsJson);
-            }
+            (PipelineStep::Protobuf, Data::Bytes(_)) => unreachable!("no step follows `protobuf`"),
         };
     }
     bytes(data)

@@ -99,6 +99,8 @@ impl Controller {
         Ok(self.selection(session).snapshot())
     }
 
+    /// Skips address validation; tests use it to plant overrides the Catalog lacks.
+    #[cfg(test)]
     pub fn use_route(
         &mut self,
         session: &str,
