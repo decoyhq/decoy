@@ -10,7 +10,7 @@ import {
 import type Testplane from 'testplane'
 import type { TestFunctionCtx } from 'testplane'
 import type { DecoyOptions } from './options'
-import { type CdpSession, routeToDecoy, type SessionHolder } from './routing'
+import { type CdpSession, routeToDecoy, type SessionHolder, toMatchers } from './routing'
 
 /** Per-browser state: Testplane reuses one browser for many tests, one test at a time. */
 interface BrowserState {
@@ -42,6 +42,9 @@ const states: Map<string, BrowserState> = ((
 export default function decoyPlugin(testplane: Testplane, options: DecoyOptions = {}): void {
   if (options.enabled === false) {
     return
+  }
+  if (options.urls !== undefined) {
+    toMatchers(options.urls) // throws on a bad glob now, not in every test's `beforeEach`
   }
   if (testplane.isWorker()) {
     testplane.on(testplane.events.AFTER_TESTS_READ, (collection) => {

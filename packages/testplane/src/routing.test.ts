@@ -51,6 +51,21 @@ describe('toMatchers', () => {
     expect(one?.test('http://app.test/v1/v2/users')).toBe(false)
   })
 
+  test('`{a,b}` matches either alternative', () => {
+    const [either] = toMatchers('**/{api,graphql}/**')
+    expect(either?.test('http://app.test/api/users')).toBe(true)
+    expect(either?.test('http://app.test/graphql/q')).toBe(true)
+    expect(either?.test('http://app.test/rest/q')).toBe(false)
+    expect(either?.test('http://app.test/{api,graphql}/q')).toBe(false)
+  })
+
+  test('throws on a glob that would never match a full URL', () => {
+    expect(() => toMatchers('/api/**')).toThrow(/must start with `\*` or a scheme/)
+    expect(() => toMatchers(['**/api/**', 'app.test/**'])).toThrow(/app\.test/)
+    expect(() => toMatchers('**/{api,{a,b}}/**')).toThrow(/nested/)
+    expect(() => toMatchers('**/{api/**')).toThrow(/unclosed/)
+  })
+
   test('RegExps pass through', () => {
     expect(toMatchers([/users/])[0]?.test('http://app.test/users')).toBe(true)
   })

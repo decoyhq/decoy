@@ -57,6 +57,11 @@ it('switching the Collection changes what the page shows', async ({ browser }) =
 | `urls`                | none                          | glob (`*` in a segment, `**` across) or RegExp, or a list |
 | `collection`          | Decoy's default               | Collection each test's Session starts on                  |
 
+A `urls` glob matches the full request URL, as in Playwright: `*` stays within a path segment,
+`**` crosses them, and `{api,graphql}` matches either. It must start with `*` or a scheme
+(`'**/api/**'`, `'http://localhost:3000/api/**'`). The plugin throws on load for a glob like
+`'/api/**'`, which could never match. Requests that match nothing go to the real network.
+
 `command` runs with `node_modules/.bin` (from `cwd` up) on PATH. At the end of the run the plugin
 sends SIGTERM and, if Decoy hasn't exited after 8s, SIGKILL (Windows: `taskkill /T /F`).
 

@@ -134,7 +134,10 @@ export async function forwardToDecoy(
   }
 }
 
-/** Playwright-style globs (`*` within a path segment, `**` across them) or RegExps. */
+/**
+ * Playwright-style globs (`*` within a path segment, `**` across them, `{a,b}` for either) or
+ * RegExps. Throws on a glob that starts with neither `*` nor a scheme: it could never match.
+ */
 export function toMatchers(urls: NonNullable<DecoyOptions['urls']>): RegExp[] {
   const patterns = typeof urls === 'string' || urls instanceof RegExp ? [urls] : urls
   // Without `g`/`y`: `test()` on those resumes at `lastIndex`, so every other request would miss.
@@ -146,14 +149,34 @@ export function toMatchers(urls: NonNullable<DecoyOptions['urls']>): RegExp[] {
 }
 
 function globToRegExp(glob: string): RegExp {
-  const source = glob
-    .split('**')
-    .map((part) =>
-      part
-        .split('*')
-        .map((literal) => literal.replace(/[.+?^${}()|[\]\\/]/g, '\\$&'))
-        .join('[^/]*'),
-    )
-    .join('.*')
+  const fail = (reason: string): never => {
+    throw new Error(`@decoyhq/testplane: \`urls\` glob '${glob}' ${reason}`)
+  }
+  // A non-match goes to the real network, so a glob that can never match must not load quietly.
+  if (!glob.startsWith('*') && !/^[a-z][a-z\d+.-]*:\/\//i.test(glob)) {
+    fail("must start with `*` or a scheme: it is matched against the full URL (try '**/api/**')")
+  }
+  let source = ''
+  let inGroup = false
+  for (let i = 0; i < glob.length; i++) {
+    const char = glob.charAt(i)
+    if (char === '*') {
+      const double = glob.charAt(i + 1) === '*'
+      source += double ? '.*' : '[^/]*'
+      i += double ? 1 : 0
+    } else if (char === '{') {
+      if (inGroup) fail('has a nested `{`, which is not supported')
+      inGroup = true
+      source += '(?:'
+    } else if (char === '}' && inGroup) {
+      inGroup = false
+      source += ')'
+    } else if (char === ',' && inGroup) {
+      source += '|'
+    } else {
+      source += char.replace(/[.+?^${}()|[\]\\/]/g, '\\$&')
+    }
+  }
+  if (inGroup) fail('has an unclosed `{`')
   return new RegExp(`^${source}$`)
 }
