@@ -41,6 +41,9 @@ type Sender = mpsc::Sender<Vec<u8>>;
 /// Messages a connection may have queued and unread; past it, `send` skips that connection.
 const SEND_QUEUE: usize = 64;
 
+/// How often a waiting `send` looks again for a connection with room.
+const FULL_QUEUE_RETRY: Duration = Duration::from_millis(10);
+
 /// Keeps a connection registered; dropping it unregisters the connection.
 #[derive(Debug)]
 pub struct Registration {
@@ -102,7 +105,10 @@ impl Connections {
             if delivered > 0 {
                 return Ok(delivered);
             }
-            if tokio::time::timeout_at(deadline, registered).await.is_err() {
+            // A full queue frees up without a registration, so look again soon.
+            let retry = deadline.min(tokio::time::Instant::now() + FULL_QUEUE_RETRY);
+            let _ = tokio::time::timeout_at(retry, registered).await;
+            if tokio::time::Instant::now() >= deadline {
                 return Err(SendError::Timeout);
             }
         }
@@ -265,6 +271,30 @@ mod tests {
         assert_eq!(send(vec![2]).await, Err(SendError::Timeout));
         slow.recv().await.unwrap();
         assert_eq!(send(vec![3]).await, Ok(1));
+    }
+
+    #[tokio::test]
+    async fn send_waits_for_a_full_queue_to_drain() {
+        let connections = Connections::default();
+        let (_slow, mut slow) = connections.register("a", "live", "live.Tick");
+        for _ in 0..SEND_QUEUE {
+            connections
+                .send("a", "live", "live.Tick", vec![1], SHORT)
+                .await
+                .unwrap();
+        }
+        let sending = tokio::spawn({
+            let connections = connections.clone();
+            async move {
+                connections
+                    .send("a", "live", "live.Tick", vec![2], Duration::from_secs(5))
+                    .await
+            }
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        slow.recv().await.unwrap();
+
+        assert_eq!(sending.await.unwrap(), Ok(1));
     }
 
     #[tokio::test]
