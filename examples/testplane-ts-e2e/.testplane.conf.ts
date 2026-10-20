@@ -1,0 +1,52 @@
+import { once } from 'node:events'
+import { createServer, type Server } from 'node:http'
+import type { DecoyOptions } from '@decoyhq/testplane'
+import type { ConfigInput } from 'testplane'
+
+/** Fixed port of the example's own upstream, targeted by the Passthrough Behavior in mocks/. */
+const UPSTREAM_PORT = 4174
+let upstream: Server | undefined
+
+export default {
+  gridUrl: 'local',
+  baseUrl: 'http://127.0.0.1:4173',
+  sets: { all: { files: 'tests/**/*.testplane.ts' } },
+  browsers: {
+    chrome: {
+      headless: true,
+      desiredCapabilities: {
+        browserName: 'chrome',
+        // As Playwright does by default: CI runners (Ubuntu 24 AppArmor) block Chrome's sandbox.
+        'goog:chromeOptions': { args: ['--no-sandbox'] },
+      },
+    },
+  },
+  // Testplane's `webServer`: the static app on port 4173.
+  devServer: {
+    command: 'node app/serve.mjs',
+    reuseExisting: !process.env.CI,
+    readinessProbe: { url: 'http://127.0.0.1:4173' },
+  },
+  // Master-process hooks: the local Passthrough upstream lives for the whole run.
+  beforeAll: async () => {
+    upstream = createServer((req, res) => {
+      res
+        .writeHead(200, { 'content-type': 'application/json' })
+        .end(JSON.stringify({ name: `Upstream profile (${req.method} ${req.url})` }))
+    })
+    upstream.listen(UPSTREAM_PORT, '127.0.0.1')
+    await once(upstream, 'listening')
+  },
+  afterAll: () => {
+    upstream?.close()
+  },
+  plugins: {
+    '@decoyhq/testplane': {
+      command: 'cargo run --quiet -p decoy -- serve --config mocks/decoy.yaml',
+      urls: '**/api/**',
+      collection: 'happy-path',
+      // The first run compiles the decoy binary.
+      timeout: 180_000,
+    } satisfies DecoyOptions,
+  },
+} satisfies ConfigInput

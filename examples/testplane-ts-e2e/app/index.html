@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Decoy Testplane E2E</title>
+  </head>
+  <body>
+    <h1>Users</h1>
+    <button id="load-user" type="button">Load user</button>
+    <button id="load-user-2" type="button">Load second user</button>
+    <button id="load-orders" type="button">Load orders</button>
+    <button id="load-profile" type="button">Load profile</button>
+    <p id="result" role="status"></p>
+    <script type="module">
+      const result = document.querySelector('#result')
+
+      // Success shows the payload's name; failures show status, Decoy's miss marker, and error.
+      async function show(path) {
+        const response = await fetch(path)
+        const body = await response.json().catch(() => ({}))
+        if (response.ok) {
+          result.textContent = body.name
+          return
+        }
+        const miss = response.headers.get('x-mock-miss') === 'true' ? ' (Decoy miss)' : ''
+        result.textContent = `Error ${response.status}${miss}: ${body.error ?? ''}`
+      }
+
+      document.querySelector('#load-user').addEventListener('click', () => show('/api/users/1'))
+      document.querySelector('#load-user-2').addEventListener('click', () => show('/api/users/2'))
+      // No Decoy Route serves /api/orders: it demonstrates the fail-closed miss.
+      document.querySelector('#load-orders').addEventListener('click', () => show('/api/orders'))
+      // Decoy forwards /api/profile to the example's local upstream (Passthrough).
+      document.querySelector('#load-profile').addEventListener('click', () => show('/api/profile'))
+    </script>
+  </body>
+</html>

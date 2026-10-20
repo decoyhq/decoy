@@ -1,0 +1,47 @@
+{
+  "name": "@decoyhq/testplane",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Testplane plugin for the native Decoy runtime.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/decoyhq/decoy.git",
+    "directory": "packages/testplane"
+  },
+  "exports": {
+    ".": {
+      "@decoyhq/source": "./src/index.ts",
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rslib build",
+    "test": "rstest run",
+    "typecheck": "tsc",
+    "check:package": "publint --strict && attw --pack . --profile node16"
+  },
+  "peerDependencies": {
+    "testplane": ">=8"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "testplane": "catalog:"
+  },
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24"
+  }
+}
