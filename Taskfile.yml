@@ -75,6 +75,11 @@ tasks:
       - task: build
       - pnpm test:e2e
 
+  bench:
+    desc: 'Run the runtime and TUI benchmarks; results and HTML reports land in target/criterion'
+    cmds:
+      - cargo bench -p decoy-runtime -p decoy-tui {{.CLI_ARGS}}
+
   serve:
     desc: 'Run decoy serve from source, e.g. task serve -- --config examples/playwright-ts-e2e/mocks/decoy.yaml'
     cmds:
