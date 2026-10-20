@@ -1,9 +1,11 @@
 import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
+import { setTimeout as sleep } from 'node:timers/promises'
 import { afterEach, describe, expect, test } from '@rstest/core'
 import { FAKE_DECOY } from '../fixtures'
 import { isHealthy } from './health'
@@ -176,6 +178,36 @@ describe('startDecoy', () => {
       /exited before serving \(code 3\)/,
     )
     expect(existsSync(join(tmpdir(), `decoy-runner-${port}.json`))).toBe(false)
+  })
+
+  test('stops the command when the pidfile cannot be written', async () => {
+    const port = await freePort()
+    const url = `http://127.0.0.1:${port}`
+    // A directory where the pidfile goes: neither writable nor removable as a file, like another
+    // user's pidfile in a shared /tmp.
+    const pidFile = join(tmpdir(), `decoy-runner-${port}.json`)
+    mkdirSync(pidFile)
+    cleanups.push(() => rm(pidFile, { recursive: true }))
+
+    await expect(start({ url, command: `node ${FAKE_DECOY} ${port}` })).rejects.toThrow(/EISDIR/)
+    await sleep(1000)
+    expect(await isHealthy(url)).toBe(false)
+  })
+
+  test("leaves a running runner's pidfile it could not overwrite", async () => {
+    const port = await freePort()
+    // Another live runner's pidfile, read-only to this start.
+    const runner = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
+    cleanups.push(() => Promise.resolve(runner.kill()))
+    const pidFile = join(tmpdir(), `decoy-runner-${port}.json`)
+    writeFileSync(pidFile, JSON.stringify({ pid: runner.pid, runner: runner.pid }))
+    chmodSync(pidFile, 0o444)
+    cleanups.push(() => rm(pidFile, { force: true }))
+
+    await expect(
+      start({ url: `http://127.0.0.1:${port}`, command: `node ${FAKE_DECOY} ${port}` }),
+    ).rejects.toThrow(/EACCES|EPERM/)
+    expect(existsSync(pidFile)).toBe(true)
   })
 
   test('fails clearly and stops the command when health never succeeds', async () => {
