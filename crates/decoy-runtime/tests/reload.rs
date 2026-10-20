@@ -213,7 +213,10 @@ async fn a_session_on_a_removed_collection_falls_back_and_others_follow_the_new_
     {
         let mut controller = fixture.server.controller.write().await;
         controller.try_use_collection("picked", "errors").unwrap();
-        controller.reset("unpicked");
+        // An override only: the Session exists without picking a Collection.
+        controller
+            .try_use_route("unpicked", "users", "any", "ok")
+            .unwrap();
     }
 
     fixture.write(

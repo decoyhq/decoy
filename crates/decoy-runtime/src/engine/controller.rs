@@ -128,7 +128,11 @@ impl Controller {
         Ok(self.selection(session).snapshot())
     }
 
+    /// Clears the Session's overrides. An unknown Session stays unknown: it already has none.
     pub fn reset(&mut self, session: &str) -> SelectionSnapshot {
+        if !self.sessions.contains_key(session) {
+            return self.selection(session).snapshot();
+        }
         self.selection_mut(session).route_overrides.clear();
         self.emit(session, SessionChange::Reset);
         self.selection(session).snapshot()
@@ -455,15 +459,15 @@ mod tests {
     #[test]
     fn past_the_cap_the_session_changed_least_recently_ends() {
         let mut controller = Controller::new(catalog("- id: local\n  routes: []\n"), "local");
-        controller.reset(DEFAULT_SESSION);
+        controller.use_collection(DEFAULT_SESSION, "local");
         for i in 0..MAX_SESSIONS - 1 {
-            controller.reset(&format!("s{i}"));
+            controller.use_collection(&format!("s{i}"), "local");
         }
         // Changed again, so `s1` is now the one changed least recently (the default never goes).
-        controller.reset("s0");
+        controller.use_collection("s0", "local");
         let mut events = controller.subscribe();
 
-        controller.reset("new");
+        controller.use_collection("new", "local");
 
         assert_eq!(controller.sessions.len(), MAX_SESSIONS);
         assert!(!controller.sessions.contains_key("s1"));
@@ -480,18 +484,31 @@ mod tests {
     }
 
     #[test]
+    fn reset_on_an_unknown_session_returns_the_defaults_without_holding_it() {
+        let mut controller = Controller::new(catalog("- id: local\n  routes: []\n"), "local");
+        let mut events = controller.subscribe();
+
+        let snapshot = controller.reset("gone");
+
+        assert_eq!(snapshot.collection, "local");
+        assert!(snapshot.overrides.is_empty());
+        assert!(controller.sessions.is_empty());
+        assert!(events.try_recv().is_err());
+    }
+
+    #[test]
     fn a_session_reload_changed_is_not_the_one_ended_past_the_cap() {
         let both = "- id: local\n  routes: []\n- id: other\n  routes: []\n";
         let mut controller = Controller::new(catalog(both), "local");
-        controller.reset(DEFAULT_SESSION);
+        controller.use_collection(DEFAULT_SESSION, "local");
         controller.use_collection("s0", "other");
         for i in 1..MAX_SESSIONS - 1 {
-            controller.reset(&format!("s{i}"));
+            controller.use_collection(&format!("s{i}"), "local");
         }
         // `other` is gone, so reload moves `s0` back to `local`: that counts as a change.
         controller.reload(catalog("- id: local\n  routes: []\n"), "local");
 
-        controller.reset("new");
+        controller.use_collection("new", "local");
 
         assert!(controller.sessions.contains_key("s0"));
         assert!(!controller.sessions.contains_key("s1"));
