@@ -6,9 +6,11 @@ use std::path::Path;
 use std::sync::Arc;
 
 use decoy_runtime::config::{ProtoSources, ServeCliOptions, ServeConfig};
+use decoy_runtime::connections::Connections;
 use decoy_runtime::events::{
     CAPACITY, Event, Level, Outcome, RequestEvent, SessionChange, SessionEvent, SessionSource,
 };
+use decoy_runtime::grpc::GrpcReply;
 use decoy_runtime::{Candidate, HttpExecutionRequest, HttpMethod, Rejection, Server};
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
@@ -313,14 +315,20 @@ async fn a_grpc_call_emits_its_decoded_messages_as_json() {
     body.extend_from_slice(&message);
 
     let view = running.server.controller.read().await.session_view("s1");
-    let response = view
-        .execute_grpc(decoy_runtime::grpc::GrpcRequest {
-            service: "approvals.v1.Approvals".into(),
-            method: "GetApproval".into(),
-            metadata: BTreeMap::from([("x-user".into(), "alice".into())]),
-            body,
-        })
-        .await;
+    let GrpcReply::Unary(response) = view
+        .execute_grpc(
+            decoy_runtime::grpc::GrpcRequest {
+                service: "approvals.v1.Approvals".into(),
+                method: "GetApproval".into(),
+                metadata: BTreeMap::from([("x-user".into(), "alice".into())]),
+                body,
+            },
+            &Connections::default(),
+        )
+        .await
+    else {
+        panic!("expected a unary reply")
+    };
     assert_eq!(response.status, 0);
 
     let event = next_request(&mut events).await;
@@ -347,6 +355,69 @@ async fn a_grpc_call_emits_its_decoded_messages_as_json() {
 }
 
 #[tokio::test]
+async fn a_server_streaming_call_emits_one_hit_as_it_opens() {
+    let running = start(
+        &["id: watch\ntransport: grpc\nmatch: { service: approvals.v1.Approvals, method: WatchApprovals }\ncases:\n  any:\n    behaviors:\n      open: {}\n"],
+        "- id: default\n  routes: [watch:any:open]\n",
+    )
+    .await;
+    let mut events = running.server.subscribe();
+    let view = running.server.controller.read().await.session_view("s1");
+    let connections = Connections::default();
+    let reply = view
+        .execute_grpc(
+            decoy_runtime::grpc::GrpcRequest {
+                service: "approvals.v1.Approvals".into(),
+                method: "WatchApprovals".into(),
+                metadata: BTreeMap::new(),
+                // An empty WatchRequest, framed.
+                body: vec![0, 0, 0, 0, 0],
+            },
+            &connections,
+        )
+        .await;
+    assert!(matches!(reply, GrpcReply::Stream(_)));
+
+    let event = next_request(&mut events).await;
+    assert!(matches!(event.outcome, Outcome::Hit(_)));
+    assert_eq!(event.response.status, 0);
+    assert_eq!(event.body.bytes, br#"{"ids":[]}"#);
+    assert!(matches!(events.try_recv(), Err(TryRecvError::Empty)));
+}
+
+#[tokio::test]
+async fn a_server_streaming_call_records_its_end_status_when_known_at_open() {
+    let running = start(
+        &["id: watch\ntransport: grpc\nmatch: { service: approvals.v1.Approvals, method: WatchApprovals }\ncases:\n  any:\n    behaviors:\n      aborted: { stream: [], status: ABORTED, message: gave up }\n"],
+        "- id: default\n  routes: [watch:any:aborted]\n",
+    )
+    .await;
+    let mut events = running.server.subscribe();
+    let view = running.server.controller.read().await.session_view("s1");
+    let reply = view
+        .execute_grpc(
+            decoy_runtime::grpc::GrpcRequest {
+                service: "approvals.v1.Approvals".into(),
+                method: "WatchApprovals".into(),
+                metadata: BTreeMap::new(),
+                body: vec![0, 0, 0, 0, 0],
+            },
+            &Connections::default(),
+        )
+        .await;
+    assert!(matches!(reply, GrpcReply::Stream(_)));
+
+    let event = next_request(&mut events).await;
+    assert_eq!(event.response.status, 10);
+    assert!(
+        event
+            .response
+            .headers
+            .contains(&("grpc-message".into(), "gave up".into()))
+    );
+}
+
+#[tokio::test]
 async fn a_grpc_miss_emits_its_status_message_as_a_header() {
     let running = start(
         &[APPROVALS],
@@ -354,19 +425,29 @@ async fn a_grpc_miss_emits_its_status_message_as_a_header() {
     )
     .await;
     let view = running.server.controller.read().await.session_view("s1");
-    let call = || {
-        view.execute_grpc(decoy_runtime::grpc::GrpcRequest {
-            service: "approvals.v1.Approvals".into(),
-            method: "ListApprovals".into(),
-            metadata: BTreeMap::new(),
-            body: Vec::new(),
-        })
+    let connections = Connections::default();
+    let call = || async {
+        let reply = view
+            .execute_grpc(
+                decoy_runtime::grpc::GrpcRequest {
+                    service: "approvals.v1.Approvals".into(),
+                    method: "ListApprovals".into(),
+                    metadata: BTreeMap::new(),
+                    body: Vec::new(),
+                },
+                &connections,
+            )
+            .await;
+        let GrpcReply::Unary(response) = reply else {
+            panic!("expected a unary reply")
+        };
+        response.status
     };
     // Nobody subscribed yet: answered without capturing.
-    assert_eq!(call().await.status, 12);
+    assert_eq!(call().await, 12);
 
     let mut events = running.server.subscribe();
-    assert_eq!(call().await.status, 12);
+    assert_eq!(call().await, 12);
 
     let event = next_request(&mut events).await;
     assert!(matches!(event.outcome, Outcome::Miss(_)));

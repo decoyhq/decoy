@@ -1,4 +1,5 @@
-//! `decoy serve` answering unary gRPC calls from a real client (tonic) on the HTTP port.
+//! `decoy serve` answering unary and server-streaming gRPC calls from a real client (tonic) on the
+//! HTTP port.
 
 use std::fs;
 use std::net::TcpListener;
@@ -164,6 +165,215 @@ async fn serves_grpc_over_tls_with_alpn_h2() {
     assert_eq!(status.code(), Code::NotFound);
 }
 
+const WATCH_ROUTE: &str = r#"
+id: approvals-watch
+transport: grpc
+match: { service: approvals.v1.Approvals, method: WatchApprovals }
+cases:
+  any:
+    behaviors:
+      then-ok:
+        stream:
+          - { message: { id: '${ message.ids[0] }', state: PENDING } }
+          - { message: { id: '${ message.ids[0] }', state: APPROVED }, delay: 50ms }
+        status: OK
+      then-aborted:
+        stream: [{ message: { id: a-1, state: PENDING } }]
+        status: ABORTED
+        message: gave up
+      open:
+        stream: [{ message: { id: a-1, state: PENDING } }]
+"#;
+
+const WATCH_COLLECTIONS: &str = r#"
+- id: then-ok
+  routes: [approvals-watch:any:then-ok]
+- id: then-aborted
+  routes: [approvals-watch:any:then-aborted]
+- id: open
+  routes: [approvals-watch:any:open]
+"#;
+
+#[tokio::test]
+async fn streams_scripted_messages_then_ends_with_the_status() {
+    let server = Server::start(WATCH_ROUTE, WATCH_COLLECTIONS).await;
+    let mut client = server.client().await;
+
+    let mut stream = client.watch(json!({ "ids": ["a-7"] }), &[]).await.unwrap();
+    assert_eq!(
+        next(&mut stream).await.unwrap(),
+        Some(json!({ "id": "a-7", "state": "PENDING" }))
+    );
+    assert_eq!(
+        next(&mut stream).await.unwrap(),
+        Some(json!({ "id": "a-7", "state": "APPROVED" }))
+    );
+    assert_eq!(next(&mut stream).await.unwrap(), None);
+
+    server
+        .control("useCollection", r#"{"collection":"then-aborted"}"#, "s1")
+        .await;
+    let mut stream = client
+        .watch(json!({ "ids": ["a-1"] }), &[("x-mock-session", "s1")])
+        .await
+        .unwrap();
+    assert_eq!(
+        next(&mut stream).await.unwrap(),
+        Some(json!({ "id": "a-1", "state": "PENDING" }))
+    );
+    let status = next(&mut stream).await.unwrap_err();
+    assert_eq!(status.code(), Code::Aborted);
+    assert_eq!(status.message(), "gave up");
+}
+
+#[tokio::test]
+async fn an_open_stream_takes_sends_from_its_session_until_the_client_cancels() {
+    let server = Server::start(WATCH_ROUTE, WATCH_COLLECTIONS).await;
+    server
+        .control("useCollection", r#"{"collection":"open"}"#, "s1")
+        .await;
+    let mut client = server.client().await;
+    let mut stream = client
+        .watch(json!({ "ids": ["a-1"] }), &[("x-mock-session", "s1")])
+        .await
+        .unwrap();
+    assert_eq!(
+        next(&mut stream).await.unwrap(),
+        Some(json!({ "id": "a-1", "state": "PENDING" }))
+    );
+
+    let approved =
+        r#"{"route":"approvals-watch","message":{"id":"a-1","state":"APPROVED"},"timeout":200}"#;
+    assert_eq!(
+        server.send(approved, "s1").await,
+        (200, json!({ "delivered": 1 }))
+    );
+    assert_eq!(
+        next(&mut stream).await.unwrap(),
+        Some(json!({ "id": "a-1", "state": "APPROVED" }))
+    );
+    assert_eq!(server.send(approved, "s2").await.0, 408);
+
+    drop(stream);
+    // The server learns of the cancel asynchronously; until then a send may still be delivered.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while server.send(approved, "s1").await.0 != 408 {
+        assert!(
+            Instant::now() < deadline,
+            "the cancelled stream still takes sends"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_send_that_does_not_fit_the_output_type_is_rejected_and_the_stream_stays_open() {
+    let server = Server::start(WATCH_ROUTE, WATCH_COLLECTIONS).await;
+    server
+        .control("useCollection", r#"{"collection":"open"}"#, "s1")
+        .await;
+    let mut client = server.client().await;
+    let mut stream = client
+        .watch(json!({ "ids": ["a-1"] }), &[("x-mock-session", "s1")])
+        .await
+        .unwrap();
+    assert!(next(&mut stream).await.unwrap().is_some());
+
+    let (status, body) = server
+        .send(r#"{"route":"approvals-watch","message":{"nope":1}}"#, "s1")
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("response does not fit approvals.v1.Approval"),
+        "{body}"
+    );
+
+    let good = r#"{"route":"approvals-watch","message":{"id":"a-2"}}"#;
+    assert_eq!(server.send(good, "s1").await.0, 200);
+    assert_eq!(
+        next(&mut stream).await.unwrap(),
+        Some(json!({ "id": "a-2" }))
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn shutdown_ends_open_streams_with_unavailable() {
+    let mut server = Server::start(WATCH_ROUTE, WATCH_COLLECTIONS).await;
+    server
+        .control("useCollection", r#"{"collection":"open"}"#, "default")
+        .await;
+    let mut client = server.client().await;
+    let mut stream = client.watch(json!({ "ids": ["a-1"] }), &[]).await.unwrap();
+    assert!(next(&mut stream).await.unwrap().is_some());
+
+    let started = Instant::now();
+    let killed = Command::new("kill")
+        .args(["-TERM", &server.child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let status = next(&mut stream).await.unwrap_err();
+    assert_eq!(status.code(), Code::Unavailable, "{status:?}");
+    assert_eq!(status.message(), "decoy is shutting down");
+    while server.child.try_wait().unwrap().is_none() {
+        // Well under the 5s drain timeout: the open stream must not hold shutdown.
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "decoy did not stop"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[test]
+fn stream_on_a_unary_method_fails_startup() {
+    let temp = TempDir::new().unwrap();
+    let protos =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../decoy-runtime/tests/fixtures/proto");
+    fs::create_dir_all(temp.path().join("routes")).unwrap();
+    fs::write(
+        temp.path().join("routes/approvals.yaml"),
+        "id: approvals-get\ntransport: grpc\nmatch: { service: approvals.v1.Approvals, method: GetApproval }\ncases:\n  any:\n    behaviors:\n      ok: { stream: [{ message: { id: a-1 } }] }\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("collections.yaml"),
+        "- id: default\n  routes: [approvals-get:any:ok]\n",
+    )
+    .unwrap();
+    fs::write(
+        temp.path().join("decoy.yaml"),
+        format!(
+            "routes: routes\ncollections: collections.yaml\nprotos:\n  roots: [{}]\n",
+            protos.display()
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_decoy"))
+        .args(["serve", "--config", "decoy.yaml"])
+        .current_dir(temp.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "behavior `approvals-get:any:ok`: `stream` needs a server-streaming method; `approvals.v1.Approvals.GetApproval` is unary"
+        ),
+        "{stderr}"
+    );
+}
+
+async fn next(stream: &mut tonic::Streaming<DynamicMessage>) -> Result<Option<Value>, Status> {
+    let message = stream.message().await?;
+    Ok(message.map(|message| serde_json::to_value(message).unwrap()))
+}
+
 struct Server {
     _temp: TempDir,
     child: Child,
@@ -299,6 +509,19 @@ impl Server {
             .unwrap();
         assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
     }
+
+    async fn send(&self, body: &str, session: &str) -> (u16, Value) {
+        let response = self
+            .http()
+            .post(format!("{}/__decoy__/control/send", self.base_url()))
+            .header("content-type", "application/json")
+            .header("x-mock-session", session)
+            .body(body.to_owned())
+            .send()
+            .await
+            .unwrap();
+        (response.status().as_u16(), response.json().await.unwrap())
+    }
 }
 
 /// A tonic client over runtime-loaded descriptors, so the test needs no codegen.
@@ -331,6 +554,34 @@ impl ApprovalsClient {
             )
             .await?;
         Ok(serde_json::to_value(response.into_inner()).unwrap())
+    }
+
+    async fn watch(
+        &mut self,
+        message: Value,
+        metadata: &[(&'static str, &str)],
+    ) -> Result<tonic::Streaming<DynamicMessage>, Status> {
+        let input = self
+            .output
+            .parent_pool()
+            .get_message_by_name("approvals.v1.WatchRequest")
+            .unwrap();
+        let mut request = Request::new(DynamicMessage::deserialize(input, message).unwrap());
+        for (key, value) in metadata {
+            request
+                .metadata_mut()
+                .insert(*key, MetadataValue::try_from(*value).unwrap());
+        }
+        self.grpc.ready().await.unwrap();
+        let response = self
+            .grpc
+            .server_streaming(
+                request,
+                "/approvals.v1.Approvals/WatchApprovals".parse().unwrap(),
+                DynamicCodec(self.output.clone()),
+            )
+            .await?;
+        Ok(response.into_inner())
     }
 }
 

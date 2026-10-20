@@ -171,8 +171,12 @@ cases:
         stream:
           - { message: { id: a-1, state: PENDING } }
           - { message: { id: a-1, state: APPROVED }, delay: 500ms }
-        # then the call ends with OK; add `status: ABORTED` after the list to end with an error
+        status: OK # ends the call; `status: ABORTED` ends it with an error
 ```
+
+With `status`, the call ends after the list. Without it, the call stays open after the list and
+each Control API `send` (§9) to the Route from the call's Session is another response message,
+until the client cancels.
 
 **Client streaming:** the Case sees all request messages once the client finishes sending.
 

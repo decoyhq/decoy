@@ -12,7 +12,32 @@ use std::collections::BTreeMap;
 
 use crate::schema::PipelineStep;
 
+pub use codec::GrpcCodecError;
 pub use resolve::GrpcResolution;
+
+/// Encodes `message` as a response of `method` through the Route's Pipeline, as a stream sends it.
+pub fn encode_response(
+    route: &crate::schema::Route,
+    method: &prost_reflect::MethodDescriptor,
+    message: serde_json::Value,
+) -> Result<Vec<u8>, GrpcCodecError> {
+    codec::encode(message, codec::pipeline(route), &method.output())
+}
+
+/// How the server answers a call: one response, or a server-streaming body.
+pub enum GrpcReply {
+    Unary(GrpcResponse),
+    Stream(futures_util::stream::BoxStream<'static, StreamPart>),
+}
+
+/// One piece of a server-streaming body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamPart {
+    /// A framed response message.
+    Message(Vec<u8>),
+    /// The end of the call: its status and metadata (its `body` is empty).
+    End(GrpcResponse),
+}
 
 /// The default Pipeline for gRPC Routes (Q2).
 pub const DEFAULT_PIPELINE: [PipelineStep; 2] = [PipelineStep::GrpcFrame, PipelineStep::Protobuf];
@@ -23,6 +48,7 @@ pub const INVALID_ARGUMENT: u8 = 3;
 pub const RESOURCE_EXHAUSTED: u8 = 8;
 pub const UNIMPLEMENTED: u8 = 12;
 pub const INTERNAL: u8 = 13;
+pub const UNAVAILABLE: u8 = 14;
 
 /// One unary call as the server received it.
 #[derive(Debug, Clone, PartialEq, Eq)]

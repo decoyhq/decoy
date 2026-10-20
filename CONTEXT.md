@@ -87,8 +87,9 @@ _Avoid_: confusing it with the **Router** (the public per-Session handle), "cont
 
 **Request envelope**:
 The fixed shape case matchers and templates evaluate against. For HTTP it includes method, URL,
-path, `pathParams`, query, headers, cookies, and body. For a unary gRPC call it is `service`,
-`method`, `metadata` (the request headers), and `message` (the decoded request as protobuf JSON).
+path, `pathParams`, query, headers, cookies, and body. For a unary or server-streaming gRPC call
+it is `service`, `method`, `metadata` (the request headers), and `message` (the decoded request as
+protobuf JSON).
 Other transports provide transport-specific message/connection data through the same contract.
 _Avoid_: "context", "request object".
 

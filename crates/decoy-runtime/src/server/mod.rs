@@ -36,6 +36,7 @@ pub struct Server {
     pub controller: Arc<RwLock<Controller>>,
     reloader: Reloader,
     events: crate::events::Sender,
+    connections: crate::connections::Connections,
     shutdown: Pin<Box<dyn Future<Output = ()> + Send>>,
     stop_all: tokio::sync::watch::Sender<()>,
     servers: tokio::task::JoinSet<std::io::Result<()>>,
@@ -73,11 +74,12 @@ pub async fn serve(
     let mut notices = Vec::new();
     let controller = Arc::new(RwLock::new(controller));
     let max_body_bytes = Arc::new(AtomicUsize::new(config.max_body_bytes));
+    let connections = crate::connections::Connections::default();
     let app = Router::new()
         .fallback(any(handle_request))
         .with_state(controller.clone())
         .layer(Extension(MaxBodyBytes(max_body_bytes.clone())))
-        .layer(Extension(crate::connections::Connections::default()))
+        .layer(Extension(connections.clone()))
         .layer(Extension(events.clone()));
     let tls_config = match &config.tls {
         None => None,
@@ -147,6 +149,7 @@ pub async fn serve(
         controller,
         reloader,
         events,
+        connections,
         shutdown: Box::pin(shutdown),
         stop_all,
         servers,
@@ -184,6 +187,7 @@ impl Server {
     pub async fn wait(self) -> Result<(), ServeError> {
         let Self {
             events,
+            connections,
             shutdown,
             stop_all,
             mut servers,
@@ -194,6 +198,8 @@ impl Server {
             Some(result) = servers.join_next() => result??,
         }
         drop(stop_all);
+        // Open streams would otherwise wait for `send` until the drain timeout.
+        connections.close_all();
         // Let open requests finish, but never wait on a long `delay` or a hung upstream forever.
         let drained = tokio::time::timeout(DRAIN_TIMEOUT, async {
             while let Some(result) = servers.join_next().await {

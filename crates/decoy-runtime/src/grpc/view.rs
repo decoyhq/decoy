@@ -1,11 +1,14 @@
-use super::{GrpcRequest, GrpcResponse};
+use super::{GrpcReply, GrpcRequest};
+use crate::connections::Connections;
 use crate::engine::SessionView;
 use crate::events::{CapturedBody, CapturedResponse};
 use crate::schema::Transport;
 
 impl SessionView {
     /// Executes the call and, if anyone subscribed, emits its [`RequestEvent`](crate::events::RequestEvent).
-    pub async fn execute_grpc(&self, request: GrpcRequest) -> GrpcResponse {
+    /// A server-streaming call emits it once, as it opens; an open stream registers in
+    /// `connections` for Control API `send`.
+    pub async fn execute_grpc(&self, request: GrpcRequest, connections: &Connections) -> GrpcReply {
         let capture = self.events.receiver_count() > 0;
         let started = capture.then(|| {
             self.start(
@@ -47,6 +50,9 @@ impl SessionView {
                 },
             );
         }
-        call.response
+        match call.stream {
+            Some(stream) => GrpcReply::Stream(stream.serve(connections, &self.session)),
+            None => GrpcReply::Unary(call.response),
+        }
     }
 }
