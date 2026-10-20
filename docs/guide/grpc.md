@@ -1,8 +1,9 @@
 # gRPC
 
-Decoy answers unary gRPC calls on its normal port. gRPC over HTTP/2 cleartext (h2c), plain HTTP,
-and the Control API all share it. Point your gRPC client at Decoy instead of the real service; no
-generated code or server stubs are needed. Server, client, and bidi streaming are not supported yet.
+Decoy answers unary and server-streaming gRPC calls on its normal port. gRPC over HTTP/2 cleartext
+(h2c), plain HTTP, and the Control API all share it. Point your gRPC client at Decoy instead of the
+real service; no generated code or server stubs are needed. Client and bidi streaming are not
+supported yet.
 For gRPC over TLS, turn on [TLS](tls.md); the same port then speaks gRPC over HTTPS.
 
 ## Proto roots
@@ -86,11 +87,49 @@ A Case `match` takes `message` (a deep partial match, like HTTP `body`) and `met
 
 Every string can be a `${ }` template, including `status`.
 
+## Server streaming
+
+A server-streaming method takes one request and answers with a `stream` of messages, each sent
+`delay` after the one before it:
+
+```yaml
+# mocks/routes/approvals-watch.yaml
+id: approvals-watch
+transport: grpc
+match: { service: approvals.v1.Approvals, method: WatchApprovals }
+cases:
+  any:
+    behaviors:
+      progress:
+        stream:
+          - { message: { id: '${ message.ids[0] }', state: PENDING } }
+          - { message: { id: '${ message.ids[0] }', state: APPROVED }, delay: 500ms }
+        status: OK # end the call here
+      gives-up:
+        stream: [{ message: { id: a-1, state: PENDING } }]
+        status: ABORTED
+        message: gave up
+      live:
+        stream: [{ message: { id: a-1, state: PENDING } }] # no status: stays open
+```
+
+- With `status`, the call ends after the list: `OK`, or an error with its `message` text and
+  `metadata`, as for unary calls.
+- Without `status`, the call stays open after the list. Each Control API
+  [`send`](sessions-and-control.md#send) to the Route from the call's Session arrives as another
+  response message, until the client cancels. A `send` that comes while the list is still playing
+  arrives after it. `{}` opens the stream with nothing scripted.
+- `message` outside the list is only the text of an error `status`, and `metadata` needs a
+  `status` to be sent with. `stream` on a unary method fails at startup.
+- `delay` on the Behavior itself waits before the first message.
+- The call's request event is logged once, when the stream opens.
+
 ## Checked at startup
 
 - The service and method exist in the loaded protos.
-- Literal response `message` values fit the method's output type: no unknown fields, valid enum
-  names, scalar types and ranges. A message with no `${ }` is also parsed as protobuf JSON.
+- Literal response `message` and `stream[].message` values fit the method's output type: no
+  unknown fields, valid enum names, scalar types and ranges. A message with no `${ }` is also
+  parsed as protobuf JSON.
 - Literal `match.message` values fit the input type in the envelope's form above. `created_at_ms`
   or `createdAtMs: 5` would never match a decoded request, so they fail: use JSON names, and write
   64-bit values as strings (`createdAtMs: '5'`).
@@ -99,7 +138,9 @@ Every string can be a `${ }` template, including `status`.
   is dropped from the trailers with a warning.
 
 Templated values are checked when they render. A render or encode failure answers `INTERNAL` with
-the Behavior address.
+the Behavior address. A stream renders its whole list when the call comes in, so a failure there
+answers `INTERNAL` before any message; a `send` message that doesn't fit the output type ends the
+stream with `INTERNAL`.
 
 ## Misses and errors
 

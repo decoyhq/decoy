@@ -8,7 +8,8 @@ use crate::connections::{Connections, SendError};
 pub use crate::engine::session::{DEFAULT_SESSION, SESSION_HEADER};
 use crate::engine::{Catalog, ControlError, Controller, SelectionSnapshot};
 use crate::events::SessionSource;
-use crate::schema::Route;
+use crate::grpc::schema::find_method;
+use crate::schema::{Route, RouteMatch};
 
 pub const CONTROL_PREFIX: &str = "/__decoy__";
 /// Liveness probe for tools waiting on a runtime. It reports only that Decoy is serving; it
@@ -194,7 +195,7 @@ async fn try_send(
     let Some(route) = catalog.route(&body.route) else {
         return Err(ControlApiError::SendUnknownRoute { route: body.route });
     };
-    if !takes_send(route) {
+    if !takes_send(catalog, route) {
         return Err(ControlApiError::SendNotLongLived { route: body.route });
     }
     let timeout = body
@@ -210,10 +211,14 @@ async fn try_send(
         })
 }
 
-/// Whether the Route holds long-lived connections. None does yet: server-streaming gRPC (#248),
-/// then WebSocket and SSE (#218).
-fn takes_send(_route: &Route) -> bool {
-    false
+/// Whether the Route holds long-lived connections: server-streaming gRPC so far; WebSocket and SSE
+/// come with #218.
+fn takes_send(catalog: &Catalog, route: &Route) -> bool {
+    let RouteMatch::Grpc(address) = &route.route_match else {
+        return false;
+    };
+    find_method(&catalog.runtime().protos, &address.service, &address.method)
+        .is_ok_and(|method| method.is_server_streaming())
 }
 
 pub fn try_handle_control_request(

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::response::{
-    control_response, grpc_response, json_response, response_from_execution_outcome,
-    response_from_forward_response,
+    control_response, grpc_response, grpc_stream_response, json_response,
+    response_from_execution_outcome, response_from_forward_response,
 };
 use crate::connections::Connections;
 use crate::control_api::{
@@ -12,7 +12,7 @@ use crate::control_api::{
     is_control_path, session_id,
 };
 use crate::engine::Controller;
-use crate::grpc::{GrpcRequest, GrpcResponse, RESOURCE_EXHAUSTED, UNIMPLEMENTED};
+use crate::grpc::{GrpcReply, GrpcRequest, GrpcResponse, RESOURCE_EXHAUSTED, UNIMPLEMENTED};
 use crate::http::{HttpExecutionRequest, HttpResponsePlan, RequestMetadata};
 use crate::schema::HttpMethod;
 use axum::Extension;
@@ -94,15 +94,21 @@ async fn respond(
             ));
         };
         let view = controller.read().await.session_view(&session);
-        let response = view
-            .execute_grpc(GrpcRequest {
-                service,
-                method,
-                metadata: headers,
-                body,
-            })
+        let reply = view
+            .execute_grpc(
+                GrpcRequest {
+                    service,
+                    method,
+                    metadata: headers,
+                    body,
+                },
+                &connections,
+            )
             .await;
-        return grpc_response(response);
+        return match reply {
+            GrpcReply::Unary(response) => grpc_response(response),
+            GrpcReply::Stream(parts) => grpc_stream_response(parts),
+        };
     }
 
     if is_control_path(uri.path()) {

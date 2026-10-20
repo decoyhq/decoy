@@ -1,16 +1,45 @@
 use crate::control_api::ControlApiResponse;
-use crate::grpc::GrpcResponse;
+use crate::grpc::{GrpcResponse, StreamPart};
 use crate::http::HttpExecutionOutcome;
 use crate::http::forward::ForwardResponse;
 use axum::body::Body;
 use axum::http::{HeaderName, HeaderValue, Response, StatusCode};
 use bytes::Bytes;
+use futures_util::StreamExt as _;
+use futures_util::stream::{self, BoxStream};
 use http_body::Frame;
 use http_body_util::StreamBody;
 
 /// A gRPC answer: HTTP 200, the framed message, then `grpc-status`/`grpc-message` and metadata as
 /// trailers.
 pub(super) fn grpc_response(response: GrpcResponse) -> Response<Body> {
+    grpc_body(stream::iter(frames(response)).boxed())
+}
+
+/// A server-streaming answer: one data frame per message as it comes, then the trailers.
+pub(super) fn grpc_stream_response(parts: BoxStream<'static, StreamPart>) -> Response<Body> {
+    grpc_body(
+        parts
+            .flat_map(|part| {
+                stream::iter(match part {
+                    StreamPart::Message(message) => vec![Frame::data(Bytes::from(message))],
+                    StreamPart::End(response) => frames(response),
+                })
+            })
+            .boxed(),
+    )
+}
+
+fn grpc_body(frames: BoxStream<'static, Frame<Bytes>>) -> Response<Body> {
+    let frames = frames.map(Ok::<_, std::convert::Infallible>);
+    let mut http = Response::new(Body::new(StreamBody::new(frames)));
+    http.headers_mut()
+        .insert("content-type", HeaderValue::from_static("application/grpc"));
+    http
+}
+
+/// The response's message, if any, then its status and metadata as trailers.
+fn frames(response: GrpcResponse) -> Vec<Frame<Bytes>> {
     let mut trailers = axum::http::HeaderMap::new();
     trailers.insert("grpc-status", HeaderValue::from(u16::from(response.status)));
     if !response.status_message.is_empty()
@@ -35,17 +64,10 @@ pub(super) fn grpc_response(response: GrpcResponse) -> Response<Body> {
     }
     let mut frames = Vec::new();
     if !response.body.is_empty() {
-        frames.push(Ok::<_, std::convert::Infallible>(Frame::data(Bytes::from(
-            response.body,
-        ))));
+        frames.push(Frame::data(Bytes::from(response.body)));
     }
-    frames.push(Ok(Frame::trailers(trailers)));
-    let mut http = Response::new(Body::new(StreamBody::new(futures_util::stream::iter(
-        frames,
-    ))));
-    http.headers_mut()
-        .insert("content-type", HeaderValue::from_static("application/grpc"));
-    http
+    frames.push(Frame::trailers(trailers));
+    frames
 }
 
 /// `grpc-message` is percent-encoded UTF-8 (gRPC over HTTP/2 spec).

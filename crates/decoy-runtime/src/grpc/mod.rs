@@ -14,6 +14,21 @@ use crate::schema::PipelineStep;
 
 pub use resolve::GrpcResolution;
 
+/// How the server answers a call: one response, or a server-streaming body.
+pub enum GrpcReply {
+    Unary(GrpcResponse),
+    Stream(futures_util::stream::BoxStream<'static, StreamPart>),
+}
+
+/// One piece of a server-streaming body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StreamPart {
+    /// A framed response message.
+    Message(Vec<u8>),
+    /// The end of the call: its status and metadata (its `body` is empty).
+    End(GrpcResponse),
+}
+
 /// The default Pipeline for gRPC Routes (Q2).
 pub const DEFAULT_PIPELINE: [PipelineStep; 2] = [PipelineStep::GrpcFrame, PipelineStep::Protobuf];
 
