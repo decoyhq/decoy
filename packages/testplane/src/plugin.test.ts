@@ -54,6 +54,13 @@ describe('decoyPlugin (master)', () => {
     await fire('endRunner')
     expect(await isHealthy(url)).toBe(false)
   })
+
+  test('rejects a `urls` glob that could never match when the plugin loads', () => {
+    const { testplane } = fakeMaster('.testplane.conf.ts')
+    expect(() => {
+      decoyPlugin(testplane, { urls: '/api/**' })
+    }).toThrow(/'\/api\/\*\*'/)
+  })
 })
 
 type Hook = (this: unknown) => Promise<void>
