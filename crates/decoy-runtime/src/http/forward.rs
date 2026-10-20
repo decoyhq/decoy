@@ -5,6 +5,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures_util::StreamExt as _;
 use futures_util::stream::BoxStream;
+use percent_encoding::percent_decode_str;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use thiserror::Error;
 
@@ -71,6 +72,8 @@ pub enum ForwardingError {
         #[source]
         source: reqwest::header::InvalidHeaderValue,
     },
+    #[error("passthrough path `{path}` has a `.` or `..` segment")]
+    PathEscapesBase { path: String },
     #[error("passthrough loop: this Decoy already forwarded the request (`{VIA_HEADER}`)")]
     Loop,
     #[error("passthrough upstream timed out: {0}")]
@@ -240,7 +243,19 @@ pub(crate) fn target_url(
     } else {
         format!("/{path_and_query}")
     };
-    let joined = format!("{}{}", base_url.trim_end_matches('/'), normalized_path);
+    // Parsing resolves dot segments, and an upstream may decode `%2f`/`%5c` before resolving
+    // them, so any decoded `.` or `..` segment could leave the base path.
+    let raw_path = normalized_path.split('?').next().unwrap_or_default();
+    let decoded = percent_decode_str(raw_path).decode_utf8_lossy();
+    if decoded
+        .split(['/', '\\'])
+        .any(|segment| segment == "." || segment == "..")
+    {
+        return Err(ForwardingError::PathEscapesBase {
+            path: raw_path.to_owned(),
+        });
+    }
+    let joined = format!("{}{normalized_path}", base_url.trim_end_matches('/'));
     url::Url::parse(&joined).map_err(|source| ForwardingError::InvalidTargetUrl {
         url: joined,
         source,
@@ -557,6 +572,32 @@ mod tests {
         assert_eq!(body.next().await.unwrap().unwrap(), "first");
         let error = body.next().await.unwrap().unwrap_err();
         assert!(error.is_timeout(), "{error}");
+    }
+
+    #[test]
+    fn a_path_that_climbs_out_of_the_base_path_is_a_forwarding_error() {
+        for path in [
+            "/files/%2e%2e",
+            "/files/..\\..\\admin",
+            "/files/./x",
+            "/..%2fadmin",
+            "/files/..%5Cadmin",
+        ] {
+            let error = target_url("http://127.0.0.1:1/base", path).unwrap_err();
+            assert!(
+                matches!(error, ForwardingError::PathEscapesBase { .. }),
+                "{path}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_the_url_only_percent_encodes_is_forwarded() {
+        let url = target_url("http://127.0.0.1:1/base/", "/files/{id}%2F..x?q=1").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "http://127.0.0.1:1/base/files/%7Bid%7D%2F..x?q=1"
+        );
     }
 
     #[tokio::test]
