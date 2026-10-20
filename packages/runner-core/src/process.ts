@@ -31,38 +31,34 @@ export async function stopProcess(child: ChildProcess, graceMs = 8_000): Promise
     return
   }
   const pid = child.pid
+  if (process.platform !== 'win32') {
+    // The shell runs in its own process group (detached), so this also reaches `decoy` under it.
+    // Wait for the whole group, not just the shell: a shell that dies on SIGTERM would otherwise
+    // leave a child that ignores it running.
+    await stopGroup(pid, graceMs)
+    return
+  }
   const exited = new Promise<boolean>((resolve) => {
     child.once('exit', () => {
       resolve(true)
     })
   })
-  const within = (ms: number) =>
-    Promise.race([
-      exited,
-      new Promise<boolean>((resolve) =>
-        // unref: an already-exited Decoy mustn't keep the caller alive for the grace period.
-        setTimeout(() => {
-          resolve(false)
-        }, ms).unref(),
-      ),
-    ])
-
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(pid), '/T', '/F']).on('error', () => undefined)
-    await within(graceMs)
-    return
-  }
-  // The shell runs in its own process group (detached), so this also reaches `decoy` under it.
-  signalGroup(pid, 'SIGTERM')
-  if (!(await within(graceMs))) {
-    signalGroup(pid, 'SIGKILL')
-    await within(2_000)
-  }
+  spawn('taskkill', ['/pid', String(pid), '/T', '/F']).on('error', () => undefined)
+  await Promise.race([
+    exited,
+    new Promise<boolean>((resolve) =>
+      // unref: an already-exited Decoy mustn't keep the caller alive for the grace period.
+      setTimeout(() => {
+        resolve(false)
+      }, graceMs).unref(),
+    ),
+  ])
 }
 
 /**
- * Stops the process group led by `pid`, which is not our child (an earlier run started it), so
- * there is no exit event: SIGTERM, then SIGKILL if it outlives `graceMs`.
+ * Stops the process group led by `pid`, which need not be our child (an earlier run may have
+ * started it), so it waits on the group, not an exit event: SIGTERM, then SIGKILL if it outlives
+ * `graceMs`.
  */
 export async function stopGroup(pid: number, graceMs = 8_000): Promise<void> {
   if (process.platform === 'win32') {

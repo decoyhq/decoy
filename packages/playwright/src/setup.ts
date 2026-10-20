@@ -1,8 +1,8 @@
 import { dirname } from 'node:path'
-import { startDecoy, type Teardown } from '@decoyhq/runner-core'
+import { resolveServerOptions, startDecoy, type Teardown } from '@decoyhq/runner-core'
 import type { FullConfig, FullProject } from '@playwright/test'
 import type { DecoyTestOptions } from './fixtures'
-import { type DecoyOptions, resolveOptions } from './options'
+import type { DecoyOptions } from './options'
 
 export type { Teardown }
 
@@ -40,7 +40,7 @@ export async function setup(config: SetupConfig): Promise<Teardown> {
 }
 
 function start(decoyOptions: DecoyOptions, config: SetupConfig): Promise<Teardown> {
-  const options = resolveOptions(decoyOptions)
+  const options = resolveServerOptions(decoyOptions)
   const cwd = options.cwd ?? (config.configFile ? dirname(config.configFile) : process.cwd())
   return startDecoy({ ...options, cwd })
 }
@@ -55,7 +55,7 @@ function distinctDecoyOptions(config: SetupConfig): DecoyOptions[] {
     if (!use.decoyOptions) {
       continue
     }
-    const { url } = resolveOptions(use.decoyOptions)
+    const { url } = resolveServerOptions(use.decoyOptions)
     const first = byUrl.get(url)
     if (first === undefined) {
       byUrl.set(url, use.decoyOptions)
@@ -69,8 +69,8 @@ function distinctDecoyOptions(config: SetupConfig): DecoyOptions[] {
 }
 
 function sameStart(a: DecoyOptions, b: DecoyOptions): boolean {
-  const left = resolveOptions(a)
-  const right = resolveOptions(b)
+  const left = resolveServerOptions(a)
+  const right = resolveServerOptions(b)
   return (
     left.command === right.command &&
     left.cwd === right.cwd &&

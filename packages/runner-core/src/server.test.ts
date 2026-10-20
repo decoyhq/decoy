@@ -1,4 +1,6 @@
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { once } from 'node:events'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
@@ -29,6 +31,13 @@ async function runningDecoy(): Promise<{ url: string; server: Server }> {
   })
   const port = await listen(server)
   return { url: `http://127.0.0.1:${port}`, server }
+}
+
+/** The pid of a process that has exited. */
+async function deadPid(): Promise<number> {
+  const child = spawn(process.execPath, ['-e', ''])
+  await once(child, 'exit')
+  return child.pid ?? 0
 }
 
 const start = (options: ServerOptions) =>
@@ -102,9 +111,37 @@ describe('startDecoy', () => {
     // The first run never tears down, as when its runner is killed.
     await start(options)
     const orphan = await servingPid()
+    const pidFile = join(tmpdir(), `decoy-runner-${port}.json`)
+    const recorded = JSON.parse(readFileSync(pidFile, 'utf8')) as { runner: number }
+    writeFileSync(pidFile, JSON.stringify({ ...recorded, runner: await deadPid() }))
 
     const teardown = await start(options)
     expect(await servingPid()).not.toBe(orphan)
+
+    await teardown()
+    expect(await isHealthy(url)).toBe(false)
+  })
+
+  test('reuses, not replaces, a Decoy whose runner is still running', async () => {
+    const port = await freePort()
+    const url = `http://127.0.0.1:${port}`
+    const options = { url, command: `node ${FAKE_DECOY} ${port}`, reuseExistingServer: true }
+    const servingPid = async () =>
+      ((await (await fetch(`${url}/__decoy__/health`)).json()) as { pid: number }).pid
+
+    const teardown = await start(options)
+    const first = await servingPid()
+    // Another runner, still running, owns this Decoy.
+    const runner = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
+    cleanups.push(() => Promise.resolve(runner.kill()))
+    const pidFile = join(tmpdir(), `decoy-runner-${port}.json`)
+    const recorded = JSON.parse(readFileSync(pidFile, 'utf8')) as { runner: number }
+    writeFileSync(pidFile, JSON.stringify({ ...recorded, runner: runner.pid }))
+
+    await (
+      await start(options)
+    )()
+    expect(await servingPid()).toBe(first)
 
     await teardown()
     expect(await isHealthy(url)).toBe(false)
@@ -138,6 +175,7 @@ describe('startDecoy', () => {
     await expect(start({ url: `http://127.0.0.1:${port}`, command: 'exit 3' })).rejects.toThrow(
       /exited before serving \(code 3\)/,
     )
+    expect(existsSync(join(tmpdir(), `decoy-runner-${port}.json`))).toBe(false)
   })
 
   test('fails clearly and stops the command when health never succeeds', async () => {

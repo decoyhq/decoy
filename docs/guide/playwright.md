@@ -80,10 +80,10 @@ exited after 8s, SIGKILL (Windows: `taskkill /T /F`). Projects that share a `url
 - Browser requests matching `urls` go to Decoy with method, path and query, headers, and body kept,
   and `x-mock-session` set. Decoy's answer, including a 501 miss, reaches the page as-is. If Decoy
   is unreachable the request is aborted, never sent to the real network.
-- The `decoy` fixture: `sessionId`, `useCollection(id)`, `useRoute(route, case, behavior)`,
-  `reset()`, `endSession()`. Each call hits the Control API immediately and rejects with Decoy's
-  error. When the test ends, the fixtures call `endSession()` for you, so a long-lived Decoy
-  doesn't keep one Session per test.
+- The `decoy` fixture: `sessionId`, `useCollection(id)`, `useRoute(address)` with a Behavior address
+  `route:case:behavior` (or `useRoute(route, case, behavior)`), `reset()`, `endSession()`. Each call
+  hits the Control API immediately and rejects with Decoy's error. When the test ends, the fixtures
+  call `endSession()` for you, so a long-lived Decoy doesn't keep one Session per test.
 
 The runnable version of all this is
 [`examples/playwright-ts-e2e`](../../examples/playwright-ts-e2e).

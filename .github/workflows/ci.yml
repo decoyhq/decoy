@@ -131,9 +131,11 @@ jobs:
 
       - name: Audit npm dependencies
         if: needs.changes.outputs.js == 'true'
-        # Production dependencies only: dev tooling (e.g. Testplane, which pins old transitive
-        # versions) never reaches users of the published packages.
-        run: pnpm audit --prod --audit-level high
+        # Testplane pins old transitive versions with high advisories; it is a dev dependency and
+        # peer there, never shipped, so those two workspaces audit production dependencies only.
+        run: |
+          pnpm audit --audit-level high --filter '!@decoyhq/testplane' --filter '!@decoyhq-examples/testplane-ts-e2e'
+          pnpm audit --prod --audit-level high --filter @decoyhq/testplane --filter @decoyhq-examples/testplane-ts-e2e
 
       - name: Lint & format check
         run: pnpm check
@@ -393,11 +395,12 @@ jobs:
           EXAMPLE: ${{ matrix.example }}
         run: |
           pkg="examples/$EXAMPLE/package.json"
-          if jq -e '.devDependencies["@playwright/test"] != null' "$pkg" >/dev/null; then
+          uses() { jq -e --arg dep "$1" '[.devDependencies, .dependencies] | map(. // {} | has($dep)) | any' "$pkg" >/dev/null; }
+          if uses @playwright/test; then
             pnpm --filter "./examples/$EXAMPLE" exec playwright install --with-deps chromium
           fi
           # Testplane downloads Chrome for Testing and chromedriver for its `gridUrl: 'local'`.
-          if jq -e '.devDependencies.testplane != null' "$pkg" >/dev/null; then
+          if uses testplane; then
             pnpm --filter "./examples/$EXAMPLE" exec testplane install-deps
           fi
 

@@ -1,10 +1,11 @@
 import { createServer, type Server } from 'node:http'
+import { isHealthy } from '@decoyhq/runner-core'
 import { FAKE_DECOY } from '@decoyhq/runner-core/testing'
 import { defineConfig, type FullConfig } from '@playwright/test'
 import { describe, expect, test } from '@rstest/core'
 import { expectTypeOf } from 'expect-type'
 import type { DecoyTestOptions } from './fixtures'
-import { type DecoyOptions, isHealthy } from './options'
+import type { DecoyOptions } from './options'
 import { type SetupConfig, setup } from './setup'
 
 describe('config typing', () => {

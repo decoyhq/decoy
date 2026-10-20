@@ -8,7 +8,7 @@ Classic and BiDi sessions, also with `testplane_sessions_per_browser=3`.
 
 Same contract as `@decoyhq/playwright`: Decoy starts once per run, each test gets its own Session,
 matching browser requests go to Decoy, misses fail closed. For the user it is one config entry
-plus mocks:
+plus Route and Collection files:
 
 ```ts
 // .testplane.conf.ts
@@ -36,13 +36,13 @@ In tests, `decoy(browser)` returns the Session's Router (`useCollection`, `useRo
 
 ## Design
 
-| Concern            | Playwright package                       | Testplane prototype                                    |
-| ------------------ | ---------------------------------------- | ------------------------------------------------------ |
-| Start Decoy        | `globalSetup` file the user adds         | plugin, master `RUNNER_START` / `RUNNER_END`           |
-| Per-test Session   | `context` / `decoy` fixtures             | plugin, root `beforeEach` / `afterEach` in workers     |
-| Router in tests    | `decoy` fixture                          | `decoy(browser)`                                       |
-| Routing            | `context.route` + Node fetch + `fulfill` | CDP request interception, `continue({ url, headers })` |
-| Isolation boundary | fresh browser context per test           | Session swapped per test inside a reused browser       |
+| Concern            | Playwright package                       | Testplane prototype                                                       |
+| ------------------ | ---------------------------------------- | ------------------------------------------------------------------------- |
+| Start Decoy        | `globalSetup` file the user adds         | plugin, master `RUNNER_START` / `RUNNER_END`                              |
+| Per-test Session   | `context` / `decoy` fixtures             | plugin, root `beforeEach` / `afterEach` in workers                        |
+| Router in tests    | `decoy` fixture                          | `decoy(browser)`                                                          |
+| Routing            | `context.route` + Node fetch + `fulfill` | CDP `Fetch` on auto-attached (paused) targets, `continueRequest({ url })` |
+| Isolation boundary | fresh browser context per test           | Session swapped per test inside a reused browser                          |
 
 Routing rewrites the URL inside Chrome (`Fetch.continueRequest` with a new `url`): method, headers,
 and body stay as the browser sent them, `x-mock-session` is added, and the page still sees its own
@@ -75,8 +75,13 @@ Gotchas the prototype hit:
      Decoy (needs the request body: `network.addDataCollector` / `getData`, not in Testplane's
      WebdriverIO types yet), or rebuild the `Cookie` header from `storage.getCookies`.
 3. **Verified end to end** (`echo.testplane.ts`, both session kinds): POST body, cookies, and
-   custom headers reach Decoy. Still unverified: requests from new tabs and workers, and Selenium
-   grids or cloud providers where `getPuppeteer()` can't connect.
+   custom headers reach Decoy; so does a popup's first request (`popup.testplane.ts`): new targets
+   are auto-attached paused (`waitForDebuggerOnStart`) and resumed only after `Fetch.enable`; and
+   so do worker requests (`worker.testplane.ts`). A dedicated worker's requests pause on its page
+   (the worker target has no Fetch domain); shared and service workers get their own
+   `Fetch.enable`, and without it their requests reached the real network. Still unverified: HTTPS
+   app origins rewritten to an `http://` Decoy, and Selenium grids or cloud providers where
+   `getPuppeteer()` can't connect.
 4. **Bleed between tests.** The browser is reused, so a request still in flight from test N could
    land in test N+1's Session; it is aborted only if it fires between the hooks. Playwright avoids
    this with a fresh context per test.

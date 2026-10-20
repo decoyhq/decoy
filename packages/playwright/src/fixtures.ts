@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto'
 import type {
   Fixtures,
   PlaywrightTestArgs,
@@ -7,8 +6,13 @@ import type {
   PlaywrightWorkerOptions,
   TestInfo,
 } from '@playwright/test'
-import { createRouter, type DecoyRouter } from '@decoyhq/runner-core'
-import { type DecoyOptions, isHealthy, resolveOptions } from './options'
+import {
+  type DecoyRouter,
+  newSessionId,
+  openSession,
+  resolveServerOptions,
+} from '@decoyhq/runner-core'
+import type { DecoyOptions } from './options'
 import { fetchWithoutCookies, routeToDecoy } from './routing'
 
 /** Option fixtures, for typing config: `defineConfig<DecoyTestOptions>({ use: { decoyOptions } })`. */
@@ -45,7 +49,7 @@ export function createDecoyFixtures(): Fixtures<
     decoyOptions: [undefined, { option: true }],
     context: async ({ context, decoyOptions }, use, testInfo) => {
       if (decoyOptions?.urls !== undefined) {
-        const { url } = resolveOptions(decoyOptions)
+        const { url } = resolveServerOptions(decoyOptions)
         const router = await decoySession(decoyOptions, testInfo)
         await routeToDecoy(context, fetchWithoutCookies, url, decoyOptions.urls, router.sessionId)
       }
@@ -103,18 +107,13 @@ export function decoySession(
   return session
 }
 
-async function startSession(decoyOptions: DecoyOptions, sessionId: string): Promise<DecoyRouter> {
-  const { url } = resolveOptions(decoyOptions)
-  if (!(await isHealthy(url))) {
-    throw new Error(
-      `Decoy is not reachable at ${url}. Start it with the \`setup\` global setup or run \`decoy serve\`.`,
-    )
-  }
-  const router = createRouter(url, sessionId)
-  if (decoyOptions.collection !== undefined) {
-    await router.useCollection(decoyOptions.collection)
-  }
-  return router
+function startSession(decoyOptions: DecoyOptions, sessionId: string): Promise<DecoyRouter> {
+  return openSession(
+    resolveServerOptions(decoyOptions).url,
+    sessionId,
+    decoyOptions.collection,
+    'Start it with the `setup` global setup or run `decoy serve`.',
+  )
 }
 
 const sessionIds = new WeakMap<object, string>()
@@ -126,18 +125,8 @@ const sessionIds = new WeakMap<object, string>()
 export function sessionIdFor(testInfo: Pick<TestInfo, 'titlePath'>): string {
   let sessionId = sessionIds.get(testInfo)
   if (sessionId === undefined) {
-    sessionId = newSessionId(testInfo)
+    sessionId = newSessionId(testInfo.titlePath.join('-'))
     sessionIds.set(testInfo, sessionId)
   }
   return sessionId
-}
-
-function newSessionId(testInfo: Pick<TestInfo, 'titlePath'>): string {
-  const readable = testInfo.titlePath
-    .join('-')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 60)
-  return readable ? `${readable}-${randomUUID()}` : randomUUID()
 }

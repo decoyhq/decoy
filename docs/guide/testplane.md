@@ -51,7 +51,7 @@ it('switching the Collection changes what the page shows', async ({ browser }) =
 | `enabled`             | `true`                        | `false` turns the plugin off without removing it          |
 | `url`                 | `http://127.0.0.1:8080`       | where Decoy serves                                        |
 | `command`             | `decoy serve`                 | shell command the plugin runs when Decoy isn't up         |
-| `cwd`                 | `process.cwd()`               | working directory for `command`                           |
+| `cwd`                 | the config file's directory   | working directory for `command`                           |
 | `reuseExistingServer` | `true` locally, `false` in CI | reuse a Decoy already answering health                    |
 | `timeout`             | `60000`                       | ms the plugin waits for health                            |
 | `urls`                | none                          | glob (`*` in a segment, `**` across) or RegExp, or a list |
@@ -64,16 +64,18 @@ sends SIGTERM and, if Decoy hasn't exited after 8s, SIGKILL (Windows: `taskkill 
 
 - Before tests run, the plugin starts `command` unless Decoy already answers health. When the
   run ends it stops only what it started.
-- Each test gets a Session id (`<browser>-<full title>-<uuid>`). Before the test, Decoy's health is
-  checked and `collection` applied. After it, the Session ends.
-- Browser requests matching `urls` go to Decoy with method, path and query,
-  headers, cookies, and body kept, and `x-mock-session` set. Chrome rewrites the URL itself, so
-  the page sees its own origin (no CORS). Decoy's answer, including a 501 miss, reaches the page
-  as-is. If Decoy is unreachable the request fails, never sent to the real network. Matching
-  requests fired between tests are aborted.
-- `decoy(browser)`: `sessionId`, `useCollection(id)`, `useRoute(route, case, behavior)`,
-  `reset()`, `endSession()`. Each call hits the Control API immediately and rejects with Decoy's
-  error. It throws outside a test.
+- Each test gets a Session id (`<browser>-<full title>-<uuid>`). Before the test and its hooks
+  (including a file's top-level `beforeEach`), Decoy's health is checked and `collection` applied.
+  After the test and its `afterEach` hooks, the Session ends.
+- Browser requests matching `urls`, from every tab, popup, cross-site iframe, and worker (dedicated,
+  shared, service), go to Decoy with method, path and query, headers, cookies, and body kept, and
+  `x-mock-session` set. Chrome rewrites the URL itself, so the page sees its own origin (no CORS).
+  Decoy's answer, including a 501 miss, reaches the page as-is. If Decoy is unreachable the request
+  fails, never sent to the real network. New tabs stay paused until routing is on, so even their
+  first request is covered. Matching requests fired between tests are aborted.
+- `decoy(browser)`: `sessionId`, `useCollection(id)`, `useRoute(address)` with a Behavior address
+  `route:case:behavior` (or `useRoute(route, case, behavior)`), `reset()`, `endSession()`. Each call
+  hits the Control API immediately and rejects with Decoy's error. It throws outside a test.
 
 ## Limits
 
