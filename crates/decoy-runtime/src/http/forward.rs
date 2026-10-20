@@ -5,6 +5,7 @@ use std::time::Duration;
 use bytes::Bytes;
 use futures_util::StreamExt as _;
 use futures_util::stream::BoxStream;
+use percent_encoding::percent_decode_str;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use thiserror::Error;
 
@@ -71,6 +72,8 @@ pub enum ForwardingError {
         #[source]
         source: reqwest::header::InvalidHeaderValue,
     },
+    #[error("passthrough path `{path}` would reach the upstream as `{forwarded}`")]
+    PathChanged { path: String, forwarded: String },
     #[error("passthrough loop: this Decoy already forwarded the request (`{VIA_HEADER}`)")]
     Loop,
     #[error("passthrough upstream timed out: {0}")]
@@ -240,11 +243,26 @@ pub(crate) fn target_url(
     } else {
         format!("/{path_and_query}")
     };
-    let joined = format!("{}{}", base_url.trim_end_matches('/'), normalized_path);
-    url::Url::parse(&joined).map_err(|source| ForwardingError::InvalidTargetUrl {
-        url: joined,
-        source,
-    })
+    let base = base_url.trim_end_matches('/');
+    let joined = format!("{base}{normalized_path}");
+    let parse = |url: &str| {
+        url::Url::parse(url).map_err(|source| ForwardingError::InvalidTargetUrl {
+            url: url.to_owned(),
+            source,
+        })
+    };
+    let url = parse(&joined)?;
+    // Parsing resolves dot segments and turns `\` into `/`, so `/files/%2e%2e` would leave the
+    // base path. Only percent-encoding may differ, hence the decoded comparison.
+    let raw_path = normalized_path.split('?').next().unwrap_or_default();
+    let expected = format!("{}{raw_path}", parse(base)?.path().trim_end_matches('/'));
+    if !percent_decode_str(url.path()).eq(percent_decode_str(&expected)) {
+        return Err(ForwardingError::PathChanged {
+            path: raw_path.to_owned(),
+            forwarded: url.path().to_owned(),
+        });
+    }
+    Ok(url)
 }
 
 fn reqwest_method(method: &HttpMethod) -> reqwest::Method {
@@ -557,6 +575,26 @@ mod tests {
         assert_eq!(body.next().await.unwrap().unwrap(), "first");
         let error = body.next().await.unwrap().unwrap_err();
         assert!(error.is_timeout(), "{error}");
+    }
+
+    #[test]
+    fn a_path_that_climbs_out_of_the_base_path_is_a_forwarding_error() {
+        for path in ["/files/%2e%2e", "/files/..\\..\\admin", "/files/./x"] {
+            let error = target_url("http://127.0.0.1:1/base", path).unwrap_err();
+            assert!(
+                matches!(error, ForwardingError::PathChanged { .. }),
+                "{path}: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_path_the_url_only_percent_encodes_is_forwarded() {
+        let url = target_url("http://127.0.0.1:1/base/", "/files/{id}%2F..?q=1").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "http://127.0.0.1:1/base/files/%7Bid%7D%2F..?q=1"
+        );
     }
 
     #[tokio::test]
