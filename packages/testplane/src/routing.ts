@@ -20,6 +20,7 @@ export interface RequestPaused {
   request: { url: string; headers: Record<string, string> }
   // Present only at the response stage, which routed requests also pause at.
   responseStatusCode?: number
+  responseErrorReason?: string
   responseHeaders?: Array<{ name: string; value: string }>
 }
 
@@ -36,6 +37,9 @@ export type Decision =
 // its requests pause on the page that started it, so it is only resumed, like any other target.
 const ROUTED_TARGETS = new Set(['page', 'iframe', 'shared_worker', 'service_worker'])
 const REDIRECTS = new Set([301, 302, 303, 307, 308])
+// shortcut: a request cancelled before its response never frees its entry, so the oldest is
+// dropped past this many; enable Network and drop on `Network.loadingFailed` if this ever bites.
+const MAX_AWAITING_RESPONSE = 1000
 
 /**
  * Send every request matching `urls`, from every page, out-of-process frame and worker of the browser
@@ -73,14 +77,19 @@ export async function routeToDecoy(
       const originals = new Map<string, string>() // requestId of a routed request -> its page URL
       try {
         target.on('Fetch.requestPaused', (paused: RequestPaused) => {
-          const original = originals.get(paused.requestId)
-          if (original !== undefined) {
+          // Only routed requests pause at the response stage.
+          if (paused.responseStatusCode !== undefined || paused.responseErrorReason !== undefined) {
+            const original = originals.get(paused.requestId)
             originals.delete(paused.requestId)
             void resumeRouted(target, paused, original)
             return
           }
           const decision = decide(paused.request.url, decoyUrl, matchers, holder)
           if (decision.kind === 'decoy') {
+            const [oldest] = originals.keys()
+            if (oldest !== undefined && originals.size >= MAX_AWAITING_RESPONSE) {
+              originals.delete(oldest)
+            }
             originals.set(paused.requestId, paused.request.url)
           }
           void forwardToDecoy(target, paused, decision)
@@ -155,11 +164,12 @@ export async function forwardToDecoy(
 /**
  * Resumes a routed response. A redirect is sent on to its `Location` resolved against the page's URL
  * `original`: Chrome would resolve it against Decoy's, and ignores a rewritten `Location` header.
+ * A forgotten `original` leaves a relative `Location` to Chrome.
  */
 async function resumeRouted(
   session: Pick<CdpSession, 'send'>,
   paused: RequestPaused,
-  original: string,
+  original: string | undefined,
 ): Promise<void> {
   const { requestId, responseStatusCode = 0, responseHeaders = [] } = paused
   const location = responseHeaders.find(({ name }) => name.toLowerCase() === 'location')?.value
