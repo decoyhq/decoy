@@ -6,7 +6,7 @@ use serde_json::Value;
 use thiserror::Error;
 
 use super::DEFAULT_PIPELINE;
-use super::schema::request_json_options;
+use super::schema::request_json;
 use crate::schema::{PipelineStep, Route};
 
 pub(super) fn pipeline(route: &Route) -> &[PipelineStep] {
@@ -71,10 +71,7 @@ pub(super) fn decode(
                             error,
                         }
                     })?;
-                let value = message
-                    .serialize_with_options(serde_json::value::Serializer, &request_json_options())
-                    .map_err(GrpcCodecError::ToJson)?;
-                Data::Json(value)
+                Data::Json(request_json(&message).map_err(GrpcCodecError::ToJson)?)
             }
             (step, Data::Json(_)) => return Err(GrpcCodecError::NeedsBytes(*step)),
         };

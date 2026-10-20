@@ -5,7 +5,7 @@
 //! are skipped (checked at render).
 //!
 //! Response literals may use any form protobuf JSON accepts. Match literals are compared with the
-//! decoded request as [`request_json_options`] renders it, so they must use that canonical form:
+//! decoded request as [`request_json`] renders it, so they must use that canonical form:
 //! camelCase field names, 64-bit integers as strings, enums as names.
 
 use base64::Engine as _;
@@ -16,6 +16,7 @@ use prost_reflect::{
 };
 use serde_json::Value;
 
+use crate::matching::value_matches;
 use crate::schema::{Behavior, PipelineStep, ResponseBehavior, Route, RouteMatch};
 use crate::template::{validate_string, validate_value};
 
@@ -42,8 +43,12 @@ pub const STATUS_CODES: [&str; 17] = [
 
 /// How a decoded request message becomes the envelope's `message`: protobuf JSON with default
 /// fields included, so a match on a zero value (`priority: 0`, `state: STATE_UNSPECIFIED`) works.
-pub fn request_json_options() -> SerializeOptions {
-    SerializeOptions::new().skip_default_fields(false)
+pub fn request_json(message: &DynamicMessage) -> Result<Value, serde_json::Error> {
+    // Through text, not `value::Serializer`: that widens f32 (`0.1` -> 0.10000000149011612).
+    let mut text = Vec::new();
+    let options = SerializeOptions::new().skip_default_fields(false);
+    message.serialize_with_options(&mut serde_json::Serializer::new(&mut text), &options)?;
+    serde_json::from_slice(&text)
 }
 
 /// A Route's Pipeline: steps run in order, at most once each. gRPC bodies are always framed, so
@@ -297,7 +302,7 @@ fn has_template(value: &Value) -> bool {
 enum Form {
     /// Anything protobuf JSON parsing accepts (response literals).
     Any,
-    /// Only what [`request_json_options`] produces (match literals).
+    /// Only what [`request_json`] produces (match literals).
     Canonical,
 }
 
@@ -386,8 +391,14 @@ fn check_kind(value: &Value, kind: &Kind, path: &str, form: Form) -> Result<(), 
         return Ok(());
     }
     let fits = match kind {
-        // Well-known types have special JSON forms (timestamps as strings, etc.); accept them.
-        Kind::Message(message) if message.full_name().starts_with("google.protobuf.") => true,
+        // Well-known types have special JSON forms (timestamps as strings, etc.); a match literal
+        // must be the exact form the request renders.
+        Kind::Message(message) if message.full_name().starts_with("google.protobuf.") => {
+            return match form {
+                Form::Any => Ok(()),
+                Form::Canonical => canonical_well_known(value, message, path),
+            };
+        }
         Kind::Message(message) => return check_message(value, message, path, form),
         Kind::Enum(descriptor) => match value {
             Value::String(name) => {
@@ -456,6 +467,24 @@ fn check_kind(value: &Value, kind: &Kind, path: &str, form: Form) -> Result<(), 
         Ok(())
     } else {
         Err(format!("`{path}` expects {}, got {value}", kind_name(kind)))
+    }
+}
+
+fn canonical_well_known(
+    value: &Value,
+    message: &MessageDescriptor,
+    path: &str,
+) -> Result<(), String> {
+    let rendered = DynamicMessage::deserialize(message.clone(), value.clone())
+        .map_err(|error| error.to_string())
+        .and_then(|parsed| request_json(&parsed).map_err(|error| error.to_string()))
+        .map_err(|error| format!("`{path}` does not fit {}: {error}", message.full_name()))?;
+    if value_matches(value, &rendered) {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{path}` must be written as the request renders it: {rendered}, got {value}"
+        ))
     }
 }
 
@@ -656,6 +685,36 @@ cases:
                 .unwrap_err()
                 .contains("expects approvals.v1.State")
         );
+    }
+
+    #[test]
+    fn well_known_match_literals_must_use_the_canonical_request_form() {
+        let pool = pool();
+        let input = pool.get_message_by_name("approvals.v1.Sample").unwrap();
+        let canonical = |value: Value| check_message(&value, &input, "message", Form::Canonical);
+        canonical(serde_json::json!({
+            "limit": "5",
+            "at": "2024-01-01T00:00:00Z",
+            "boxedRatio": 0.1,
+        }))
+        .unwrap();
+        for (literal, expected) in [
+            (
+                serde_json::json!({ "limit": 5 }),
+                "`message.limit` must be written as the request renders it: \"5\", got 5",
+            ),
+            (
+                serde_json::json!({ "at": "2024-01-01T00:00:00+00:00" }),
+                "`message.at` must be written as the request renders it: \"2024-01-01T00:00:00Z\", got \"2024-01-01T00:00:00+00:00\"",
+            ),
+            (
+                serde_json::json!({ "limit": "five" }),
+                "`message.limit` does not fit google.protobuf.Int64Value",
+            ),
+        ] {
+            let error = canonical(literal.clone()).unwrap_err();
+            assert!(error.contains(expected), "{literal}: {error}");
+        }
     }
 
     #[test]
