@@ -26,6 +26,8 @@ struct Inner {
 
 #[derive(Debug, Default)]
 struct Live {
+    /// Set by [`Connections::close_all`]: later registrations are closed at once.
+    closed: bool,
     next_id: u64,
     by_address: HashMap<Address, Vec<(u64, mpsc::UnboundedSender<Value>)>>,
 }
@@ -54,10 +56,12 @@ impl Connections {
         let mut live = self.inner.live.lock().expect("connections lock");
         let id = live.next_id;
         live.next_id += 1;
-        live.by_address
-            .entry(address.clone())
-            .or_default()
-            .push((id, sender));
+        if !live.closed {
+            live.by_address
+                .entry(address.clone())
+                .or_default()
+                .push((id, sender));
+        }
         drop(live);
         self.inner.registered.notify_waiters();
         let registration = Registration {
@@ -90,6 +94,14 @@ impl Connections {
                 return Err(SendError::Timeout);
             }
         }
+    }
+
+    /// Ends every live connection: their receivers yield `None`. Used on shutdown, so open
+    /// streams finish instead of holding the drain.
+    pub fn close_all(&self) {
+        let mut live = self.inner.live.lock().expect("connections lock");
+        live.closed = true;
+        live.by_address.clear();
     }
 
     fn deliver(&self, address: &Address, message: &Value) -> usize {
@@ -164,6 +176,17 @@ mod tests {
             connections.send("a", "live", json!(2), SHORT).await,
             Err(SendError::Timeout)
         );
+    }
+
+    #[tokio::test]
+    async fn close_all_ends_every_connection_and_later_ones() {
+        let connections = Connections::default();
+        let (_open, mut open) = connections.register("a", "live");
+        connections.close_all();
+        let (_late, mut late) = connections.register("a", "live");
+
+        assert_eq!(open.recv().await, None);
+        assert_eq!(late.recv().await, None);
     }
 
     #[tokio::test]

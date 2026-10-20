@@ -265,6 +265,35 @@ async fn an_open_stream_takes_sends_from_its_session_until_the_client_cancels() 
     }
 }
 
+#[tokio::test]
+async fn shutdown_ends_open_streams_with_unavailable() {
+    let mut server = Server::start(WATCH_ROUTE, WATCH_COLLECTIONS).await;
+    server
+        .control("useCollection", r#"{"collection":"open"}"#, "default")
+        .await;
+    let mut client = server.client().await;
+    let mut stream = client.watch(json!({ "ids": ["a-1"] }), &[]).await.unwrap();
+    assert!(next(&mut stream).await.unwrap().is_some());
+
+    let started = Instant::now();
+    let killed = Command::new("kill")
+        .args(["-TERM", &server.child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(killed.success());
+    let status = next(&mut stream).await.unwrap_err();
+    assert_eq!(status.code(), Code::Unavailable, "{status:?}");
+    assert_eq!(status.message(), "decoy is shutting down");
+    while server.child.try_wait().unwrap().is_none() {
+        // Well under the 5s drain timeout: the open stream must not hold shutdown.
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "decoy did not stop"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 async fn next(stream: &mut tonic::Streaming<DynamicMessage>) -> Result<Option<Value>, Status> {
     let message = stream.message().await?;
     Ok(message.map(|message| serde_json::to_value(message).unwrap()))

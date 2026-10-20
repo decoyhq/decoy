@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 use super::codec::{decode, encode, pipeline};
 use super::resolve::GrpcResolution;
 use super::schema::STATUS_CODES;
-use super::{GrpcRequest, GrpcResponse, INTERNAL, OK, StreamPart};
+use super::{GrpcRequest, GrpcResponse, INTERNAL, OK, StreamPart, UNAVAILABLE};
 use crate::collections::Activation;
 use crate::connections::{Connections, Registration};
 use crate::engine::{Catalog, MissDiagnostic};
@@ -158,7 +158,11 @@ impl GrpcStream {
                 };
                 stream::unfold(Some(open), |open| async move {
                     let mut open = open?;
-                    let message = open.receiver.recv().await?;
+                    // `None`: Connections closed on shutdown.
+                    let Some(message) = open.receiver.recv().await else {
+                        let end = GrpcResponse::error(UNAVAILABLE, "decoy is shutting down");
+                        return Some((StreamPart::End(end), None));
+                    };
                     Some(match encode(message, &open.steps, &open.output) {
                         Ok(bytes) => (StreamPart::Message(bytes), Some(open)),
                         Err(error) => {

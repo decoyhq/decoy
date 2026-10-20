@@ -38,6 +38,7 @@ pub const INVALID_ARGUMENT: u8 = 3;
 pub const RESOURCE_EXHAUSTED: u8 = 8;
 pub const UNIMPLEMENTED: u8 = 12;
 pub const INTERNAL: u8 = 13;
+pub const UNAVAILABLE: u8 = 14;
 
 /// One unary call as the server received it.
 #[derive(Debug, Clone, PartialEq, Eq)]
