@@ -217,8 +217,9 @@ jobs:
           # pnpm pack rewrites `catalog:`/`workspace:` ranges; npm pack would ship them verbatim.
           (cd packages/cli && pnpm pack --pack-destination "$GITHUB_WORKSPACE/npm-tarballs")
           (cd packages/playwright && pnpm pack --pack-destination "$GITHUB_WORKSPACE/npm-tarballs")
+          (cd packages/testplane && pnpm pack --pack-destination "$GITHUB_WORKSPACE/npm-tarballs")
           ls -l npm-tarballs
-          for pkg in cli playwright; do
+          for pkg in cli playwright testplane; do
             if tar -xOzf "npm-tarballs/decoyhq-$pkg-$VERSION.tgz" package/package.json | grep -E '"(catalog|workspace):'; then
               echo "packed @decoyhq/$pkg manifest still has catalog:/workspace: ranges" >&2
               exit 1
@@ -238,13 +239,16 @@ jobs:
           npm init -y > /dev/null
           npm install --no-audit --no-fund \
             "$tarballs/decoyhq-cli-linux-x64-$VERSION.tgz" "$tarballs/decoyhq-cli-$VERSION.tgz" \
-            "$tarballs/decoyhq-playwright-$VERSION.tgz"
+            "$tarballs/decoyhq-playwright-$VERSION.tgz" "$tarballs/decoyhq-testplane-$VERSION.tgz"
           out="$(node_modules/.bin/decoy --version)"
           echo "$out"
           [ "$out" = "decoy $VERSION" ]
           # npm installs the @playwright/test peer; both module formats must load.
           node --input-type=module -e "await import('@decoyhq/playwright')"
           node -e "require('@decoyhq/playwright')"
+          # Testplane loads plugins with require; tests import `decoy` as ESM.
+          node --input-type=module -e "await import('@decoyhq/testplane')"
+          node -e "require('@decoyhq/testplane')"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -275,7 +279,7 @@ jobs:
           name: npm-tarballs
           path: npm-tarballs
 
-      - name: Publish (platform packages first, then @decoyhq/cli and @decoyhq/playwright)
+      - name: Publish (platform packages first, then @decoyhq/cli and the test-runner packages)
         env:
           VERSION: ${{ needs.version.outputs.version }}
         # No token: each package trusts this repo's release.yml on npmjs.com (Trusted Publisher).
@@ -285,7 +289,7 @@ jobs:
           tag=latest
           case "$VERSION" in *-*) tag=next ;; esac
           cd npm-tarballs
-          for tarball in decoyhq-cli-*-*-"$VERSION".tgz "decoyhq-cli-$VERSION.tgz" "decoyhq-playwright-$VERSION.tgz"; do
+          for tarball in decoyhq-cli-*-*-"$VERSION".tgz "decoyhq-cli-$VERSION.tgz" "decoyhq-playwright-$VERSION.tgz" "decoyhq-testplane-$VERSION.tgz"; do
             name="$(tar -xOzf "$tarball" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0)).name')"
             # A rerun after a partial publish skips what already made it to the registry.
             if npm view "$name@$VERSION" version > /dev/null 2>&1; then

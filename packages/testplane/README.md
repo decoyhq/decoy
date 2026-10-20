@@ -1,7 +1,10 @@
 # @decoyhq/testplane
 
-[Testplane](https://testplane.io) plugin for the native `decoy` runtime. Research prototype: not
-published yet.
+[Testplane](https://testplane.io) plugin for the native `decoy` runtime.
+
+```sh
+npm i -D @decoyhq/cli @decoyhq/testplane
+```
 
 ```ts
 // .testplane.conf.ts

@@ -14,7 +14,7 @@ https://github.com/decoyhq/decoy/releases/latest/download/install.sh | sh`; see
 [Install](docs/guide/install.md).
 
 Full docs: **[the guide](docs/guide/README.md)**: install, Routes, Collections, Sessions, config,
-Playwright.
+Playwright, Testplane.
 
 ## Quickstart
 
