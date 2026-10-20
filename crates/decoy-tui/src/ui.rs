@@ -5,6 +5,7 @@ use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Wrap};
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::app::{App, overrides};
 use crate::log::{Entry, RequestLine};
@@ -318,10 +319,11 @@ impl App {
         );
         // Show the tail that fits beside the prompt, keeping a cell for the cursor.
         let room = usize::from(inner.width).saturating_sub(prompt.width() + 1);
+        // Whole graphemes, so `👍🏽` isn't split into a lone modifier.
         let mut start = self.input.len();
         let mut used = 0;
-        for (index, c) in self.input.char_indices().rev() {
-            used += Span::raw(&self.input[index..index + c.len_utf8()]).width();
+        for (index, grapheme) in self.input.grapheme_indices(true).rev() {
+            used += Span::raw(grapheme).width();
             if used > room {
                 break;
             }
@@ -844,6 +846,17 @@ mod tests {
         assert_eq!(input_row("日本語", 20).1, 9);
         // Room for 7 columns after the prompt: three wide characters fit, a fourth does not.
         assert_eq!(input_row("日本語日本語日本語", 12).1, 9);
+    }
+
+    #[test]
+    fn the_tail_keeps_an_emoji_with_its_modifier() {
+        // Room for 15 columns: `👍🏽` (2) and 13 `a` fit; the row must not start with a lone `🏽`. The
+        // buffer prints a wide grapheme's second cell as a space.
+        let (row, cursor) = input_row(&format!("x👍🏽{}", "a".repeat(13)), 20);
+        assert_eq!(
+            (row.as_str(), cursor),
+            (format!("│› 👍🏽 {} │", "a".repeat(13)).as_str(), 18)
+        );
     }
 
     #[test]
