@@ -16,20 +16,20 @@ Command-shaped `POST` endpoints under the reserved `/__decoy__` path. Pick the S
 too, sends `content-type: application/json`; anything else gets `415`, so a web page on another
 site can't switch your Scenarios with a form or a simple `fetch`.
 
-| verb            | request                                 | body                                                                  |
-| --------------- | --------------------------------------- | --------------------------------------------------------------------- |
-| `useCollection` | `POST /__decoy__/control/useCollection` | `{"collection":"no-users"}`                                           |
-| `useRoute`      | `POST /__decoy__/control/useRoute`      | `{"route":"users-by-id","case":"user-1","behavior":"grace"}`          |
-| `reset`         | `POST /__decoy__/control/reset`         | empty: drops the Session's route overrides                            |
-| `endSession`    | `POST /__decoy__/control/endSession`    | empty: ends the Session; it starts again from defaults when next used |
+| verb            | request                                 | body                                                                          |
+| --------------- | --------------------------------------- | ----------------------------------------------------------------------------- |
+| `useCollection` | `POST /__decoy__/control/useCollection` | `{"collection":"no-users"}`                                                   |
+| `useRoute`      | `POST /__decoy__/control/useRoute`      | `{"route":"users-by-id","case":"user-1","behavior":"grace"}`                  |
+| `reset`         | `POST /__decoy__/control/reset`         | empty or `{}`: drops the Session's route overrides                            |
+| `endSession`    | `POST /__decoy__/control/endSession`    | empty or `{}`: ends the Session; it starts again from defaults when next used |
 
 `useRoute` swaps the Behavior of that `route:case` where it sits in the active Collection, so
 more specific Cases listed after it still win. A `route:case` the Collection doesn't list goes
 after all of its entries, and among those the last `useRoute` call wins.
 
-Success returns `200` with the Session's Selection. Unknown Collections or Behavior addresses and
-malformed JSON return `400 {"error":"..."}`, a missing JSON content type returns `415`, and unknown
-`/__decoy__` paths return `404`.
+Success returns `200` with the Session's Selection. Unknown Collections or Behavior addresses,
+malformed JSON and unknown body fields return `400 {"error":"..."}`, a missing JSON content type
+returns `415`, and unknown `/__decoy__` paths return `404`.
 
 ```sh
 curl -X POST localhost:8080/__decoy__/control/useRoute \
@@ -66,7 +66,8 @@ curl -X POST localhost:8080/__decoy__/control/send \
 | `408`  | no live connection of the Route in this Session within timeout |
 | `503`  | Decoy is shutting down                                         |
 
-Malformed JSON returns `400` and a missing JSON content type `415`, as for the other verbs.
+Malformed JSON or an unknown body field returns `400` and a missing JSON content type `415`, as
+for the other verbs.
 
 ## Health
 
