@@ -106,7 +106,7 @@ mod tests {
     use base64::Engine as _;
     use base64::engine::general_purpose::STANDARD as BASE64;
     use prost::Message as _;
-    use prost_reflect::DynamicMessage;
+    use prost_reflect::{DynamicMessage, MessageDescriptor};
     use serde_json::{Value, json};
 
     use super::codec::{decode, encode, frame, unframe};
@@ -641,6 +641,37 @@ cases:
             )
             .unwrap(),
             frame(&bytes)
+        );
+    }
+
+    fn approval_request() -> MessageDescriptor {
+        load_descriptor_pool(&ProtoSources {
+            roots: vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proto")],
+            descriptor_sets: vec![],
+        })
+        .unwrap()
+        .get_message_by_name("approvals.v1.GetApprovalRequest")
+        .unwrap()
+    }
+
+    // `validate_pipeline` rejects these at load, so reaching the codec with one is a bug.
+    #[test]
+    #[should_panic(expected = "no step follows `protobuf`")]
+    fn decode_panics_on_a_step_after_protobuf() {
+        let _ = decode(
+            &[],
+            &[PipelineStep::Protobuf, PipelineStep::GrpcFrame],
+            &approval_request(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "no step follows `protobuf`")]
+    fn encode_panics_on_a_repeated_protobuf_step() {
+        let _ = encode(
+            json!({}),
+            &[PipelineStep::Protobuf, PipelineStep::Protobuf],
+            &approval_request(),
         );
     }
 
