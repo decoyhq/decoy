@@ -1,6 +1,6 @@
 pub mod execute;
 pub mod forward;
-mod path;
+pub(crate) mod path;
 pub mod resolve;
 mod view;
 
