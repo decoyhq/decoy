@@ -1,4 +1,7 @@
 use std::collections::BTreeMap;
+use std::sync::OnceLock;
+
+use bytes::Bytes;
 
 use serde_json::{Value, json};
 
@@ -6,21 +9,49 @@ use crate::schema::HttpMethod;
 
 /// The request envelope: what Case matching, predicates, and templates see about an HTTP request,
 /// besides method, path, and path params.
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct RequestEnvelope {
     /// Full URL as Decoy received it, e.g. `http://127.0.0.1:8080/api/users?verbose=true`.
     pub url: String,
     /// Decoded query parameters; a repeated key keeps every value in order.
     pub query: BTreeMap<String, Vec<String>>,
-    /// Lowercased header names; repeated headers are joined with `", "`.
-    pub headers: BTreeMap<String, String>,
+    /// Lowercased header names; repeated headers are joined with `", "`. Read-only outside the
+    /// crate: `content-type` feeds the cached [`Self::body`].
+    pub(crate) headers: BTreeMap<String, String>,
     /// Parsed from the `cookie` header.
     pub cookies: BTreeMap<String, String>,
-    /// JSON when the content type is JSON and it parses, text otherwise, `null` when empty.
-    pub body: Value,
+    /// The body as received; [`Self::body`] parses it on first use.
+    pub(crate) raw_body: Bytes,
+    pub(crate) parsed_body: OnceLock<Value>,
+}
+
+/// Compares the request inputs, not whether [`RequestEnvelope::body`] has run.
+impl PartialEq for RequestEnvelope {
+    fn eq(&self, other: &Self) -> bool {
+        self.url == other.url
+            && self.query == other.query
+            && self.headers == other.headers
+            && self.cookies == other.cookies
+            && self.raw_body == other.raw_body
+    }
 }
 
 impl RequestEnvelope {
+    pub fn headers(&self) -> &BTreeMap<String, String> {
+        &self.headers
+    }
+
+    /// JSON when the content type is JSON and it parses, text otherwise, `null` when empty.
+    /// Parsed once, on first use: passthrough and Cases that never read `body` skip it.
+    pub fn body(&self) -> &Value {
+        self.parsed_body.get_or_init(|| {
+            parse_body(
+                self.headers.get("content-type").map(String::as_str),
+                &self.raw_body,
+            )
+        })
+    }
+
     /// What predicates and templates see: `{ method, url, path, pathParams, query, headers,
     /// cookies, body }`. A query key is a string, or an array when it repeats.
     pub fn to_json(
@@ -48,7 +79,7 @@ impl RequestEnvelope {
             "query": query,
             "headers": self.headers,
             "cookies": self.cookies,
-            "body": self.body,
+            "body": self.body(),
         })
     }
 
@@ -56,7 +87,7 @@ impl RequestEnvelope {
         base_url: Option<&str>,
         path_and_query: &str,
         headers: &BTreeMap<String, String>,
-        body: &[u8],
+        body: Bytes,
     ) -> Self {
         let headers: BTreeMap<String, String> = headers
             .iter()
@@ -70,8 +101,9 @@ impl RequestEnvelope {
                 .get("cookie")
                 .map(|cookie| parse_cookies(cookie))
                 .unwrap_or_default(),
-            body: parse_body(headers.get("content-type").map(String::as_str), body),
             headers,
+            raw_body: body,
+            parsed_body: OnceLock::new(),
         }
     }
 }
@@ -141,7 +173,7 @@ mod tests {
                 ("Content-Type", "text/plain"),
                 ("cookie", "sid=abc; theme=dark"),
             ]),
-            b"",
+            Bytes::new(),
         );
 
         assert_eq!(
@@ -159,7 +191,7 @@ mod tests {
         assert_eq!(envelope.headers["content-type"], "text/plain");
         assert_eq!(envelope.cookies["sid"], "abc");
         assert_eq!(envelope.cookies["theme"], "dark");
-        assert_eq!(envelope.body, Value::Null);
+        assert_eq!(envelope.body(), &Value::Null);
     }
 
     #[test]
@@ -169,9 +201,10 @@ mod tests {
                 None,
                 "/",
                 &headers(&[("content-type", content_type)]),
-                body.as_bytes(),
+                Bytes::copy_from_slice(body.as_bytes()),
             )
-            .body
+            .body()
+            .clone()
         };
 
         assert_eq!(
@@ -181,5 +214,36 @@ mod tests {
         assert_eq!(json_body("application/vnd.api+json", r#"[1]"#), json!([1]));
         assert_eq!(json_body("application/json", "{oops"), json!("{oops"));
         assert_eq!(json_body("text/plain", r#"{"a":1}"#), json!(r#"{"a":1}"#));
+    }
+
+    #[test]
+    fn parses_the_body_on_first_use_only() {
+        let envelope = RequestEnvelope::from_parts(
+            None,
+            "/",
+            &headers(&[("content-type", "application/json")]),
+            r#"{"a":1}"#.into(),
+        );
+        assert_eq!(envelope.parsed_body.get(), None);
+
+        let first: *const Value = envelope.body();
+        assert_eq!(envelope.body(), &json!({ "a": 1 }));
+        assert!(std::ptr::eq(first, envelope.body()));
+    }
+
+    #[test]
+    fn equality_ignores_whether_the_body_was_parsed() {
+        let envelope = || {
+            RequestEnvelope::from_parts(
+                None,
+                "/",
+                &headers(&[("content-type", "application/json")]),
+                r#"{"a":1}"#.into(),
+            )
+        };
+        let parsed = envelope();
+        parsed.body();
+
+        assert_eq!(parsed, envelope());
     }
 }

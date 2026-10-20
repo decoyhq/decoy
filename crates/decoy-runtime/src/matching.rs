@@ -201,7 +201,7 @@ fn case_failure<F: Failure>(case_match: &Value, input: &MatchInput) -> Option<F>
             ("cookies", _) => strings_mismatch(field, pattern, |key| {
                 envelope.cookies.get(key).into_iter().collect()
             }),
-            ("body", _) => value_mismatch(field, pattern, &envelope.body),
+            ("body", _) => value_mismatch(field, pattern, envelope.body()),
             _ => Some(F::build(|| {
                 ConditionFailure::new(field.as_str(), pattern, Value::Null)
             })),
@@ -375,19 +375,26 @@ fn kind(value: &Value) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    use bytes::Bytes;
     use serde_json::json;
 
     use super::*;
 
     fn envelope(path_and_query: &str, headers: &[(&str, &str)], body: Value) -> RequestEnvelope {
         RequestEnvelope {
-            query: RequestEnvelope::from_parts(None, path_and_query, &BTreeMap::new(), b"").query,
+            query: RequestEnvelope::from_parts(
+                None,
+                path_and_query,
+                &BTreeMap::new(),
+                Bytes::new(),
+            )
+            .query,
             headers: headers
                 .iter()
                 .map(|(name, value)| ((*name).to_owned(), (*value).to_owned()))
                 .collect(),
             cookies: BTreeMap::from([("sid".to_owned(), "abc".to_owned())]),
-            body,
+            parsed_body: body.into(),
             ..RequestEnvelope::default()
         }
     }

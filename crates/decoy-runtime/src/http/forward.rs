@@ -18,7 +18,7 @@ pub struct ForwardRequest {
     pub method: HttpMethod,
     pub path_and_query: String,
     pub headers: BTreeMap<String, String>,
-    pub body: Vec<u8>,
+    pub body: Bytes,
 }
 
 #[derive(Debug)]
@@ -468,7 +468,7 @@ mod tests {
                     ("x-mock-session".to_owned(), "s1".to_owned()),
                     (VIA_HEADER.to_owned(), "other-decoy".to_owned()),
                 ]),
-                body: br#"{"item":"x"}"#.to_vec(),
+                body: Bytes::from_static(br#"{"item":"x"}"#),
             },
         )
         .await
@@ -520,7 +520,7 @@ mod tests {
                     VIA_HEADER.to_owned(),
                     format!("other-decoy, {}", instance_id()),
                 )]),
-                body: Vec::new(),
+                body: Bytes::new(),
             },
         )
         .await
@@ -608,7 +608,7 @@ mod tests {
                 method: HttpMethod::Get,
                 path_and_query: "/users/123".to_owned(),
                 headers: BTreeMap::new(),
-                body: Vec::new(),
+                body: Bytes::new(),
             },
         )
         .await
@@ -631,7 +631,7 @@ mod tests {
                 method: HttpMethod::Get,
                 path_and_query: "/users/123".to_owned(),
                 headers: BTreeMap::new(),
-                body: Vec::new(),
+                body: Bytes::new(),
             },
         )
         .await
@@ -673,7 +673,7 @@ mod tests {
                 method: HttpMethod::Get,
                 path_and_query: "/users/123".to_owned(),
                 headers: BTreeMap::new(),
-                body: Vec::new(),
+                body: Bytes::new(),
             },
         )
         .await
