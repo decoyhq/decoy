@@ -128,10 +128,11 @@ async function cdpOf(browser: WebdriverIO.Browser): Promise<CdpSession> {
     puppeteer = await browser.getPuppeteer()
   } catch (error) {
     const name = browser.capabilities.browserName ?? 'this browser'
-    throw new Error(
-      `@decoyhq/testplane routes \`urls\` over CDP, which needs Chrome or Chromium; ${name} is not supported yet.`,
-      { cause: error },
-    )
+    // Chromium-based (Chrome, Chromium, Edge): CDP is there, so the connection itself failed.
+    const message = /chrom|edge/i.test(name)
+      ? `@decoyhq/testplane could not connect to ${name} over CDP to route \`urls\`: ${String(error)}`
+      : `@decoyhq/testplane routes \`urls\` over CDP, which needs Chrome or Chromium; ${name} is not supported yet.`
+    throw new Error(message, { cause: error })
   }
   return (await puppeteer.target().createCDPSession()) as unknown as CdpSession
 }

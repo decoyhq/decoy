@@ -144,7 +144,9 @@ describe('decoyPlugin (worker)', () => {
     }
 
     for (let test = 0; test < 2; test++) {
-      await expect(hooks[0]?.call(ctx)).rejects.toThrow(/needs Chrome or Chromium/)
+      await expect(hooks[0]?.call(ctx)).rejects.toThrow(
+        /could not connect to chrome over CDP .*CDP not ready/,
+      )
       await afterEachHooks[0]?.call(ctx)
     }
 
