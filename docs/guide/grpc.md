@@ -139,8 +139,8 @@ cases:
 
 Templated values are checked when they render. A render or encode failure answers `INTERNAL` with
 the Behavior address. A stream renders its whole list when the call comes in, so a failure there
-answers `INTERNAL` before any message; a `send` message that doesn't fit the output type ends the
-stream with `INTERNAL`.
+answers `INTERNAL` before any message. A `send` message that doesn't fit the output type is
+rejected with `400` and the stream stays open.
 
 ## Misses and errors
 

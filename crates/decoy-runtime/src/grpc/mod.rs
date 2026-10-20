@@ -12,7 +12,17 @@ use std::collections::BTreeMap;
 
 use crate::schema::PipelineStep;
 
+pub use codec::GrpcCodecError;
 pub use resolve::GrpcResolution;
+
+/// Encodes `message` as a response of `method` through the Route's Pipeline, as a stream sends it.
+pub fn encode_response(
+    route: &crate::schema::Route,
+    method: &prost_reflect::MethodDescriptor,
+    message: serde_json::Value,
+) -> Result<Vec<u8>, GrpcCodecError> {
+    codec::encode(message, codec::pipeline(route), &method.output())
+}
 
 /// How the server answers a call: one response, or a server-streaming body.
 pub enum GrpcReply {

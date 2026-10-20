@@ -266,6 +266,39 @@ async fn an_open_stream_takes_sends_from_its_session_until_the_client_cancels() 
 }
 
 #[tokio::test]
+async fn a_send_that_does_not_fit_the_output_type_is_rejected_and_the_stream_stays_open() {
+    let server = Server::start(WATCH_ROUTE, WATCH_COLLECTIONS).await;
+    server
+        .control("useCollection", r#"{"collection":"open"}"#, "s1")
+        .await;
+    let mut client = server.client().await;
+    let mut stream = client
+        .watch(json!({ "ids": ["a-1"] }), &[("x-mock-session", "s1")])
+        .await
+        .unwrap();
+    assert!(next(&mut stream).await.unwrap().is_some());
+
+    let (status, body) = server
+        .send(r#"{"route":"approvals-watch","message":{"nope":1}}"#, "s1")
+        .await;
+    assert_eq!(status, 400, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap()
+            .contains("response does not fit approvals.v1.Approval"),
+        "{body}"
+    );
+
+    let good = r#"{"route":"approvals-watch","message":{"id":"a-2"}}"#;
+    assert_eq!(server.send(good, "s1").await.0, 200);
+    assert_eq!(
+        next(&mut stream).await.unwrap(),
+        Some(json!({ "id": "a-2" }))
+    );
+}
+
+#[tokio::test]
 async fn shutdown_ends_open_streams_with_unavailable() {
     let mut server = Server::start(WATCH_ROUTE, WATCH_COLLECTIONS).await;
     server

@@ -8,6 +8,7 @@ use crate::connections::{Connections, SendError};
 pub use crate::engine::session::{DEFAULT_SESSION, SESSION_HEADER};
 use crate::engine::{Catalog, ControlError, Controller, SelectionSnapshot};
 use crate::events::SessionSource;
+use crate::grpc::GrpcCodecError;
 use crate::grpc::schema::find_method;
 use crate::schema::{Route, RouteMatch};
 
@@ -109,6 +110,8 @@ pub enum ControlApiError {
         "route `{route}` has no live connections to send to; `send` needs a ws, sse or streaming gRPC Route"
     )]
     SendNotLongLived { route: String },
+    #[error(transparent)]
+    SendMessage(GrpcCodecError),
     #[error("no live connection of route `{route}` in session `{session}` within {timeout_ms}ms")]
     SendTimeout {
         route: String,
@@ -125,6 +128,7 @@ impl ControlApiError {
             Self::InvalidJson(_) | Self::Control(_) => 400,
             Self::SendUnknownRoute { .. } => 404,
             Self::SendNotLongLived { .. } => 409,
+            Self::SendMessage(_) => 400,
             Self::SendTimeout { .. } => 408,
         }
     }
@@ -168,7 +172,8 @@ impl From<ControlApiError> for ControlApiResponse {
 /// `POST /__decoy__/control/send` with `{ "route": "...", "message": ..., "timeout"?: <ms> }`:
 /// delivers `message` to every live connection of the Route in the request's Session and answers
 /// `{ "delivered": <n> }`. With no live connection it waits up to `timeout` (default 5000) and
-/// fails with `408` (Q5). Unknown Route: `404`; a Route without long-lived connections: `409`.
+/// fails with `408` (Q5). Unknown Route: `404`; a Route without long-lived connections: `409`; a
+/// `message` that doesn't encode for the Route: `400`.
 ///
 /// Unlike the other verbs it waits, so the server calls it without holding the Controller.
 pub async fn handle_send_request(
@@ -195,9 +200,12 @@ async fn try_send(
     let Some(route) = catalog.route(&body.route) else {
         return Err(ControlApiError::SendUnknownRoute { route: body.route });
     };
-    if !takes_send(catalog, route) {
+    let Some(method) = send_method(catalog, route) else {
         return Err(ControlApiError::SendNotLongLived { route: body.route });
-    }
+    };
+    // Checked here so a bad message fails the call instead of the client's stream.
+    crate::grpc::encode_response(route, &method, body.message.clone())
+        .map_err(ControlApiError::SendMessage)?;
     let timeout = body
         .timeout
         .map_or(DEFAULT_SEND_TIMEOUT, Duration::from_millis);
@@ -211,14 +219,15 @@ async fn try_send(
         })
 }
 
-/// Whether the Route holds long-lived connections: server-streaming gRPC so far; WebSocket and SSE
-/// come with #218.
-fn takes_send(catalog: &Catalog, route: &Route) -> bool {
+/// The method of a Route that holds long-lived connections: server-streaming gRPC so far;
+/// WebSocket and SSE come with #218.
+fn send_method(catalog: &Catalog, route: &Route) -> Option<prost_reflect::MethodDescriptor> {
     let RouteMatch::Grpc(address) = &route.route_match else {
-        return false;
+        return None;
     };
     find_method(&catalog.runtime().protos, &address.service, &address.method)
-        .is_ok_and(|method| method.is_server_streaming())
+        .ok()
+        .filter(|method| method.is_server_streaming())
 }
 
 pub fn try_handle_control_request(
