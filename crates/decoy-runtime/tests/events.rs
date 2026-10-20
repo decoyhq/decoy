@@ -386,6 +386,38 @@ async fn a_server_streaming_call_emits_one_hit_as_it_opens() {
 }
 
 #[tokio::test]
+async fn a_server_streaming_call_records_its_end_status_when_known_at_open() {
+    let running = start(
+        &["id: watch\ntransport: grpc\nmatch: { service: approvals.v1.Approvals, method: WatchApprovals }\ncases:\n  any:\n    behaviors:\n      aborted: { stream: [], status: ABORTED, message: gave up }\n"],
+        "- id: default\n  routes: [watch:any:aborted]\n",
+    )
+    .await;
+    let mut events = running.server.subscribe();
+    let view = running.server.controller.read().await.session_view("s1");
+    let reply = view
+        .execute_grpc(
+            decoy_runtime::grpc::GrpcRequest {
+                service: "approvals.v1.Approvals".into(),
+                method: "WatchApprovals".into(),
+                metadata: BTreeMap::new(),
+                body: vec![0, 0, 0, 0, 0],
+            },
+            &Connections::default(),
+        )
+        .await;
+    assert!(matches!(reply, GrpcReply::Stream(_)));
+
+    let event = next_request(&mut events).await;
+    assert_eq!(event.response.status, 10);
+    assert!(
+        event
+            .response
+            .headers
+            .contains(&("grpc-message".into(), "gave up".into()))
+    );
+}
+
+#[tokio::test]
 async fn a_grpc_miss_emits_its_status_message_as_a_header() {
     let running = start(
         &[APPROVALS],

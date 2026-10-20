@@ -22,7 +22,7 @@ use crate::template::render_grpc_response;
 
 /// A served call and what an event needs to explain it.
 pub(crate) struct GrpcCall {
-    /// For a stream, an empty `OK`: what the call opened with.
+    /// For a stream, its end status if known at open, else an empty `OK`.
     pub response: GrpcResponse,
     /// A server-streaming answer, served by [`GrpcStream::serve`].
     pub stream: Option<GrpcStream>,
@@ -56,15 +56,17 @@ impl Catalog {
                 if let Some(delay) = response.delay {
                     tokio::time::sleep(delay).await;
                 }
-                let failed = |reason| {
-                    GrpcResponse::error(
-                        INTERNAL,
-                        format!("behavior `{}` failed: {reason}", activation.address()),
-                    )
-                };
+                let failed = |reason| behavior_failed(&activation.address(), reason);
                 let (response, stream) = if method.is_server_streaming() {
                     match respond_stream(&activation, route, &method, response, &envelope) {
-                        Ok(stream) => (GrpcResponse::error(OK, ""), Some(stream)),
+                        // The event records the end status when it is known at open.
+                        Ok(stream) => (
+                            stream
+                                .end
+                                .clone()
+                                .unwrap_or_else(|| GrpcResponse::error(OK, "")),
+                            Some(stream),
+                        ),
                         Err(reason) => (failed(reason), None),
                     }
                 } else {
@@ -166,8 +168,8 @@ impl GrpcStream {
                     Some(match encode(message, &open.steps, &open.output) {
                         Ok(bytes) => (StreamPart::Message(bytes), Some(open)),
                         Err(error) => {
-                            let reason = format!("behavior `{}` failed: {error}", open.address);
-                            (StreamPart::End(GrpcResponse::error(INTERNAL, reason)), None)
+                            let end = behavior_failed(&open.address, error);
+                            (StreamPart::End(end), None)
                         }
                     })
                 })
@@ -253,6 +255,11 @@ fn respond(
         status_message: String::new(),
         metadata: rendered.metadata,
     })
+}
+
+/// `INTERNAL` naming the Behavior that could not render or encode.
+fn behavior_failed(address: &str, reason: impl std::fmt::Display) -> GrpcResponse {
+    GrpcResponse::error(INTERNAL, format!("behavior `{address}` failed: {reason}"))
 }
 
 /// A bodyless answer: `status`, with `message` as its text.
