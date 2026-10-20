@@ -128,6 +128,7 @@ describe('forwardToDecoy', () => {
             { name: 'accept', value: 'a/b' },
             { name: SESSION_HEADER, value: 's-1' },
           ],
+          interceptResponse: true,
         },
       ],
     ])
@@ -184,7 +185,66 @@ describe('routeToDecoy', () => {
         requestId: 'r-1',
         url: 'http://127.0.0.1:8080/api/users/1',
         headers: [{ name: SESSION_HEADER, value: 's-1' }],
+        interceptResponse: true,
       },
+    ])
+  })
+
+  test("a routed redirect's relative Location resolves against the page's URL, not Decoy's", async () => {
+    const root = fakeSession()
+    const page = fakeSession()
+    root.children.set('child', page)
+    await routeToDecoy(root.session, decoyUrl, '**/api/**', { sessionId: 's-1' })
+    root.emit('Target.attachedToTarget', attach('page'))
+    await settle()
+
+    page.emit('Fetch.requestPaused', {
+      requestId: 'r-1',
+      request: { url: 'http://app.test/api/old?x=1', headers: {} },
+    })
+    page.emit('Fetch.requestPaused', {
+      requestId: 'r-1',
+      request: { url: 'http://127.0.0.1:8080/api/old?x=1', headers: {} },
+      responseStatusCode: 302,
+      responseHeaders: [
+        { name: 'Location', value: 'new' },
+        { name: 'x-other', value: 'kept' },
+      ],
+    })
+    await settle()
+    expect(page.sent.at(-1)).toEqual([
+      'Fetch.continueRequest',
+      { requestId: 'r-1', url: 'http://app.test/api/new' },
+    ])
+  })
+
+  test('a routed response that is not a redirect, or that failed, is continued untouched', async () => {
+    const root = fakeSession()
+    const page = fakeSession()
+    root.children.set('child', page)
+    await routeToDecoy(root.session, decoyUrl, '**/api/**', { sessionId: 's-1' })
+    root.emit('Target.attachedToTarget', attach('page'))
+    await settle()
+
+    for (const [requestId, response] of [
+      ['r-1', { responseStatusCode: 201, responseHeaders: [{ name: 'location', value: 'x' }] }],
+      ['r-2', { responseErrorReason: 'ConnectionRefused' }],
+    ] as const) {
+      page.emit('Fetch.requestPaused', {
+        requestId,
+        request: { url: 'http://app.test/api/users/1', headers: {} },
+      })
+      page.emit('Fetch.requestPaused', {
+        requestId,
+        request: { url: 'http://127.0.0.1:8080/api/users/1', headers: {} },
+        ...response,
+      })
+    }
+    await settle()
+    // Each response follows its own routed request (`at(-2)` is r-2's).
+    expect([page.sent.at(-3), page.sent.at(-1)]).toEqual([
+      ['Fetch.continueRequest', { requestId: 'r-1' }],
+      ['Fetch.continueRequest', { requestId: 'r-2' }],
     ])
   })
 

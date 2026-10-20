@@ -1,0 +1,13 @@
+id: redirect
+transport: http
+match:
+  method: GET
+  path: /api/redirect
+cases:
+  any:
+    match: {}
+    behaviors:
+      to-user-2: # a relative Location: the browser must resolve it against the page's origin
+        status: 302
+        headers:
+          location: /api/users/2

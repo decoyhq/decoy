@@ -18,6 +18,9 @@ interface AttachedToTarget {
 export interface RequestPaused {
   requestId: string
   request: { url: string; headers: Record<string, string> }
+  // Present only at the response stage, which routed requests also pause at.
+  responseStatusCode?: number
+  responseHeaders?: Array<{ name: string; value: string }>
 }
 
 /** Which Session matching requests belong to right now; `undefined` between tests. */
@@ -32,6 +35,7 @@ export type Decision =
 // Targets whose requests no page's interception sees. A dedicated `worker` has no Fetch domain;
 // its requests pause on the page that started it, so it is only resumed, like any other target.
 const ROUTED_TARGETS = new Set(['page', 'iframe', 'shared_worker', 'service_worker'])
+const REDIRECTS = new Set([301, 302, 303, 307, 308])
 
 /**
  * Send every request matching `urls`, from every page, out-of-process frame and worker of the browser
@@ -39,7 +43,9 @@ const ROUTED_TARGETS = new Set(['page', 'iframe', 'shared_worker', 'service_work
  * current Session. New tabs and popups start paused (auto-attach with `waitForDebuggerOnStart`)
  * and only run once interception is on, so even their first request is routed. The rewrite
  * happens inside Chrome (`Fetch.continueRequest` with a new url): method, headers, cookies, and
- * body are kept and the page still sees its own origin.
+ * body are kept and the page still sees its own origin. Chrome would resolve a relative redirect
+ * from Decoy against Decoy's URL, so routed responses pause too and `Location` is resolved against
+ * the page's URL.
  */
 export async function routeToDecoy(
   root: CdpSession,
@@ -64,13 +70,20 @@ export async function routeToDecoy(
       return
     }
     if (ROUTED_TARGETS.has(event.targetInfo.type)) {
+      const originals = new Map<string, string>() // requestId of a routed request -> its page URL
       try {
         target.on('Fetch.requestPaused', (paused: RequestPaused) => {
-          void forwardToDecoy(
-            target,
-            paused,
-            decide(paused.request.url, decoyUrl, matchers, holder),
-          )
+          const original = originals.get(paused.requestId)
+          if (original !== undefined) {
+            originals.delete(paused.requestId)
+            void resumeRouted(target, paused, original)
+            return
+          }
+          const decision = decide(paused.request.url, decoyUrl, matchers, holder)
+          if (decision.kind === 'decoy') {
+            originals.set(paused.requestId, paused.request.url)
+          }
+          void forwardToDecoy(target, paused, decision)
         })
         await target.send('Fetch.enable', {
           patterns: [{ urlPattern: '*', requestStage: 'Request' }],
@@ -127,10 +140,34 @@ export async function forwardToDecoy(
         .filter(([name]) => name.toLowerCase() !== SESSION_HEADER)
         .map(([name, value]) => ({ name, value }))
       headers.push({ name: SESSION_HEADER, value: decision.sessionId })
-      await session.send('Fetch.continueRequest', { requestId, url: decision.url, headers })
+      await session.send('Fetch.continueRequest', {
+        requestId,
+        url: decision.url,
+        headers,
+        interceptResponse: true,
+      })
     }
   } catch {
     // The page navigated or closed while the request was paused; nothing is left to answer.
+  }
+}
+
+/**
+ * Resumes a routed response. A redirect is sent on to its `Location` resolved against the page's URL
+ * `original`: Chrome would resolve it against Decoy's, and ignores a rewritten `Location` header.
+ */
+async function resumeRouted(
+  session: Pick<CdpSession, 'send'>,
+  paused: RequestPaused,
+  original: string,
+): Promise<void> {
+  const { requestId, responseStatusCode = 0, responseHeaders = [] } = paused
+  const location = responseHeaders.find(({ name }) => name.toLowerCase() === 'location')?.value
+  const url = REDIRECTS.has(responseStatusCode) && location && URL.parse(location, original)?.href
+  try {
+    await session.send('Fetch.continueRequest', url ? { requestId, url } : { requestId })
+  } catch {
+    // The page navigated or closed while the response was paused; nothing is left to answer.
   }
 }
 
