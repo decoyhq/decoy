@@ -86,7 +86,7 @@ impl Connections {
         loop {
             // Listen before checking, so a registration between the check and the wait still wakes us.
             let registered = self.inner.registered.notified();
-            let delivered = self.deliver(&address, &message);
+            let delivered = self.deliver(&address, &message)?;
             if delivered > 0 {
                 return Ok(delivered);
             }
@@ -102,16 +102,22 @@ impl Connections {
         let mut live = self.inner.live.lock().expect("connections lock");
         live.closed = true;
         live.by_address.clear();
+        drop(live);
+        // Waiting `send`s stop too, so they don't hold the drain either.
+        self.inner.registered.notify_waiters();
     }
 
-    fn deliver(&self, address: &Address, message: &Value) -> usize {
+    fn deliver(&self, address: &Address, message: &Value) -> Result<usize, SendError> {
         let live = self.inner.live.lock().expect("connections lock");
-        live.by_address.get(address).map_or(0, |senders| {
+        if live.closed {
+            return Err(SendError::Closed);
+        }
+        Ok(live.by_address.get(address).map_or(0, |senders| {
             senders
                 .iter()
                 .filter(|(_, sender)| sender.send(message.clone()).is_ok())
                 .count()
-        })
+        }))
     }
 }
 
@@ -132,6 +138,9 @@ pub enum SendError {
     /// No live connection appeared before the `send` timeout.
     #[error("no live connection before the timeout")]
     Timeout,
+    /// Decoy is shutting down; no connection will come.
+    #[error("decoy is shutting down")]
+    Closed,
 }
 
 #[cfg(test)]
@@ -139,6 +148,24 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[tokio::test]
+    async fn close_all_stops_a_waiting_send() {
+        let connections = Connections::default();
+        let sending = tokio::spawn({
+            let connections = connections.clone();
+            async move {
+                connections
+                    .send("a", "live", json!(1), Duration::from_secs(30))
+                    .await
+            }
+        });
+        tokio::task::yield_now().await;
+        connections.close_all();
+
+        let sent = tokio::time::timeout(Duration::from_secs(1), sending).await;
+        assert_eq!(sent.unwrap().unwrap(), Err(SendError::Closed));
+    }
 
     const SHORT: Duration = Duration::from_millis(20);
 

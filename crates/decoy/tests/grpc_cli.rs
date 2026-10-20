@@ -298,6 +298,7 @@ async fn a_send_that_does_not_fit_the_output_type_is_rejected_and_the_stream_sta
     );
 }
 
+#[cfg(unix)]
 #[tokio::test]
 async fn shutdown_ends_open_streams_with_unavailable() {
     let mut server = Server::start(WATCH_ROUTE, WATCH_COLLECTIONS).await;

@@ -54,6 +54,8 @@ curl -X POST localhost:8080/__decoy__/control/send \
   that doesn't fit the method's output type gets `400` with the reason, and nothing is sent.
 - Only connections opened in the same Session (`x-mock-session`) get it.
 - With no live connection yet, `send` waits for one up to `timeout` milliseconds (default `5000`).
+- A stream opened before a [reload](config.md#reloading) keeps the message type it opened with; a `send` that
+  fits only the new type ends that stream with `INTERNAL`.
 
 | status | when                                                           |
 | ------ | -------------------------------------------------------------- |
@@ -62,6 +64,7 @@ curl -X POST localhost:8080/__decoy__/control/send \
 | `404`  | unknown Route                                                  |
 | `409`  | the Route has no long-lived connections (HTTP, unary gRPC)     |
 | `408`  | no live connection of the Route in this Session within timeout |
+| `503`  | Decoy is shutting down                                         |
 
 Malformed JSON returns `400` and a missing JSON content type `415`, as for the other verbs.
 

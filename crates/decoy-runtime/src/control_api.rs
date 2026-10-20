@@ -118,6 +118,8 @@ pub enum ControlApiError {
         session: String,
         timeout_ms: u128,
     },
+    #[error("decoy is shutting down")]
+    SendClosed,
 }
 
 impl ControlApiError {
@@ -130,6 +132,7 @@ impl ControlApiError {
             Self::SendNotLongLived { .. } => 409,
             Self::SendMessage(_) => 400,
             Self::SendTimeout { .. } => 408,
+            Self::SendClosed => 503,
         }
     }
 }
@@ -212,10 +215,13 @@ async fn try_send(
     connections
         .send(&session, &body.route, body.message, timeout)
         .await
-        .map_err(|SendError::Timeout| ControlApiError::SendTimeout {
-            route: body.route,
-            session,
-            timeout_ms: timeout.as_millis(),
+        .map_err(|error| match error {
+            SendError::Timeout => ControlApiError::SendTimeout {
+                route: body.route,
+                session,
+                timeout_ms: timeout.as_millis(),
+            },
+            SendError::Closed => ControlApiError::SendClosed,
         })
 }
 
