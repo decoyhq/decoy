@@ -633,6 +633,7 @@ impl App {
             title: format!(" #{id} {} {} ", record.method, record.url),
             lines: crate::detail::lines(&record, &self.theme()),
             scroll: 0,
+            heights: None,
         });
     }
 
@@ -718,6 +719,8 @@ pub(crate) struct Detail {
     pub lines: Vec<ratatui::text::Line<'static>>,
     /// Rows scrolled off the top.
     pub scroll: u16,
+    /// Each line's wrapped height at a panel width, kept so frames don't re-wrap the body.
+    pub heights: Option<(u16, Vec<usize>)>,
 }
 
 /// `1 override`, `2 overrides`.
