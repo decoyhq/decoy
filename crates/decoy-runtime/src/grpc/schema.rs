@@ -688,6 +688,15 @@ cases:
     }
 
     #[test]
+    fn request_json_keeps_doubles_exact() {
+        let approval = pool().get_message_by_name("approvals.v1.Approval").unwrap();
+        let literal = serde_json::json!({ "score": 3.8841428571428573 });
+        let message = DynamicMessage::deserialize(approval, literal.clone()).unwrap();
+
+        assert_eq!(request_json(&message).unwrap()["score"], literal["score"]);
+    }
+
+    #[test]
     fn well_known_match_literals_must_use_the_canonical_request_form() {
         let pool = pool();
         let input = pool.get_message_by_name("approvals.v1.Sample").unwrap();
@@ -715,6 +724,9 @@ cases:
             let error = canonical(literal.clone()).unwrap_err();
             assert!(error.contains(expected), "{literal}: {error}");
         }
+        // Response literals keep any form protobuf JSON parses.
+        let response = serde_json::json!({ "limit": 5, "at": "2024-01-01T00:00:00+00:00" });
+        check_message(&response, &input, "message", Form::Any).unwrap();
     }
 
     #[test]
