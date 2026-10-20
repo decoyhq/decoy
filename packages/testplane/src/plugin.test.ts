@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isHealthy } from '@decoyhq/runner-core'
-import { FAKE_DECOY } from '@decoyhq/runner-core/testing'
+import { FAKE_DECOY, startFakeDecoy } from '@decoyhq/runner-core/testing'
 import { describe, expect, test } from '@rstest/core'
 import type Testplane from 'testplane'
 import decoyPlugin from './plugin'
@@ -53,5 +53,74 @@ describe('decoyPlugin (master)', () => {
 
     await fire('endRunner')
     expect(await isHealthy(url)).toBe(false)
+  })
+})
+
+type Hook = (this: unknown) => Promise<void>
+
+/** The worker-process slice of Testplane the plugin uses: one root suite, read with `hooks`. */
+function fakeWorker(hooks: Hook[]) {
+  const afterEachHooks: Hook[] = []
+  const root = {
+    beforeEach: (hook: Hook) => hooks.push(hook),
+    afterEach: (hook: Hook) => afterEachHooks.push(hook),
+    get beforeEachHooks() {
+      return hooks
+    },
+  }
+  let testsRead: (collection: unknown) => void = () => undefined
+  const testplane = {
+    isWorker: () => true,
+    events: { AFTER_TESTS_READ: 'afterTestsRead' },
+    on: (_event: string, handler: typeof testsRead) => {
+      testsRead = handler
+    },
+  }
+  return {
+    testplane: testplane as unknown as Testplane,
+    readTests: () => {
+      testsRead({
+        eachRootSuite: (each: (suite: typeof root) => void) => {
+          each(root)
+        },
+      })
+    },
+    afterEachHooks,
+  }
+}
+
+describe('decoyPlugin (worker)', () => {
+  test("its beforeEach runs ahead of the file's own top-level hooks", () => {
+    const own: Hook = () => Promise.resolve()
+    const hooks = [own]
+    const { testplane, readTests } = fakeWorker(hooks)
+
+    decoyPlugin(testplane, {})
+    readTests()
+
+    expect(hooks).toHaveLength(2)
+    expect(hooks[1]).toBe(own)
+  })
+
+  test('ends the Session even when routing setup fails', async () => {
+    const decoy = await startFakeDecoy()
+    const hooks: Hook[] = []
+    const { testplane, readTests, afterEachHooks } = fakeWorker(hooks)
+    decoyPlugin(testplane, { url: decoy.url, urls: '**/api/**' })
+    readTests()
+    const ctx = {
+      browser: {
+        sessionId: 'wd-1',
+        capabilities: { browserName: 'firefox' },
+        getPuppeteer: () => Promise.reject(new Error('no CDP')),
+      },
+      currentTest: { browserId: 'firefox', fullTitle: () => 'a test' },
+    }
+
+    await expect(hooks[0]?.call(ctx)).rejects.toThrow(/needs Chrome or Chromium/)
+    await afterEachHooks[0]?.call(ctx)
+
+    expect(decoy.calls.map((call) => call.path)).toEqual(['/__decoy__/control/endSession'])
+    await decoy.close()
   })
 })

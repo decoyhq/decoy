@@ -24,7 +24,7 @@ import { decoy } from '@decoyhq/testplane'
 
 it('empty state', async ({ browser }) => {
   await decoy(browser).useCollection('empty')
-  await decoy(browser).useRoute('users-by-id', 'user-123', 'missing')
+  await decoy(browser).useRoute('users-by-id:user-123:missing') // or ('users-by-id', 'user-123', 'missing')
   await decoy(browser).reset()
 })
 ```

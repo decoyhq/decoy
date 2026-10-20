@@ -67,15 +67,15 @@ sends SIGTERM and, if Decoy hasn't exited after 8s, SIGKILL (Windows: `taskkill 
 - Each test gets a Session id (`<browser>-<full title>-<uuid>`). Before the test and its hooks
   (including a file's top-level `beforeEach`), Decoy's health is checked and `collection` applied.
   After the test and its `afterEach` hooks, the Session ends.
-- Browser requests matching `urls`, from every tab, popup, and cross-site iframe, go to Decoy with method, path and query,
-  headers, cookies, and body kept, and `x-mock-session` set. Chrome rewrites the URL itself, so
-  the page sees its own origin (no CORS). Decoy's answer, including a 501 miss, reaches the page
-  as-is. If Decoy is unreachable the request fails, never sent to the real network. New tabs stay
-  paused until routing is on, so even their first request is covered. Matching requests fired
-  between tests are aborted.
-- `decoy(browser)`: `sessionId`, `useCollection(id)`, `useRoute(route, case, behavior)`,
-  `reset()`, `endSession()`. Each call hits the Control API immediately and rejects with Decoy's
-  error. It throws outside a test.
+- Browser requests matching `urls`, from every tab, popup, cross-site iframe, and worker (dedicated,
+  shared, service), go to Decoy with method, path and query, headers, cookies, and body kept, and
+  `x-mock-session` set. Chrome rewrites the URL itself, so the page sees its own origin (no CORS).
+  Decoy's answer, including a 501 miss, reaches the page as-is. If Decoy is unreachable the request
+  fails, never sent to the real network. New tabs stay paused until routing is on, so even their
+  first request is covered. Matching requests fired between tests are aborted.
+- `decoy(browser)`: `sessionId`, `useCollection(id)`, `useRoute(address)` with a Behavior address
+  `route:case:behavior` (or `useRoute(route, case, behavior)`), `reset()`, `endSession()`. Each call
+  hits the Control API immediately and rejects with Decoy's error. It throws outside a test.
 
 ## Limits
 
