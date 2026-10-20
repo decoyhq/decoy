@@ -1316,6 +1316,29 @@ async fn serve_control_without_session_header_targets_the_default_session() {
 }
 
 #[tokio::test]
+async fn serve_control_send_needs_a_route_with_live_connections() {
+    let server = ControlServer::start().await;
+
+    let (status, body) = server
+        .post(
+            "/__decoy__/control/send",
+            Some("a"),
+            r#"{"route":"ghost","message":{}}"#,
+        )
+        .await;
+    assert_eq!(status, 404, "{body}");
+
+    let (status, body) = server
+        .post(
+            "/__decoy__/control/send",
+            Some("a"),
+            r#"{"route":"get-user","message":{}}"#,
+        )
+        .await;
+    assert_eq!(status, 409, "{body}");
+}
+
+#[tokio::test]
 async fn serve_control_returns_clear_errors_for_invalid_addresses() {
     let server = ControlServer::start().await;
 

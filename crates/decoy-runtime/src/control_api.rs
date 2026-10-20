@@ -1,16 +1,23 @@
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::connections::{Connections, SendError};
 pub use crate::engine::session::{DEFAULT_SESSION, SESSION_HEADER};
-use crate::engine::{ControlError, Controller, SelectionSnapshot};
+use crate::engine::{Catalog, ControlError, Controller, SelectionSnapshot};
 use crate::events::SessionSource;
+use crate::schema::Route;
 
 pub const CONTROL_PREFIX: &str = "/__decoy__";
 /// Liveness probe for tools waiting on a runtime. It reports only that Decoy is serving; it
 /// exposes no diagnostics or identity and never reads or mutates Selection.
 pub const HEALTH_PATH: &str = "/__decoy__/health";
+/// Pushes a message to a Route's live connections; see [`handle_send_request`].
+pub const SEND_PATH: &str = "/__decoy__/control/send";
+/// How long `send` waits for a live connection when the body sets no `timeout` (Q5).
+pub const DEFAULT_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControlApiRequest {
@@ -67,6 +74,19 @@ struct UseRouteBody {
     behavior: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct SendBody {
+    route: String,
+    message: serde_json::Value,
+    /// Milliseconds.
+    timeout: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+struct SendResponseBody {
+    delivered: usize,
+}
+
 #[derive(Debug, Serialize)]
 struct ControlErrorBody {
     error: String,
@@ -82,6 +102,18 @@ pub enum ControlApiError {
     InvalidJson(#[from] serde_json::Error),
     #[error(transparent)]
     Control(#[from] ControlError),
+    #[error("unknown route `{route}`")]
+    SendUnknownRoute { route: String },
+    #[error(
+        "route `{route}` has no live connections to send to; `send` needs a ws, sse or streaming gRPC Route"
+    )]
+    SendNotLongLived { route: String },
+    #[error("no live connection of route `{route}` in session `{session}` within {timeout_ms}ms")]
+    SendTimeout {
+        route: String,
+        session: String,
+        timeout_ms: u128,
+    },
 }
 
 impl ControlApiError {
@@ -90,6 +122,9 @@ impl ControlApiError {
             Self::UnknownEndpoint { .. } => 404,
             Self::NotJson => 415,
             Self::InvalidJson(_) | Self::Control(_) => 400,
+            Self::SendUnknownRoute { .. } => 404,
+            Self::SendNotLongLived { .. } => 409,
+            Self::SendTimeout { .. } => 408,
         }
     }
 }
@@ -114,13 +149,71 @@ pub fn handle_control_request(
 ) -> ControlApiResponse {
     match try_handle_control_request(controller, request) {
         Ok(selection) => ControlApiResponse::json(200, selection),
-        Err(error) => ControlApiResponse::json(
+        Err(error) => error.into(),
+    }
+}
+
+impl From<ControlApiError> for ControlApiResponse {
+    fn from(error: ControlApiError) -> Self {
+        Self::json(
             error.status(),
             ControlErrorBody {
                 error: error.to_string(),
             },
-        ),
+        )
     }
+}
+
+/// `POST /__decoy__/control/send` with `{ "route": "...", "message": ..., "timeout"?: <ms> }`:
+/// delivers `message` to every live connection of the Route in the request's Session and answers
+/// `{ "delivered": <n> }`. With no live connection it waits up to `timeout` (default 5000) and
+/// fails with `408` (Q5). Unknown Route: `404`; a Route without long-lived connections: `409`.
+///
+/// Unlike the other verbs it waits, so the server calls it without holding the Controller.
+pub async fn handle_send_request(
+    catalog: &Catalog,
+    connections: &Connections,
+    request: ControlApiRequest,
+) -> ControlApiResponse {
+    match try_send(catalog, connections, request).await {
+        Ok(delivered) => ControlApiResponse::json(200, SendResponseBody { delivered }),
+        Err(error) => error.into(),
+    }
+}
+
+async fn try_send(
+    catalog: &Catalog,
+    connections: &Connections,
+    request: ControlApiRequest,
+) -> Result<usize, ControlApiError> {
+    if !is_json(&request.headers) {
+        return Err(ControlApiError::NotJson);
+    }
+    let session = session_id(&request.headers);
+    let body: SendBody = parse_body(request.body)?;
+    let Some(route) = catalog.route(&body.route) else {
+        return Err(ControlApiError::SendUnknownRoute { route: body.route });
+    };
+    if !takes_send(route) {
+        return Err(ControlApiError::SendNotLongLived { route: body.route });
+    }
+    let timeout = body
+        .timeout
+        .map_or(DEFAULT_SEND_TIMEOUT, Duration::from_millis);
+    connections
+        .send(&session, &body.route, body.message, timeout)
+        .await
+        .map_err(|SendError::Timeout| ControlApiError::SendTimeout {
+            route: body.route,
+            session,
+            timeout_ms: timeout.as_millis(),
+        })
+}
+
+/// Whether the Route holds long-lived connections. None does yet: server-streaming gRPC (#248),
+/// then WebSocket and SSE (#218).
+fn takes_send(_route: &Route) -> bool {
+    false
 }
 
 pub fn try_handle_control_request(
@@ -435,5 +528,38 @@ cases:
             missing_behavior.body,
             r#"{"error":"unknown behavior `get-user:user-123:ghost`"}"#
         );
+    }
+
+    fn send(body: &str) -> ControlApiRequest {
+        ControlApiRequest::post(SEND_PATH, body)
+    }
+
+    async fn send_response(request: ControlApiRequest) -> ControlApiResponse {
+        handle_send_request(&controller().catalog(), &Connections::default(), request).await
+    }
+
+    #[tokio::test]
+    async fn send_rejects_unknown_routes_and_routes_without_live_connections() {
+        let unknown = send_response(send(r#"{"route":"ghost","message":{}}"#)).await;
+        assert_eq!(unknown.status, 404);
+        assert_eq!(unknown.body, r#"{"error":"unknown route `ghost`"}"#);
+
+        let http = send_response(send(r#"{"route":"get-user","message":{}}"#)).await;
+        assert_eq!(http.status, 409, "{}", http.body);
+    }
+
+    #[tokio::test]
+    async fn send_takes_only_a_well_formed_json_body() {
+        let missing_message = send_response(send(r#"{"route":"get-user"}"#)).await;
+        assert_eq!(missing_message.status, 400);
+        assert!(missing_message.body.contains("missing field `message`"));
+
+        assert_eq!(send_response(send("{")).await.status, 400);
+
+        let mut plain = send(r#"{"route":"get-user","message":{}}"#);
+        plain
+            .headers
+            .insert("content-type".to_owned(), "text/plain".to_owned());
+        assert_eq!(send_response(plain).await.status, 415);
     }
 }

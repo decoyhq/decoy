@@ -6,8 +6,10 @@ use super::response::{
     control_response, grpc_response, json_response, response_from_execution_outcome,
     response_from_forward_response,
 };
+use crate::connections::Connections;
 use crate::control_api::{
-    ControlApiRequest, HEALTH_PATH, handle_control_request, is_control_path, session_id,
+    ControlApiRequest, HEALTH_PATH, SEND_PATH, handle_control_request, handle_send_request,
+    is_control_path, session_id,
 };
 use crate::engine::Controller;
 use crate::grpc::{GrpcRequest, GrpcResponse, RESOURCE_EXHAUSTED, UNIMPLEMENTED};
@@ -30,14 +32,16 @@ pub(super) struct Secure;
 pub(super) async fn handle_request(
     State(controller): State<Arc<RwLock<Controller>>>,
     Extension(events): Extension<crate::events::Sender>,
+    Extension(connections): Extension<Connections>,
     OriginalUri(uri): OriginalUri,
     request: Request<Body>,
 ) -> Response<Body> {
-    crate::events::logging_to(events, respond(controller, uri, request)).await
+    crate::events::logging_to(events, respond(controller, connections, uri, request)).await
 }
 
 async fn respond(
     controller: Arc<RwLock<Controller>>,
+    connections: Connections,
     uri: axum::http::Uri,
     request: Request<Body>,
 ) -> Response<Body> {
@@ -102,15 +106,18 @@ async fn respond(
     }
 
     if is_control_path(uri.path()) {
-        let response = handle_control_request(
-            &mut *controller.write().await,
-            ControlApiRequest {
-                method: request_method.as_str().to_owned(),
-                path: uri.path().to_owned(),
-                headers,
-                body: Some(String::from_utf8_lossy(&body).into_owned()),
-            },
-        );
+        let request = ControlApiRequest {
+            method: request_method.as_str().to_owned(),
+            path: uri.path().to_owned(),
+            headers,
+            body: Some(String::from_utf8_lossy(&body).into_owned()),
+        };
+        if uri.path() == SEND_PATH && request_method == axum::http::Method::POST {
+            // `send` may wait for a connection; it must not hold the Controller meanwhile.
+            let catalog = controller.read().await.catalog();
+            return control_response(handle_send_request(&catalog, &connections, request).await);
+        }
+        let response = handle_control_request(&mut *controller.write().await, request);
         return control_response(response);
     }
 
