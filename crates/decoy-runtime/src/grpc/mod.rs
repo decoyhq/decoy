@@ -128,6 +128,7 @@ mod tests {
         let protos = load_descriptor_pool(&ProtoSources {
             roots: vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proto")],
             descriptor_sets: vec![],
+            files: vec![],
         })
         .unwrap();
         RuntimeConfig {
@@ -612,6 +613,7 @@ cases:
         let pool = load_descriptor_pool(&ProtoSources {
             roots: vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proto")],
             descriptor_sets: vec![],
+            files: vec![],
         })
         .unwrap();
         let input = pool
@@ -648,6 +650,7 @@ cases:
         load_descriptor_pool(&ProtoSources {
             roots: vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proto")],
             descriptor_sets: vec![],
+            files: vec![],
         })
         .unwrap()
         .get_message_by_name("approvals.v1.GetApprovalRequest")
@@ -680,6 +683,7 @@ cases:
         let pool = load_descriptor_pool(&ProtoSources {
             roots: vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proto")],
             descriptor_sets: vec![],
+            files: vec![],
         })
         .unwrap();
         let input = pool.get_message_by_name("approvals.v1.Sample").unwrap();
@@ -706,6 +710,7 @@ cases:
         let pool = load_descriptor_pool(&ProtoSources {
             roots: vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proto")],
             descriptor_sets: vec![],
+            files: vec![],
         })
         .unwrap();
         let input = pool

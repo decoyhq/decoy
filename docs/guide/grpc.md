@@ -23,6 +23,18 @@ protos:
 Paths resolve relative to `decoy.yaml`. A missing root or a proto that doesn't compile stops startup
 with the file and the reason.
 
+If a root holds more than you need, such as a monorepo `proto/` folder with services that don't
+compile together, list the entry files in `files`. Decoy compiles only those, and resolves their
+imports through `roots`:
+
+```yaml
+protos:
+  roots: [../proto]
+  files: [../proto/services/catalog/**/*.proto] # `*` stays in one folder, `**` crosses folders
+```
+
+Each pattern must match at least one `.proto` under a root.
+
 ## gRPC Routes
 
 ```yaml
