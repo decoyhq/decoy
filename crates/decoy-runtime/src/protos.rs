@@ -86,7 +86,9 @@ fn find_entry_files(roots: &[PathBuf], patterns: &[PathBuf]) -> Result<Vec<PathB
         let matcher = entry_matcher(pattern)?;
         let mut matched = false;
         for entry in WalkDir::new(literal_base(&normalize(pattern))).sort_by_file_name() {
-            let Ok(entry) = entry else { continue };
+            let entry = entry.map_err(|error| {
+                StartupError::new(StartupDiagnosticKind::Io, pattern, error.to_string())
+            })?;
             if !is_proto(&entry) || !matcher.is_match(entry.path()) {
                 continue;
             }
@@ -159,7 +161,10 @@ fn literal_base(pattern: &Path) -> PathBuf {
 
 /// `*` stays within one folder and `**` crosses folders, as in shell globs.
 fn entry_matcher(pattern: &Path) -> Result<GlobMatcher, StartupError> {
-    let text = normalize(pattern).to_string_lossy().replace('\\', "/");
+    let text = normalize(pattern).to_string_lossy().into_owned();
+    // On Unix `\` escapes a glob character; on Windows it separates folders.
+    #[cfg(windows)]
+    let text = text.replace('\\', "/");
     GlobBuilder::new(&text)
         .literal_separator(true)
         .build()
