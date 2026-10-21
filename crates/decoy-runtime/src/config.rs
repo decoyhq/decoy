@@ -142,6 +142,9 @@ pub struct ProtoSources {
     pub roots: Vec<PathBuf>,
     #[serde(default)]
     pub descriptor_sets: Vec<PathBuf>,
+    /// Glob patterns picking the entry files under the roots; empty compiles every `.proto`.
+    #[serde(default)]
+    pub files: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
@@ -308,6 +311,11 @@ impl ServeConfig {
                     .iter()
                     .map(|path| absolutize(&config_base, path))
                     .collect(),
+                files: protos
+                    .files
+                    .iter()
+                    .map(|path| absolutize(&config_base, path))
+                    .collect(),
             })
             .unwrap_or_default();
 
@@ -450,6 +458,7 @@ collections: collections.yaml
 protos:
   roots: [../proto]
   descriptorSets: [build/api.binpb]
+  files: [../proto/services/**/*.proto]
 "#,
         )
         .unwrap();
@@ -468,6 +477,7 @@ protos:
             ProtoSources {
                 roots: vec![base.join("nested/../proto")],
                 descriptor_sets: vec![base.join("nested/build/api.binpb")],
+                files: vec![base.join("nested/../proto/services/**/*.proto")],
             }
         );
     }

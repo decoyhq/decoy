@@ -77,6 +77,15 @@ protos:
   descriptorSets: [build/api.binpb] # optional precompiled FileDescriptorSets
 ```
 
+`files` compiles only the matching entry files instead of every `.proto` under the roots. Their
+imports still resolve through `roots`. Each pattern must match at least one `.proto` under a root:
+
+```yaml
+protos:
+  roots: [../proto]
+  files: [../proto/services/catalog/**/*.proto]
+```
+
 `roots` work like protoc `-I` flags: imports resolve against them. If imports are written from the
 top folder (`import "v1/keyboards/keyboards.proto";`), list that folder alone. If each folder
 imports its neighbours by bare name (`import "keyboards.proto";`), list every such folder:
@@ -88,13 +97,14 @@ protos:
 
 Paths in the file resolve relative to the file; flag paths resolve relative to the working
 directory. Unknown keys in the config, Routes or Collections, unreadable files, invalid Routes or Collections, duplicate Route ids,
-a port used twice or already taken, missing proto roots, protos that don't compile, unreadable or mismatched TLS cert/key, an unreadable `.decoy/` CA, and an unknown
+a port used twice or already taken, missing proto roots, a proto `files` pattern that matches nothing, protos that don't compile, unreadable or mismatched TLS cert/key, an unreadable `.decoy/` CA, and an unknown
 startup Collection all fail at startup with a diagnostic.
 
 ## Reloading
 
 `--watch` (on `decoy serve` and on bare `decoy`) reloads when the config file, the collections file,
-a Route file, a `.proto` file under a proto root or a descriptor set changes. In the terminal UI
+a Route file, a `.proto` file under a proto root (with `files`: a picked file, a file it imports, or a new file the
+patterns match) or a descriptor set changes. In the terminal UI
 that bare `decoy` opens, `/reload` does the same on demand.
 
 ```sh

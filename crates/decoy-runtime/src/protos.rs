@@ -2,18 +2,32 @@
 //! `DescriptorPool` at startup, so gRPC Routes can resolve message types.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
+use globset::{GlobBuilder, GlobMatcher};
 use prost_reflect::DescriptorPool;
 use walkdir::WalkDir;
 
 use crate::config::ProtoSources;
 use crate::startup::{StartupDiagnosticKind, StartupError};
 
-/// Compiles every `.proto` under the roots (roots double as import paths), then
-/// adds each descriptor set. Empty sources yield an empty pool.
+/// Compiles every `.proto` under the roots (roots double as import paths), or only those that
+/// `files` patterns pick, then adds each descriptor set. Empty sources yield an empty pool.
 pub fn load_descriptor_pool(sources: &ProtoSources) -> Result<DescriptorPool, StartupError> {
-    let files = discover_proto_files(&sources.roots)?;
+    for root in &sources.roots {
+        if !root.is_dir() {
+            return Err(StartupError::new(
+                StartupDiagnosticKind::Io,
+                root,
+                "proto root is not a directory",
+            ));
+        }
+    }
+    let files = if sources.files.is_empty() {
+        discover_proto_files(&sources.roots)?
+    } else {
+        find_entry_files(&sources.roots, &sources.files)?
+    };
     let mut pool = if files.is_empty() {
         DescriptorPool::new()
     } else {
@@ -42,13 +56,6 @@ pub fn load_descriptor_pool(sources: &ProtoSources) -> Result<DescriptorPool, St
 fn discover_proto_files(roots: &[PathBuf]) -> Result<Vec<PathBuf>, StartupError> {
     let mut files = Vec::new();
     for root in roots {
-        if !root.is_dir() {
-            return Err(StartupError::new(
-                StartupDiagnosticKind::Io,
-                root,
-                "proto root is not a directory",
-            ));
-        }
         // A root nested in another root is walked on its own, so each file gets one name.
         let walk = WalkDir::new(root)
             .sort_by_file_name()
@@ -58,9 +65,7 @@ fn discover_proto_files(roots: &[PathBuf]) -> Result<Vec<PathBuf>, StartupError>
             let entry = entry.map_err(|error| {
                 StartupError::new(StartupDiagnosticKind::Io, root, error.to_string())
             })?;
-            if entry.file_type().is_file()
-                && entry.path().extension().is_some_and(|ext| ext == "proto")
-            {
+            if is_proto(&entry) {
                 // Open by import name so protox resolves it like an `import`, not by first root.
                 let name = entry.path().strip_prefix(root).unwrap_or(entry.path());
                 files.push(name.to_path_buf());
@@ -68,6 +73,121 @@ fn discover_proto_files(roots: &[PathBuf]) -> Result<Vec<PathBuf>, StartupError>
         }
     }
     Ok(files)
+}
+
+/// Import names of the files the patterns match. Each pattern walks only the folder before its
+/// first wildcard, so a large root costs nothing beyond the picked subtree. A file is named by
+/// the innermost root holding it, as [`discover_proto_files`] names it. A pattern that matches
+/// nothing fails, so a typo doesn't quietly drop its services.
+fn find_entry_files(roots: &[PathBuf], patterns: &[PathBuf]) -> Result<Vec<PathBuf>, StartupError> {
+    let roots: Vec<PathBuf> = roots.iter().map(|root| normalize(root)).collect();
+    let mut files = Vec::new();
+    for pattern in patterns {
+        let matcher = entry_matcher(pattern)?;
+        let mut matched = false;
+        for entry in WalkDir::new(literal_base(&normalize(pattern))).sort_by_file_name() {
+            let entry = entry.map_err(|error| {
+                StartupError::new(StartupDiagnosticKind::Io, pattern, error.to_string())
+            })?;
+            if !is_proto(&entry) || !matcher.is_match(entry.path()) {
+                continue;
+            }
+            matched = true;
+            let name = roots
+                .iter()
+                .filter_map(|root| entry.path().strip_prefix(root).ok())
+                .min_by_key(|name| name.components().count())
+                .ok_or_else(|| {
+                    StartupError::new(
+                        StartupDiagnosticKind::Io,
+                        entry.path(),
+                        "proto file is not under any proto root",
+                    )
+                })?;
+            if !files.iter().any(|file| file == name) {
+                files.push(name.to_path_buf());
+            }
+        }
+        if !matched {
+            return Err(StartupError::new(
+                StartupDiagnosticKind::Io,
+                pattern,
+                "proto files pattern matches no .proto file",
+            ));
+        }
+    }
+    Ok(files)
+}
+
+/// What `--watch` follows when `files` is set: the folders the patterns walk, so a new entry file
+/// counts, and the picked files with everything they import. `None` when `files` is unset or the
+/// protos don't compile right now; the whole roots are watched then, so fixing an import reloads.
+pub fn watched_entry_paths(sources: &ProtoSources) -> Option<(Vec<PathBuf>, Vec<PathBuf>)> {
+    if sources.files.is_empty() {
+        return None;
+    }
+    let entries = find_entry_files(&sources.roots, &sources.files).ok()?;
+    let mut compiler = protox::Compiler::new(&sources.roots).ok()?;
+    compiler.include_imports(true).open_files(&entries).ok()?;
+    let folders = sources
+        .files
+        .iter()
+        .map(|pattern| literal_base(normalize(pattern).parent().unwrap_or(pattern)))
+        .collect();
+    // Well-known types ship inside protox and have no path.
+    let files = compiler
+        .files()
+        .filter_map(|file| file.path().map(Path::to_path_buf))
+        .collect();
+    Some((folders, files))
+}
+
+fn is_proto(entry: &walkdir::DirEntry) -> bool {
+    entry.file_type().is_file() && entry.path().extension().is_some_and(|ext| ext == "proto")
+}
+
+/// The leading folders of a pattern that hold no wildcard.
+fn literal_base(pattern: &Path) -> PathBuf {
+    pattern
+        .components()
+        .take_while(|component| {
+            !component
+                .as_os_str()
+                .to_string_lossy()
+                .contains(['*', '?', '[', '{'])
+        })
+        .collect()
+}
+
+/// `*` stays within one folder and `**` crosses folders, as in shell globs.
+fn entry_matcher(pattern: &Path) -> Result<GlobMatcher, StartupError> {
+    let text = normalize(pattern).to_string_lossy().into_owned();
+    // On Unix `\` escapes a glob character; on Windows it separates folders.
+    #[cfg(windows)]
+    let text = text.replace('\\', "/");
+    GlobBuilder::new(&text)
+        .literal_separator(true)
+        .build()
+        .map(|glob| glob.compile_matcher())
+        .map_err(|error| {
+            StartupError::new(StartupDiagnosticKind::Parse, pattern, error.to_string())
+        })
+}
+
+/// Drops `.` and folds `..` without touching the disk, so `../proto/**` in the config matches
+/// files found under a root written as `../proto`.
+fn normalize(path: &Path) -> PathBuf {
+    let mut normal = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normal.pop();
+            }
+            component => normal.push(component),
+        }
+    }
+    normal
 }
 
 /// Points the diagnostic at the failing file when protox names one.
@@ -105,6 +225,7 @@ mod tests {
         let pool = load_descriptor_pool(&ProtoSources {
             roots: vec![fixture_root()],
             descriptor_sets: vec![],
+            files: vec![],
         })
         .unwrap();
 
@@ -165,6 +286,7 @@ mod tests {
         let pool = load_descriptor_pool(&ProtoSources {
             roots: vec![dir.path().to_path_buf()],
             descriptor_sets: vec![],
+            files: vec![],
         })
         .unwrap();
 
@@ -185,6 +307,7 @@ mod tests {
         let pool = load_descriptor_pool(&ProtoSources {
             roots,
             descriptor_sets: vec![],
+            files: vec![],
         })
         .unwrap();
 
@@ -217,10 +340,123 @@ mod tests {
             let pool = load_descriptor_pool(&ProtoSources {
                 roots,
                 descriptor_sets: vec![],
+                files: vec![],
             })
             .unwrap();
             assert!(pool.get_message_by_name("Price").is_some());
         }
+    }
+
+    /// One service, the shared type it imports, and an unrelated proto that doesn't compile.
+    fn write_monorepo_layout(proto: &Path) {
+        for (file, text) in [
+            (
+                "shared/v1/money.proto",
+                "syntax = \"proto3\";\npackage shared.v1;\nmessage Money { int64 units = 1; }\n",
+            ),
+            (
+                "services/catalog/v1/catalog_service.proto",
+                "syntax = \"proto3\";\npackage catalog.v1;\nimport \"shared/v1/money.proto\";\n\
+                 message GetPriceRequest { string id = 1; }\n\
+                 service CatalogService { rpc GetPrice(GetPriceRequest) returns (shared.v1.Money); }\n",
+            ),
+            (
+                "legacy/broken.proto",
+                "syntax = \"proto3\";\nmessage Broken { string id = 1 }\n",
+            ),
+        ] {
+            let path = proto.join(file);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, text).unwrap();
+        }
+    }
+
+    #[test]
+    fn files_pick_entry_files_and_imports_resolve_through_roots() {
+        let dir = tempdir().unwrap();
+        let proto = dir.path().join("proto");
+        write_monorepo_layout(&proto);
+        fs::create_dir_all(dir.path().join("config")).unwrap();
+
+        let pool = load_descriptor_pool(&ProtoSources {
+            roots: vec![dir.path().join("config/../proto")],
+            descriptor_sets: vec![],
+            files: vec![
+                dir.path()
+                    .join("config/../proto/services/catalog/**/*.proto"),
+            ],
+        })
+        .unwrap();
+
+        assert!(
+            pool.get_service_by_name("catalog.v1.CatalogService")
+                .is_some()
+        );
+        assert!(pool.get_message_by_name("shared.v1.Money").is_some());
+        assert!(pool.get_message_by_name("Broken").is_none());
+    }
+
+    #[test]
+    fn files_star_stays_within_one_folder() {
+        let dir = tempdir().unwrap();
+        write_monorepo_layout(dir.path());
+
+        let error = load_descriptor_pool(&ProtoSources {
+            roots: vec![dir.path().to_path_buf()],
+            descriptor_sets: vec![],
+            files: vec![dir.path().join("services/*.proto")],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error.diagnostic.source.path,
+            dir.path().join("services/*.proto")
+        );
+        assert!(error.to_string().contains("matches no .proto file"));
+    }
+
+    #[test]
+    fn files_pattern_outside_the_roots_fails() {
+        let dir = tempdir().unwrap();
+        write_monorepo_layout(&dir.path().join("proto"));
+        fs::create_dir_all(dir.path().join("elsewhere")).unwrap();
+        fs::write(
+            dir.path().join("elsewhere/api.proto"),
+            "syntax = \"proto3\";\nmessage Api {}\n",
+        )
+        .unwrap();
+
+        let error = load_descriptor_pool(&ProtoSources {
+            roots: vec![dir.path().join("proto/services")],
+            descriptor_sets: vec![],
+            files: vec![dir.path().join("elsewhere/*.proto")],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error.diagnostic.source.path,
+            dir.path().join("elsewhere/api.proto")
+        );
+        assert!(error.to_string().contains("not under any proto root"));
+    }
+
+    #[test]
+    fn invalid_files_pattern_fails() {
+        let dir = tempdir().unwrap();
+        write_monorepo_layout(dir.path());
+
+        let error = load_descriptor_pool(&ProtoSources {
+            roots: vec![dir.path().to_path_buf()],
+            descriptor_sets: vec![],
+            files: vec![dir.path().join("services/[.proto")],
+        })
+        .unwrap_err();
+
+        assert_eq!(error.diagnostic.kind, StartupDiagnosticKind::Parse);
+        assert_eq!(
+            error.diagnostic.source.path,
+            dir.path().join("services/[.proto")
+        );
     }
 
     #[test]
@@ -243,6 +479,7 @@ mod tests {
         let pool = load_descriptor_pool(&ProtoSources {
             roots: vec![],
             descriptor_sets: vec![set],
+            files: vec![],
         })
         .unwrap();
 
@@ -262,6 +499,7 @@ mod tests {
         let error = load_descriptor_pool(&ProtoSources {
             roots: vec![dir.path().to_path_buf()],
             descriptor_sets: vec![],
+            files: vec![],
         })
         .unwrap_err();
 
@@ -280,6 +518,7 @@ mod tests {
         let error = load_descriptor_pool(&ProtoSources {
             roots: vec![missing.clone()],
             descriptor_sets: vec![],
+            files: vec![],
         })
         .unwrap_err();
 
@@ -296,6 +535,7 @@ mod tests {
         let error = load_descriptor_pool(&ProtoSources {
             roots: vec![],
             descriptor_sets: vec![set.clone()],
+            files: vec![],
         })
         .unwrap_err();
 

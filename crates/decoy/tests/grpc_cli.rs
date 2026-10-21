@@ -369,6 +369,58 @@ fn stream_on_a_unary_method_fails_startup() {
     );
 }
 
+/// The startup error comes from checking the Route against the catalog service, so the service
+/// compiled from `files`, its import resolved through the root, and the broken proto was skipped.
+#[test]
+fn proto_files_compile_only_the_matching_entry_files() {
+    let temp = TempDir::new().unwrap();
+    for (file, text) in [
+        (
+            "proto/shared/v1/money.proto",
+            "syntax = \"proto3\";\npackage shared.v1;\nmessage Money { int64 units = 1; }\n",
+        ),
+        (
+            "proto/services/catalog/v1/catalog_service.proto",
+            "syntax = \"proto3\";\npackage catalog.v1;\nimport \"shared/v1/money.proto\";\n\
+             message GetPriceRequest { string id = 1; }\n\
+             service CatalogService { rpc GetPrice(GetPriceRequest) returns (shared.v1.Money); }\n",
+        ),
+        (
+            "proto/legacy/broken.proto",
+            "syntax = \"proto3\";\nmessage Broken { string id = 1 }\n",
+        ),
+        (
+            "decoy/routes/catalog.yaml",
+            "id: catalog-price\ntransport: grpc\nmatch: { service: catalog.v1.CatalogService, method: GetPrice }\ncases:\n  any:\n    behaviors:\n      ok: { stream: [{ message: { units: 1 } }] }\n",
+        ),
+        (
+            "decoy/collections.yaml",
+            "- id: default\n  routes: [catalog-price:any:ok]\n",
+        ),
+        (
+            "decoy/decoy.yaml",
+            "routes: routes\ncollections: collections.yaml\nprotos:\n  roots: [../proto]\n  files: [../proto/services/catalog/**/*.proto]\n",
+        ),
+    ] {
+        let path = temp.path().join(file);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+
+    let output = Command::new(env!("CARGO_BIN_EXE_decoy"))
+        .args(["serve", "--config", "decoy/decoy.yaml"])
+        .current_dir(temp.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("`catalog.v1.CatalogService.GetPrice` is unary"),
+        "{stderr}"
+    );
+}
+
 async fn next(stream: &mut tonic::Streaming<DynamicMessage>) -> Result<Option<Value>, Status> {
     let message = stream.message().await?;
     Ok(message.map(|message| serde_json::to_value(message).unwrap()))
@@ -437,6 +489,7 @@ impl Server {
         let pool = load_descriptor_pool(&ProtoSources {
             roots: vec![protos],
             descriptor_sets: vec![],
+            files: vec![],
         })
         .unwrap();
         let server = Self {

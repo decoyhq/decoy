@@ -270,3 +270,54 @@ async fn a_deleted_and_recreated_proto_root_signals(poll: bool) {
     );
     assert_eq!(signals(&mut changes, Duration::from_secs(3)).await, 1);
 }
+
+#[tokio::test]
+async fn proto_files_watch_their_imports_but_not_the_rest_of_the_root() {
+    let temp = fixture();
+    for dir in ["protos/shared", "protos/services", "protos/legacy"] {
+        fs::create_dir_all(temp.path().join(dir)).unwrap();
+    }
+    write(
+        temp.path(),
+        "protos/shared/money.proto",
+        "syntax = \"proto3\";\nmessage Money {}\n",
+    );
+    write(
+        temp.path(),
+        "protos/services/api.proto",
+        "syntax = \"proto3\";\nimport \"shared/money.proto\";\nmessage Api { Money price = 1; }\n",
+    );
+    write(
+        temp.path(),
+        "protos/legacy/old.proto",
+        "syntax = \"proto3\";\n",
+    );
+    write(
+        temp.path(),
+        "decoy.yaml",
+        "routes: routes\ncollections: collections.yaml\nprotos: { roots: [protos], files: [protos/services/*.proto] }\n",
+    );
+    let mut changes = watcher(temp.path(), false);
+    settle().await;
+
+    write(
+        temp.path(),
+        "protos/legacy/old.proto",
+        "syntax = \"proto3\";\npackage old;\n",
+    );
+    assert_eq!(signals(&mut changes, DEBOUNCE * 3).await, 0);
+
+    write(
+        temp.path(),
+        "protos/shared/money.proto",
+        "syntax = \"proto3\";\nmessage Money { int64 units = 1; }\n",
+    );
+    assert_eq!(signals(&mut changes, Duration::from_secs(2)).await, 1);
+
+    write(
+        temp.path(),
+        "protos/services/new.proto",
+        "syntax = \"proto3\";\nmessage New {}\n",
+    );
+    assert_eq!(signals(&mut changes, Duration::from_secs(2)).await, 1);
+}

@@ -56,6 +56,7 @@ async fn start(routes: &[&str], collections: &str) -> Running {
     config.protos = ProtoSources {
         roots: vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proto")],
         descriptor_sets: vec![],
+        files: vec![],
     };
     let server = decoy_runtime::serve(config, std::future::pending())
         .await
@@ -301,6 +302,7 @@ async fn a_grpc_call_emits_its_decoded_messages_as_json() {
     let pool = decoy_runtime::protos::load_descriptor_pool(&ProtoSources {
         roots: vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proto")],
         descriptor_sets: vec![],
+        files: vec![],
     })
     .unwrap();
     let input = pool

@@ -525,6 +525,7 @@ mod tests {
         load_descriptor_pool(&ProtoSources {
             roots: vec![Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/proto")],
             descriptor_sets: vec![],
+            files: vec![],
         })
         .unwrap()
     }
