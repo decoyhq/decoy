@@ -149,38 +149,52 @@ describe('startDecoy', () => {
     expect(await isHealthy(url)).toBe(false)
   })
 
-  test.skipIf(process.platform === 'win32')(
-    'stops Decoy when the runner exits without tearing down',
-    async () => {
-      const port = await freePort()
-      const url = `http://127.0.0.1:${port}`
-      const options = { url, command: `node ${FAKE_DECOY} ${port}`, reuseExistingServer: false }
-      // A runner that exits mid-run, as Testplane does on a second Ctrl+C: `process.exit`, no
-      // teardown. jiti: the runner loads this package's TypeScript source.
-      const runner = spawn(
-        process.execPath,
-        [
-          '-e',
-          `const { startDecoy, resolveServerOptions } = require('jiti').createJiti(${JSON.stringify(import.meta.filename)})('./server.ts')
-          startDecoy({ ...resolveServerOptions(${JSON.stringify(options)}, {}), cwd: process.cwd() })
-            .then(() => process.exit(130))`,
-        ],
-        { stdio: 'inherit' },
-      )
-      cleanups.push(async () => {
-        await rm(join(tmpdir(), `decoy-runner-${port}.json`), { force: true })
-        // A leaked one, if this test fails.
-        await fetch(`${url}/__decoy__/health`)
-          .then(async (res) => process.kill(((await res.json()) as { pid: number }).pid))
-          .catch(() => undefined)
-      })
-      const [code] = (await once(runner, 'exit')) as [number | null]
-      expect(code).toBe(130)
-
-      await sleep(500)
-      expect(await isHealthy(url)).toBe(false)
+  // A runner that exits mid-run without teardown: `process.exit`, as Testplane does on a second
+  // Ctrl+C, or a signal no handler catches, which skips `exit` listeners.
+  test.skipIf(process.platform === 'win32').each([
+    { how: 'calls process.exit', exit: 'process.exit(130)', expected: [130, null] },
+    {
+      how: 'gets a signal it has no handler for',
+      exit: "process.kill(process.pid, 'SIGTERM')",
+      expected: [null, 'SIGTERM'],
     },
-  )
+    {
+      // Its handler tears down gracefully; Decoy must still answer then. Exits 0 if it did.
+      how: 'handles a signal itself',
+      exit: `process.on('SIGTERM', () => fetch(options.url + '/__decoy__/health').then((res) => process.exit(res.ok ? 0 : 1), () => process.exit(1)))
+          process.kill(process.pid, 'SIGTERM')`,
+      expected: [0, null],
+    },
+  ])('stops Decoy when the runner $how without tearing down', async ({ exit, expected }) => {
+    const port = await freePort()
+    const url = `http://127.0.0.1:${port}`
+    const options = { url, command: `node ${FAKE_DECOY} ${port}`, reuseExistingServer: false }
+    // jiti: the runner loads this package's TypeScript source.
+    const runner = spawn(
+      process.execPath,
+      [
+        '-e',
+        `const options = ${JSON.stringify(options)}
+        const { startDecoy, resolveServerOptions } = require('jiti').createJiti(${JSON.stringify(import.meta.filename)})('./server.ts')
+        startDecoy({ ...resolveServerOptions(options, {}), cwd: process.cwd() })
+          .then(() => {
+            ${exit}
+          })`,
+      ],
+      { stdio: 'inherit' },
+    )
+    cleanups.push(async () => {
+      await rm(join(tmpdir(), `decoy-runner-${port}.json`), { force: true })
+      // A leaked one, if this test fails.
+      await fetch(`${url}/__decoy__/health`)
+        .then(async (res) => process.kill(((await res.json()) as { pid: number }).pid))
+        .catch(() => undefined)
+    })
+    expect(await once(runner, 'exit')).toEqual(expected)
+
+    await sleep(500)
+    expect(await isHealthy(url)).toBe(false)
+  })
 
   test.skipIf(process.platform === 'win32')(
     'finds commands in node_modules/.bin like an npm script',

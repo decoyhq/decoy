@@ -88,7 +88,26 @@ export async function startDecoy(
       signalGroup(child.pid, 'SIGTERM')
     }
   }
+  // A signal no handler catches kills the runner without `exit`. Listening disables that default,
+  // so act only when no runner handler is there (one that is exits through `exit`), then re-raise.
+  const stopOnSignal = (signal: NodeJS.Signals) => {
+    if (process.listenerCount(signal) > 1) {
+      return
+    }
+    stopOnExit()
+    unlisten()
+    process.kill(process.pid, signal)
+  }
+  const unlisten = () => {
+    process.off('exit', stopOnExit)
+    process.off('SIGINT', stopOnSignal)
+    process.off('SIGTERM', stopOnSignal)
+  }
   process.once('exit', stopOnExit)
+  if (process.platform !== 'win32') {
+    process.on('SIGINT', stopOnSignal)
+    process.on('SIGTERM', stopOnSignal)
+  }
   let wrotePidFile = false
   try {
     // Written before health passes, so a runner interrupted mid-start still leaves a trail.
@@ -100,7 +119,7 @@ export async function startDecoy(
     await waitForHealth(child, options)
   } catch (error) {
     await stopProcess(child)
-    process.off('exit', stopOnExit)
+    unlisten()
     // A pidfile this start couldn't write is another runner's: leave it.
     if (wrotePidFile) {
       removePidFile(pidFile)
@@ -109,7 +128,7 @@ export async function startDecoy(
   }
   return async () => {
     await stopProcess(child)
-    process.off('exit', stopOnExit)
+    unlisten()
     removePidFile(pidFile)
   }
 }
