@@ -323,7 +323,7 @@ async fn a_grpc_call_emits_its_decoded_messages_as_json() {
                 service: "approvals.v1.Approvals".into(),
                 method: "GetApproval".into(),
                 metadata: BTreeMap::from([("x-user".into(), "alice".into())]),
-                body,
+                body: body.into(),
             },
             &Connections::default(),
         )
@@ -373,7 +373,7 @@ async fn a_server_streaming_call_emits_one_hit_as_it_opens() {
                 method: "WatchApprovals".into(),
                 metadata: BTreeMap::new(),
                 // An empty WatchRequest, framed.
-                body: vec![0, 0, 0, 0, 0],
+                body: vec![0, 0, 0, 0, 0].into(),
             },
             &connections,
         )
@@ -402,7 +402,7 @@ async fn a_server_streaming_call_records_its_end_status_when_known_at_open() {
                 service: "approvals.v1.Approvals".into(),
                 method: "WatchApprovals".into(),
                 metadata: BTreeMap::new(),
-                body: vec![0, 0, 0, 0, 0],
+                body: vec![0, 0, 0, 0, 0].into(),
             },
             &Connections::default(),
         )
@@ -435,7 +435,7 @@ async fn a_grpc_miss_emits_its_status_message_as_a_header() {
                     service: "approvals.v1.Approvals".into(),
                     method: "ListApprovals".into(),
                     metadata: BTreeMap::new(),
-                    body: Vec::new(),
+                    body: Default::default(),
                 },
                 &connections,
             )

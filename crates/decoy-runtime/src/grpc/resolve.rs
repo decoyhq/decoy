@@ -66,8 +66,9 @@ impl Catalog {
         };
 
         let mut candidates = explain.then(Vec::new);
-        // Decoded once per call; only another Pipeline needs a fresh decode.
-        let mut decoded: Option<(&[PipelineStep], Value, OnceCell<Rcvar>)> = None;
+        // Decoded once per call, failure included; only another Pipeline needs a fresh decode.
+        type Decoded = Result<(Value, OnceCell<Rcvar>), String>;
+        let mut decoded: Option<(&[PipelineStep], Decoded)> = None;
         // The first decode error, the answer when no other Route matches.
         let mut decode_failure = None;
         for activation in activations.iter().copied().rev() {
@@ -92,32 +93,33 @@ impl Catalog {
                 continue;
             };
             let steps = pipeline(route);
-            let (envelope, jmes) = match &mut decoded {
-                Some((cached, envelope, jmes)) if *cached == steps => (envelope, &*jmes),
-                _ => {
-                    let message = match decode(&request.body, steps, &method.input()) {
-                        Ok(message) => message,
-                        Err(error) => {
-                            decode_failure.get_or_insert_with(|| {
-                                format!(
-                                    "route `{}` could not decode the request: {error}",
-                                    route.id
-                                )
-                            });
-                            reject(&mut candidates, activation, || Rejection::Decode {
-                                error: error.to_string(),
-                            });
-                            continue;
-                        }
-                    };
-                    let envelope = json!({
-                        "service": request.service,
-                        "method": request.method,
-                        "metadata": request.metadata,
-                        "message": message,
+            if !matches!(&decoded, Some((cached, _)) if *cached == steps) {
+                let result = decode(&request.body, steps, &method.input())
+                    .map(|message| {
+                        let envelope = json!({
+                            "service": request.service,
+                            "method": request.method,
+                            "metadata": request.metadata,
+                            "message": message,
+                        });
+                        (envelope, OnceCell::new())
+                    })
+                    .map_err(|error| error.to_string());
+                decoded = Some((steps, result));
+            }
+            let Some((_, result)) = &mut decoded else {
+                unreachable!("decoded just above")
+            };
+            let (envelope, jmes) = match result {
+                Ok((envelope, jmes)) => (envelope, &*jmes),
+                Err(error) => {
+                    decode_failure.get_or_insert_with(|| {
+                        format!("route `{}` could not decode the request: {error}", route.id)
                     });
-                    let (_, envelope, jmes) = decoded.insert((steps, envelope, OnceCell::new()));
-                    (envelope, &*jmes)
+                    reject(&mut candidates, activation, || Rejection::Decode {
+                        error: error.clone(),
+                    });
+                    continue;
                 }
             };
             let Some(case) = route.cases.get(&activation.case) else {

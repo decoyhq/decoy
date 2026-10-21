@@ -10,6 +10,8 @@ mod view;
 
 use std::collections::BTreeMap;
 
+use bytes::Bytes;
+
 use crate::schema::PipelineStep;
 
 pub use codec::GrpcCodecError;
@@ -58,7 +60,7 @@ pub struct GrpcRequest {
     /// Request headers, lowercased.
     pub metadata: BTreeMap<String, String>,
     /// The HTTP/2 request body.
-    pub body: Vec<u8>,
+    pub body: Bytes,
 }
 
 impl GrpcRequest {
@@ -165,7 +167,7 @@ mod tests {
             service: "approvals.v1.Approvals".to_owned(),
             method: "GetApproval".to_owned(),
             metadata: BTreeMap::from([("x-tenant".to_owned(), "acme".to_owned())]),
-            body: frame(&message.encode_to_vec()),
+            body: frame(&message.encode_to_vec()).into(),
         }
     }
 
@@ -177,8 +179,7 @@ mod tests {
         )
         .unwrap()
         .output();
-        let message =
-            DynamicMessage::decode(output, unframe(&response.body).unwrap().as_slice()).unwrap();
+        let message = DynamicMessage::decode(output, unframe(&response.body).unwrap()).unwrap();
         serde_json::to_value(&message).unwrap()
     }
 
@@ -552,7 +553,7 @@ cases:
         .unwrap();
         let mut call = request(&catalog, json!({}));
         // A truncated varint: a valid frame whose payload is not an `ApprovalRequest`.
-        call.body = frame(&[0x08]);
+        call.body = frame(&[0x08]).into();
         let GrpcResolution::Matched {
             activation,
             skipped,
@@ -565,6 +566,49 @@ cases:
         assert!(
             matches!(&skipped[..], [Candidate { address, rejection: Rejection::Decode { .. } }] if address == "proto:any:ok"),
             "{skipped:?}"
+        );
+    }
+
+    #[test]
+    fn a_cached_decode_failure_rejects_every_route_on_that_pipeline() {
+        let route = |id: &str| {
+            Route::from_yaml(&format!(
+                "id: {id}\ntransport: grpc\nmatch: {{ service: approvals.v1.Approvals, method: GetApproval }}\ncases:\n  any:\n    behaviors:\n      ok: {{ message: {{}} }}\n"
+            ))
+            .unwrap()
+        };
+        let catalog = Catalog::new(
+            vec![route("first"), route("second")],
+            CollectionsFile::from_yaml("- id: default\n  routes: [first:any:ok, second:any:ok]\n")
+                .unwrap(),
+            runtime(),
+        )
+        .unwrap();
+        let mut call = request(&catalog, json!({}));
+        call.body = frame(&[0x08]).into();
+        let GrpcResolution::Failed {
+            response,
+            candidates,
+        } = catalog.resolve_grpc("default", &[], &call)
+        else {
+            panic!("expected a decode failure")
+        };
+        // Later entries are tried first; the answer names the first Route that failed.
+        assert!(
+            response
+                .status_message
+                .starts_with("route `second` could not decode"),
+            "{response:?}"
+        );
+        assert!(
+            matches!(
+                &candidates[..],
+                [
+                    Candidate { rejection: Rejection::Decode { error: a }, .. },
+                    Candidate { rejection: Rejection::Decode { error: b }, .. },
+                ] if a == b
+            ),
+            "{candidates:?}"
         );
     }
 

@@ -306,7 +306,7 @@ async fn a_send_after_a_proto_change_reaches_a_stream_opened_before_it() {
                 service: "live.Live".into(),
                 method: "Watch".into(),
                 metadata: BTreeMap::new(),
-                body: vec![0, 0, 0, 0, 0],
+                body: vec![0, 0, 0, 0, 0].into(),
             },
             &connections,
         )

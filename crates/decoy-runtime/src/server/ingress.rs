@@ -100,7 +100,7 @@ async fn respond(
                     service,
                     method,
                     metadata: headers,
-                    body: body.into(),
+                    body,
                 },
                 &connections,
             )
