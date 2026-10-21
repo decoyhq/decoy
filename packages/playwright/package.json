@@ -1,6 +1,6 @@
 {
   "name": "@decoyhq/playwright",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Playwright fixtures and global setup for the native Decoy runtime.",
   "type": "module",
   "license": "MIT",
