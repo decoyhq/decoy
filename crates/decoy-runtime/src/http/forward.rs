@@ -337,8 +337,9 @@ fn forwardable_response_headers(headers: &HeaderMap) -> Vec<(String, String)> {
     let hop_by_hop = headers
         .get_all("connection")
         .iter()
-        .filter_map(|value| value.to_str().ok())
-        .flat_map(|value| value.split(','))
+        // Split the raw bytes: one opaque byte must not void the tokens beside it.
+        .flat_map(|value| value.as_bytes().split(|byte| *byte == b','))
+        .filter_map(|token| std::str::from_utf8(token).ok())
         .map(|token| token.trim().to_ascii_lowercase())
         .collect::<BTreeSet<_>>();
     let mut out = Vec::new();
@@ -632,6 +633,17 @@ mod tests {
             forwardable_response_headers(&headers),
             [("x-kept".to_owned(), "2".to_owned())]
         );
+    }
+
+    #[test]
+    fn connection_tokens_are_stripped_next_to_opaque_bytes() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "connection",
+            HeaderValue::from_bytes(b"x-hop, \x80").unwrap(),
+        );
+        headers.insert("x-hop", HeaderValue::from_static("1"));
+        assert_eq!(forwardable_response_headers(&headers), []);
     }
 
     #[tokio::test]

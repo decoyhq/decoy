@@ -361,6 +361,14 @@ mod tests {
     }
 
     #[test]
+    fn a_duplicate_id_names_the_id() {
+        let error =
+            CollectionsFile::from_yaml("- id: twice\n  routes: []\n- id: twice\n  routes: []\n")
+                .unwrap_err();
+        assert_eq!(error.to_string(), "duplicate collection id `twice`");
+    }
+
+    #[test]
     fn rejects_bad_address() {
         let error = CollectionsFile::from_yaml(
             r#"
