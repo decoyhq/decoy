@@ -3,7 +3,7 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { DEFAULT_URL, isHealthy } from './health'
-import { isAlive, stopGroup, stopProcess, withLocalBins } from './process'
+import { isAlive, signalGroup, stopGroup, stopProcess, withLocalBins } from './process'
 
 export type Teardown = () => Promise<void>
 
@@ -81,6 +81,33 @@ export async function startDecoy(
     detached: process.platform !== 'win32',
     stdio: ['ignore', 'ignore', 'inherit'],
   })
+  // Detached, so a runner that exits without teardown (Testplane's second Ctrl+C, or Ctrl+C while
+  // this start waits) would leave Decoy running. `exit` listeners can't wait: signal only.
+  const stopOnExit = () => {
+    if (child.pid !== undefined && process.platform !== 'win32') {
+      signalGroup(child.pid, 'SIGTERM')
+    }
+  }
+  // A signal no handler catches kills the runner without `exit`. Listening disables that default,
+  // so act only when no runner handler is there (one that is exits through `exit`), then re-raise.
+  const stopOnSignal = (signal: NodeJS.Signals) => {
+    if (process.listenerCount(signal) > 1) {
+      return
+    }
+    stopOnExit()
+    unlisten()
+    process.kill(process.pid, signal)
+  }
+  const unlisten = () => {
+    process.off('exit', stopOnExit)
+    process.off('SIGINT', stopOnSignal)
+    process.off('SIGTERM', stopOnSignal)
+  }
+  process.once('exit', stopOnExit)
+  if (process.platform !== 'win32') {
+    process.on('SIGINT', stopOnSignal)
+    process.on('SIGTERM', stopOnSignal)
+  }
   let wrotePidFile = false
   try {
     // Written before health passes, so a runner interrupted mid-start still leaves a trail.
@@ -92,6 +119,7 @@ export async function startDecoy(
     await waitForHealth(child, options)
   } catch (error) {
     await stopProcess(child)
+    unlisten()
     // A pidfile this start couldn't write is another runner's: leave it.
     if (wrotePidFile) {
       removePidFile(pidFile)
@@ -100,6 +128,7 @@ export async function startDecoy(
   }
   return async () => {
     await stopProcess(child)
+    unlisten()
     removePidFile(pidFile)
   }
 }
