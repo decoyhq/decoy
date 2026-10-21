@@ -14,11 +14,19 @@ use crate::startup::{StartupDiagnosticKind, StartupError};
 /// Compiles every `.proto` under the roots (roots double as import paths), or only those that
 /// `files` patterns pick, then adds each descriptor set. Empty sources yield an empty pool.
 pub fn load_descriptor_pool(sources: &ProtoSources) -> Result<DescriptorPool, StartupError> {
-    let found = discover_proto_files(&sources.roots)?;
+    for root in &sources.roots {
+        if !root.is_dir() {
+            return Err(StartupError::new(
+                StartupDiagnosticKind::Io,
+                root,
+                "proto root is not a directory",
+            ));
+        }
+    }
     let files = if sources.files.is_empty() {
-        found.into_iter().map(|(_, name)| name).collect()
+        discover_proto_files(&sources.roots)?
     } else {
-        select_entry_files(&sources.files, found)?
+        find_entry_files(&sources.roots, &sources.files)?
     };
     let mut pool = if files.is_empty() {
         DescriptorPool::new()
@@ -45,17 +53,9 @@ pub fn load_descriptor_pool(sources: &ProtoSources) -> Result<DescriptorPool, St
     Ok(pool)
 }
 
-/// Each `.proto` under the roots as (path, import name).
-fn discover_proto_files(roots: &[PathBuf]) -> Result<Vec<(PathBuf, PathBuf)>, StartupError> {
+fn discover_proto_files(roots: &[PathBuf]) -> Result<Vec<PathBuf>, StartupError> {
     let mut files = Vec::new();
     for root in roots {
-        if !root.is_dir() {
-            return Err(StartupError::new(
-                StartupDiagnosticKind::Io,
-                root,
-                "proto root is not a directory",
-            ));
-        }
         // A root nested in another root is walked on its own, so each file gets one name.
         let walk = WalkDir::new(root)
             .sort_by_file_name()
@@ -65,46 +65,96 @@ fn discover_proto_files(roots: &[PathBuf]) -> Result<Vec<(PathBuf, PathBuf)>, St
             let entry = entry.map_err(|error| {
                 StartupError::new(StartupDiagnosticKind::Io, root, error.to_string())
             })?;
-            if entry.file_type().is_file()
-                && entry.path().extension().is_some_and(|ext| ext == "proto")
-            {
+            if is_proto(&entry) {
                 // Open by import name so protox resolves it like an `import`, not by first root.
                 let name = entry.path().strip_prefix(root).unwrap_or(entry.path());
-                files.push((entry.path().to_path_buf(), name.to_path_buf()));
+                files.push(name.to_path_buf());
             }
         }
     }
     Ok(files)
 }
 
-/// Keeps the import names of files a pattern matches. A pattern that matches nothing fails, so a
-/// typo or a file outside every root doesn't quietly drop its services.
-fn select_entry_files(
-    patterns: &[PathBuf],
-    found: Vec<(PathBuf, PathBuf)>,
-) -> Result<Vec<PathBuf>, StartupError> {
-    let matchers = patterns
-        .iter()
-        .map(|pattern| entry_matcher(pattern))
-        .collect::<Result<Vec<_>, _>>()?;
-    let found: Vec<_> = found
-        .into_iter()
-        .map(|(path, name)| (normalize(&path), name))
-        .collect();
-    for (pattern, matcher) in patterns.iter().zip(&matchers) {
-        if !found.iter().any(|(path, _)| matcher.is_match(path)) {
+/// Import names of the files the patterns match. Each pattern walks only the folder before its
+/// first wildcard, so a large root costs nothing beyond the picked subtree. A file is named by
+/// the innermost root holding it, as [`discover_proto_files`] names it. A pattern that matches
+/// nothing fails, so a typo doesn't quietly drop its services.
+fn find_entry_files(roots: &[PathBuf], patterns: &[PathBuf]) -> Result<Vec<PathBuf>, StartupError> {
+    let roots: Vec<PathBuf> = roots.iter().map(|root| normalize(root)).collect();
+    let mut files = Vec::new();
+    for pattern in patterns {
+        let matcher = entry_matcher(pattern)?;
+        let mut matched = false;
+        for entry in WalkDir::new(literal_base(&normalize(pattern))).sort_by_file_name() {
+            let Ok(entry) = entry else { continue };
+            if !is_proto(&entry) || !matcher.is_match(entry.path()) {
+                continue;
+            }
+            matched = true;
+            let name = roots
+                .iter()
+                .filter_map(|root| entry.path().strip_prefix(root).ok())
+                .min_by_key(|name| name.components().count())
+                .ok_or_else(|| {
+                    StartupError::new(
+                        StartupDiagnosticKind::Io,
+                        entry.path(),
+                        "proto file is not under any proto root",
+                    )
+                })?;
+            if !files.iter().any(|file| file == name) {
+                files.push(name.to_path_buf());
+            }
+        }
+        if !matched {
             return Err(StartupError::new(
                 StartupDiagnosticKind::Io,
                 pattern,
-                "proto files pattern matches no .proto under the proto roots",
+                "proto files pattern matches no .proto file",
             ));
         }
     }
-    Ok(found
-        .into_iter()
-        .filter(|(path, _)| matchers.iter().any(|matcher| matcher.is_match(path)))
-        .map(|(_, name)| name)
-        .collect())
+    Ok(files)
+}
+
+/// What `--watch` follows when `files` is set: the folders the patterns walk, so a new entry file
+/// counts, and the picked files with everything they import. `None` when `files` is unset or the
+/// protos don't compile right now; the whole roots are watched then, so fixing an import reloads.
+pub fn watched_entry_paths(sources: &ProtoSources) -> Option<(Vec<PathBuf>, Vec<PathBuf>)> {
+    if sources.files.is_empty() {
+        return None;
+    }
+    let entries = find_entry_files(&sources.roots, &sources.files).ok()?;
+    let mut compiler = protox::Compiler::new(&sources.roots).ok()?;
+    compiler.include_imports(true).open_files(&entries).ok()?;
+    let folders = sources
+        .files
+        .iter()
+        .map(|pattern| literal_base(normalize(pattern).parent().unwrap_or(pattern)))
+        .collect();
+    // Well-known types ship inside protox and have no path.
+    let files = compiler
+        .files()
+        .filter_map(|file| file.path().map(Path::to_path_buf))
+        .collect();
+    Some((folders, files))
+}
+
+fn is_proto(entry: &walkdir::DirEntry) -> bool {
+    entry.file_type().is_file() && entry.path().extension().is_some_and(|ext| ext == "proto")
+}
+
+/// The leading folders of a pattern that hold no wildcard.
+fn literal_base(pattern: &Path) -> PathBuf {
+    pattern
+        .components()
+        .take_while(|component| {
+            !component
+                .as_os_str()
+                .to_string_lossy()
+                .contains(['*', '?', '[', '{'])
+        })
+        .collect()
 }
 
 /// `*` stays within one folder and `**` crosses folders, as in shell globs.
@@ -357,11 +407,7 @@ mod tests {
             error.diagnostic.source.path,
             dir.path().join("services/*.proto")
         );
-        assert!(
-            error
-                .to_string()
-                .contains("matches no .proto under the proto roots")
-        );
+        assert!(error.to_string().contains("matches no .proto file"));
     }
 
     #[test]
@@ -382,7 +428,11 @@ mod tests {
         })
         .unwrap_err();
 
-        assert_eq!(error.diagnostic.kind, StartupDiagnosticKind::Io);
+        assert_eq!(
+            error.diagnostic.source.path,
+            dir.path().join("elsewhere/api.proto")
+        );
+        assert!(error.to_string().contains("not under any proto root"));
     }
 
     #[test]

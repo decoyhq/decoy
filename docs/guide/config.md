@@ -103,7 +103,8 @@ startup Collection all fail at startup with a diagnostic.
 ## Reloading
 
 `--watch` (on `decoy serve` and on bare `decoy`) reloads when the config file, the collections file,
-a Route file, a `.proto` file under a proto root or a descriptor set changes. In the terminal UI
+a Route file, a `.proto` file under a proto root (with `files`: a picked file, a file it imports, or a new file the
+patterns match) or a descriptor set changes. In the terminal UI
 that bare `decoy` opens, `/reload` does the same on demand.
 
 ```sh

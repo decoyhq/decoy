@@ -8,6 +8,7 @@ use notify::{EventKind, RecursiveMode};
 use tokio::sync::mpsc;
 
 use crate::config::ServeConfig;
+use crate::protos;
 
 /// Quiet time after the last change before a reload; editors write in several steps.
 pub const DEBOUNCE: Duration = Duration::from_millis(300);
@@ -18,7 +19,8 @@ pub const POLL_INTERVAL: Duration = Duration::from_millis(500);
 /// config doesn't parse right now).
 pub type ReadPaths = Box<dyn Fn() -> Option<WatchedPaths> + Send + Sync>;
 
-/// What `--watch` looks at: the config file, routes, collections, proto roots and descriptor sets.
+/// What `--watch` looks at: the config file, routes, collections, proto roots (or with `files`, the
+/// picked protos and their imports) and descriptor sets.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WatchedPaths {
     /// Files whose own changes count.
@@ -44,10 +46,15 @@ impl WatchedPaths {
         } else {
             files.push(canonical(&config.routes));
         }
+        let proto_roots = match protos::watched_entry_paths(&config.protos) {
+            Some((folders, proto_files)) => {
+                files.extend(proto_files.iter().map(|file| canonical(file)));
+                folders
+            }
+            None => config.protos.roots.clone(),
+        };
         trees.extend(
-            config
-                .protos
-                .roots
+            proto_roots
                 .iter()
                 .map(|root| (canonical(root), &["proto"][..])),
         );
