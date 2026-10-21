@@ -307,7 +307,11 @@ impl App {
                     .filter(|o| !before.overrides.contains(o))
                     .map(RouteOverrideSnapshot::address)
                     .collect();
-                format!("route {}", added.join(", "))
+                if added.is_empty() {
+                    "route unchanged".to_owned()
+                } else {
+                    format!("route {}", added.join(", "))
+                }
             }
             SessionChange::Reset => "overrides cleared".to_owned(),
             SessionChange::Ended => "ended".to_owned(),
@@ -941,6 +945,11 @@ pub(crate) mod tests {
             SessionChange::UseRoute,
             &["users:u1:missing"],
         ));
+        app.handle_event(session_event(
+            "default",
+            SessionChange::UseRoute,
+            &["users:u1:missing"],
+        ));
         assert_eq!(app.selection().overrides.len(), 1);
         app.handle_event(session_event("default", SessionChange::Ended, &[]));
         assert_eq!(app.selection().collection, "happy-path");
@@ -952,6 +961,7 @@ pub(crate) mod tests {
             [
                 &Entry::Info("session default collection errors (control api)".into()),
                 &Entry::Info("session default route users:u1:missing (control api)".into()),
+                &Entry::Info("session default route unchanged (control api)".into()),
                 &Entry::Info("session default ended (control api)".into()),
             ]
         );

@@ -84,6 +84,14 @@ pub async fn run(
     let mut events = server.subscribe();
     let mut served = tokio::spawn(server.wait());
 
+    // ratatui's hook and ours below both act on a panic as if the TUI were up. The server keeps
+    // draining after the TUI exits, so keep the hook from before them to put back then.
+    let original: Arc<dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync> =
+        Arc::from(std::panic::take_hook());
+    std::panic::set_hook(Box::new({
+        let original = original.clone();
+        move |info| original(info)
+    }));
     let mut terminal = ratatui::init();
     // Keyboard enhancement reports Ctrl+Shift+C and Cmd+C, where the terminal supports it.
     let enhanced = supports_keyboard_enhancement().unwrap_or(false);
@@ -121,6 +129,7 @@ pub async fn run(
 
     release(enhanced);
     ratatui::restore();
+    std::panic::set_hook(Box::new(move |info| original(info)));
     // Nobody reads the log any more, so drain warnings go to stderr.
     drop(events);
 

@@ -2,7 +2,7 @@
 //! HTTP port.
 
 use std::fs;
-use std::net::TcpListener;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -454,15 +454,10 @@ impl Server {
         fs::create_dir_all(temp.path().join("routes")).unwrap();
         fs::write(temp.path().join("routes/approvals.yaml"), route).unwrap();
         fs::write(temp.path().join("collections.yaml"), collections).unwrap();
-        let port = TcpListener::bind("127.0.0.1:0")
-            .unwrap()
-            .local_addr()
-            .unwrap()
-            .port();
         fs::write(
             temp.path().join("decoy.yaml"),
             format!(
-                "routes: routes\ncollections: collections.yaml\nport: {port}\nprotos:\n  roots: [{}]\n{}",
+                "routes: routes\ncollections: collections.yaml\nport: 0\nprotos:\n  roots: [{}]\n{}",
                 protos.display(),
                 if tls { "tls: { cert: cert.pem, key: key.pem }\n" } else { "" }
             ),
@@ -479,13 +474,29 @@ impl Server {
             .unwrap();
             generated.cert.pem()
         });
-        let child = Command::new(env!("CARGO_BIN_EXE_decoy"))
+        let mut child = Command::new(env!("CARGO_BIN_EXE_decoy"))
             .args(["serve", "--config", "decoy.yaml"])
             .current_dir(temp.path())
             .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .spawn()
             .unwrap();
+        // Port 0 lets decoy pick the port itself; picking one here and rebinding it races other
+        // tests. Read it from `listening on`, then keep echoing stderr so the pipe never fills.
+        let (port_tx, port_rx) = std::sync::mpsc::channel();
+        let stderr = BufReader::new(child.stderr.take().unwrap());
+        std::thread::spawn(move || {
+            for line in stderr.lines().map_while(Result::ok) {
+                if let Some(addr) = line.strip_prefix("decoy serve listening on ") {
+                    let port = addr.rsplit(':').next().unwrap().parse::<u16>().unwrap();
+                    let _ = port_tx.send(port);
+                }
+                eprintln!("{line}");
+            }
+        });
+        let port = port_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("decoy did not report its port");
         let pool = load_descriptor_pool(&ProtoSources {
             roots: vec![protos],
             descriptor_sets: vec![],
