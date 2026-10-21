@@ -18,12 +18,16 @@ pub(super) fn grpc_response(response: GrpcResponse) -> Response<Body> {
 
 /// A server-streaming answer: one data frame per message as it comes, then the trailers.
 pub(super) fn grpc_stream_response(parts: BoxStream<'static, StreamPart>) -> Response<Body> {
+    // hyper polls the body outside the request's log scope, so the trailers' warnings take it along.
+    let events = crate::events::current();
     grpc_body(
         parts
-            .flat_map(|part| {
+            .flat_map(move |part| {
                 stream::iter(match part {
                     StreamPart::Message(message) => vec![Frame::data(Bytes::from(message))],
-                    StreamPart::End(response) => frames(response),
+                    StreamPart::End(response) => {
+                        crate::events::logging_to_sync(events.clone(), || frames(response))
+                    }
                 })
             })
             .boxed(),
@@ -170,5 +174,28 @@ mod tests {
         assert_eq!(trailers["x-ok"], "fine");
         assert!(!trailers.contains_key("x-tab"));
         assert_eq!(trailers.len(), 2, "{trailers:?}"); // grpc-status + x-ok
+    }
+
+    #[tokio::test]
+    async fn a_stream_end_warning_reaches_the_server_that_built_the_stream() {
+        use http_body_util::BodyExt;
+
+        let (events, mut log) = tokio::sync::broadcast::channel(8);
+        let end = GrpcResponse {
+            metadata: BTreeMap::from([("x-tab".to_owned(), "a\tb".to_owned())]),
+            ..GrpcResponse::error(0, "")
+        };
+        let response = crate::events::logging_to(events, async {
+            grpc_stream_response(stream::iter([StreamPart::End(end)]).boxed())
+        })
+        .await;
+        // hyper polls the body outside the request's scope.
+        response.into_body().collect().await.unwrap();
+
+        assert!(matches!(
+            log.try_recv(),
+            Ok(crate::events::Event::Log(crate::events::LogEvent { message, .. }))
+                if message.contains("x-tab")
+        ));
     }
 }

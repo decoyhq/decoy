@@ -333,11 +333,17 @@ fn stripped_request_headers(headers: &BTreeMap<String, String>) -> BTreeSet<Stri
 }
 
 fn forwardable_response_headers(headers: &HeaderMap) -> Vec<(String, String)> {
+    // Names in a HeaderMap are lowercase, so only the `connection` tokens need folding.
+    let hop_by_hop = headers
+        .get_all("connection")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(|token| token.trim().to_ascii_lowercase())
+        .collect::<BTreeSet<_>>();
     let mut out = Vec::new();
     for (name, value) in headers {
-        if STRIPPED_RESPONSE_HEADERS
-            .iter()
-            .any(|stripped| name.as_str().eq_ignore_ascii_case(stripped))
+        if STRIPPED_RESPONSE_HEADERS.contains(&name.as_str()) || hop_by_hop.contains(name.as_str())
         {
             continue;
         }
@@ -613,6 +619,18 @@ mod tests {
                 "content-disposition".to_owned(),
                 "attachment; filename=\"résumé.pdf\"".to_owned()
             )]
+        );
+    }
+
+    #[test]
+    fn upstream_connection_tokens_are_stripped() {
+        let mut headers = HeaderMap::new();
+        headers.insert("connection", HeaderValue::from_static("X-Hop, close"));
+        headers.insert("x-hop", HeaderValue::from_static("1"));
+        headers.insert("x-kept", HeaderValue::from_static("2"));
+        assert_eq!(
+            forwardable_response_headers(&headers),
+            [("x-kept".to_owned(), "2".to_owned())]
         );
     }
 

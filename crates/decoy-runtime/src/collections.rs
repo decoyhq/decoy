@@ -120,7 +120,7 @@ impl CollectionsFile {
             let id = collection.id.clone();
 
             if by_id.insert(id.clone(), collection).is_some() {
-                return Err(CollectionError::DuplicateCollection);
+                return Err(CollectionError::DuplicateCollection { id });
             }
             order.push(id);
         }
@@ -196,8 +196,8 @@ pub enum CollectionError {
     Validation(#[from] ValidationError),
     #[error("collection route address `{address}` must use route:case:behavior")]
     InvalidAddress { address: String },
-    #[error("duplicate collection id")]
-    DuplicateCollection,
+    #[error("duplicate collection id `{id}`")]
+    DuplicateCollection { id: String },
     #[error("unknown collection `{id}`")]
     UnknownCollection { id: String },
     #[error("collection inheritance cycle at `{id}`")]

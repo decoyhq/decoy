@@ -206,6 +206,19 @@ pub(crate) async fn logging_to<F: Future>(events: Sender, future: F) -> F::Outpu
     SINK.scope(events, future).await
 }
 
+/// The events of the server whose scope this runs in, for work it defers past that scope (a
+/// response body hyper polls later); hand it to [`logging_to_sync`] there.
+pub(crate) fn current() -> Option<Sender> {
+    SINK.try_with(Sender::clone).ok()
+}
+
+pub(crate) fn logging_to_sync<R>(events: Option<Sender>, f: impl FnOnce() -> R) -> R {
+    match events {
+        Some(events) => SINK.sync_scope(events, f),
+        None => f(),
+    }
+}
+
 pub(crate) fn warn(message: impl Into<String>) {
     log(Level::Warn, message.into());
 }
