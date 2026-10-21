@@ -1,8 +1,11 @@
 //! `decoy serve` with TLS listeners next to plain ones.
 
+use std::collections::BTreeMap;
 use std::fs;
-use std::net::TcpListener;
+use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
@@ -21,11 +24,15 @@ cases:
 async fn tls_and_plain_listeners_serve_the_same_routes() {
     let fixture = Fixture::new();
     let cert = fixture.write_cert();
-    let (secure, extra, plain) = (unused_port(), unused_port(), unused_port());
-    fixture.write_config(&format!(
-        "tls: {{ cert: certs/dev.pem, key: certs/dev-key.pem }}\nport: {secure}\nlisteners:\n  payments: {extra}\n  legacy: {{ port: {plain}, tls: false }}\n"
-    ));
-    let _server = fixture.spawn();
+    fixture.write_config(
+        "tls: { cert: certs/dev.pem, key: certs/dev-key.pem }\nport: 0\nlisteners:\n  payments: 0\n  legacy: { port: 0, tls: false }\n",
+    );
+    let mut server = fixture.spawn();
+    let (secure, extra, plain) = (
+        server.port("port"),
+        server.port("listeners.payments"),
+        server.port("listeners.legacy"),
+    );
     let client = trusting_client(&cert);
     wait_until_up(&client, &format!("https://localhost:{secure}")).await;
 
@@ -74,11 +81,9 @@ async fn tls_and_plain_listeners_serve_the_same_routes() {
 async fn ctrl_c_stops_a_tls_listener_with_a_client_stuck_before_its_handshake() {
     let fixture = Fixture::new();
     let cert = fixture.write_cert();
-    let port = unused_port();
-    fixture.write_config(&format!(
-        "tls: {{ cert: certs/dev.pem, key: certs/dev-key.pem }}\nport: {port}\n"
-    ));
+    fixture.write_config("tls: { cert: certs/dev.pem, key: certs/dev-key.pem }\nport: 0\n");
     let mut server = fixture.spawn();
+    let port = server.port("port");
     wait_until_up(
         &trusting_client(&cert),
         &format!("https://localhost:{port}"),
@@ -88,12 +93,12 @@ async fn ctrl_c_stops_a_tls_listener_with_a_client_stuck_before_its_handshake() 
     std::thread::sleep(Duration::from_millis(100));
 
     let status = Command::new("kill")
-        .args(["-INT", &server.0.id().to_string()])
+        .args(["-INT", &server.child.id().to_string()])
         .status()
         .unwrap();
     assert!(status.success());
     let deadline = Instant::now() + Duration::from_secs(3);
-    while server.0.try_wait().unwrap().is_none() {
+    while server.child.try_wait().unwrap().is_none() {
         assert!(Instant::now() < deadline, "decoy did not stop");
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
@@ -102,11 +107,11 @@ async fn ctrl_c_stops_a_tls_listener_with_a_client_stuck_before_its_handshake() 
 #[tokio::test]
 async fn auto_tls_writes_a_ca_that_clients_trust_across_restarts() {
     let fixture = Fixture::new();
-    let port = unused_port();
-    fixture.write_config(&format!("tls: auto\nport: {port}\n"));
+    fixture.write_config("tls: auto\nport: 0\n");
     let ca_path = fixture.temp.path().join(".decoy/ca.pem");
 
-    let server = fixture.spawn();
+    let mut server = fixture.spawn();
+    let port = server.port("port");
     let deadline = Instant::now() + Duration::from_secs(10);
     while !ca_path.exists() {
         assert!(Instant::now() < deadline, "CA was not written");
@@ -135,22 +140,25 @@ async fn auto_tls_writes_a_ca_that_clients_trust_across_restarts() {
     drop(server);
 
     // A restart signs a new localhost cert with the same CA, so the old trust still holds.
-    let _server = fixture.spawn();
+    let mut server = fixture.spawn();
+    let port = server.port("port");
     let client = trusting_client(&ca);
     wait_until_up(&client, &format!("https://localhost:{port}")).await;
     assert_eq!(fs::read_to_string(&ca_path).unwrap(), ca);
 
     // Losing ca.pem rewrites it from the kept key; old trust still holds.
-    drop(_server);
+    drop(server);
     fs::remove_file(&ca_path).unwrap();
-    let server = fixture.spawn();
+    let mut server = fixture.spawn();
+    let port = server.port("port");
     wait_until_up(&trusting_client(&ca), &format!("https://localhost:{port}")).await;
 
     // Losing the key makes a new CA, and ca.pem follows it instead of going stale.
     drop(server);
     let stale = fs::read_to_string(&ca_path).unwrap();
     fs::remove_file(fixture.temp.path().join(".decoy/ca-key.pem")).unwrap();
-    let _server = fixture.spawn();
+    let mut server = fixture.spawn();
+    let port = server.port("port");
     let deadline = Instant::now() + Duration::from_secs(10);
     while fs::read_to_string(&ca_path).is_ok_and(|current| current == stale) {
         assert!(Instant::now() < deadline, "ca.pem was not rebuilt");
@@ -171,15 +179,14 @@ async fn auto_tls_writes_a_ca_that_clients_trust_across_restarts() {
 #[tokio::test]
 async fn two_first_starts_share_one_auto_ca() {
     let fixture = Fixture::new();
-    let ports = [unused_port(), unused_port()];
-    for (name, port) in ["a", "b"].iter().zip(ports) {
+    for name in ["a", "b"] {
         fs::write(
             fixture.temp.path().join(format!("{name}.yaml")),
-            format!("routes: routes\ncollections: collections.yaml\ntls: auto\nport: {port}\n"),
+            "routes: routes\ncollections: collections.yaml\ntls: auto\nport: 0\n",
         )
         .unwrap();
     }
-    let _servers = ["a.yaml", "b.yaml"].map(|config| fixture.spawn_config(config));
+    let mut servers = ["a.yaml", "b.yaml"].map(|config| fixture.spawn_config(config));
 
     let ca_path = fixture.temp.path().join(".decoy/ca.pem");
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -188,7 +195,8 @@ async fn two_first_starts_share_one_auto_ca() {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     let client = trusting_client(&fs::read_to_string(&ca_path).unwrap());
-    for port in ports {
+    for server in &mut servers {
+        let port = server.port("port");
         wait_until_up(&client, &format!("https://localhost:{port}")).await;
     }
 }
@@ -223,7 +231,7 @@ fn unreadable_or_mismatched_cert_fails_startup() {
             "certs/other-key.pem: TLS key doesn't fit cert",
         ),
     ] {
-        fixture.write_config(&format!("tls: {tls}\nport: {}\n", unused_port()));
+        fixture.write_config(&format!("tls: {tls}\nport: 0\n"));
         let output = Command::new(env!("CARGO_BIN_EXE_decoy"))
             .args(["serve", "--config", "decoy.yaml"])
             .current_dir(fixture.temp.path())
@@ -284,24 +292,69 @@ impl Fixture {
     }
 
     fn spawn_config(&self, config: &str) -> Server {
-        Server(
-            Command::new(env!("CARGO_BIN_EXE_decoy"))
-                .args(["serve", "--config", config])
-                .current_dir(self.temp.path())
-                .stdout(Stdio::null())
-                .stderr(Stdio::inherit())
-                .spawn()
-                .unwrap(),
-        )
+        let mut command = Command::new(env!("CARGO_BIN_EXE_decoy"));
+        command
+            .args(["serve", "--config", config])
+            .current_dir(self.temp.path());
+        Server::start(command)
     }
 }
 
-struct Server(Child);
+struct Server {
+    child: Child,
+    lines: mpsc::Receiver<String>,
+    ports: BTreeMap<String, u16>,
+}
+
+impl Server {
+    /// Port 0 lets decoy pick its ports; picking one here and rebinding it races other tests.
+    /// Reads them from `listening on`, then keeps echoing stderr so the pipe never fills.
+    fn start(mut command: Command) -> Self {
+        let mut child = command
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stderr = BufReader::new(child.stderr.take().unwrap());
+        let (tx, lines) = mpsc::channel();
+        thread::spawn(move || {
+            for line in stderr.lines().map_while(Result::ok) {
+                eprintln!("{line}");
+                let _ = tx.send(line);
+            }
+        });
+        Self {
+            child,
+            lines,
+            ports: BTreeMap::new(),
+        }
+    }
+
+    /// The port decoy bound for the config key `name`: `port` or `listeners.<name>`.
+    fn port(&mut self, name: &str) -> u16 {
+        loop {
+            if let Some(port) = self.ports.get(name) {
+                return *port;
+            }
+            let line = self
+                .lines
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap_or_else(|_| panic!("decoy did not report its `{name}` port"));
+            // `<url>` for the main `port`, `<url> (listeners.<name>)` for the others.
+            if let Some(label) = line.strip_prefix("decoy serve listening on ") {
+                let (url, listener) = label.split_once(" (").unwrap_or((label, "port)"));
+                let port = url.rsplit(':').next().unwrap().parse().unwrap();
+                self.ports
+                    .insert(listener.trim_end_matches(')').to_owned(), port);
+            }
+        }
+    }
+}
 
 impl Drop for Server {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -322,16 +375,5 @@ async fn wait_until_up(client: &reqwest::Client, base: &str) {
     {
         assert!(Instant::now() < deadline, "decoy did not start");
         tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-}
-
-/// A port free on both loopbacks, since Decoy binds `127.0.0.1` and `::1` by default.
-fn unused_port() -> u16 {
-    loop {
-        let v4 = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = v4.local_addr().unwrap().port();
-        if TcpListener::bind(("::1", port)).is_ok() || TcpListener::bind("[::1]:0").is_err() {
-            return port;
-        }
     }
 }
