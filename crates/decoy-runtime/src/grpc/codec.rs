@@ -55,28 +55,25 @@ pub(super) fn decode(
     steps: &[PipelineStep],
     input: &MessageDescriptor,
 ) -> Result<Value, GrpcCodecError> {
-    let mut data = Data::Bytes(body.to_vec());
-    for step in steps {
-        data = match (step, data) {
-            (PipelineStep::GrpcFrame, Data::Bytes(bytes)) => Data::Bytes(unframe(&bytes)?),
-            (PipelineStep::Protobuf, Data::Bytes(bytes)) => {
-                let message =
-                    DynamicMessage::decode(input.clone(), bytes.as_slice()).map_err(|error| {
-                        GrpcCodecError::InvalidMessage {
-                            message: input.full_name().to_owned(),
-                            error,
-                        }
-                    })?;
-                Data::Json(request_json(&message).map_err(GrpcCodecError::ToJson)?)
+    // Borrowed throughout: the body is only read, and `protobuf` is the last step.
+    let mut bytes = body;
+    for (index, step) in steps.iter().enumerate() {
+        match step {
+            PipelineStep::GrpcFrame => bytes = unframe(bytes)?,
+            PipelineStep::Protobuf => {
+                // `validate_pipeline` keeps `protobuf` last and each step once.
+                assert_eq!(index, steps.len() - 1, "no step follows `protobuf`");
+                let message = DynamicMessage::decode(input.clone(), bytes).map_err(|error| {
+                    GrpcCodecError::InvalidMessage {
+                        message: input.full_name().to_owned(),
+                        error,
+                    }
+                })?;
+                return request_json(&message).map_err(GrpcCodecError::ToJson);
             }
-            // `validate_pipeline` keeps `protobuf` last and each step once.
-            (_, Data::Json(_)) => unreachable!("no step follows `protobuf`"),
-        };
+        }
     }
-    Ok(match data {
-        Data::Json(value) => value,
-        Data::Bytes(bytes) => Value::String(BASE64.encode(bytes)),
-    })
+    Ok(Value::String(BASE64.encode(bytes)))
 }
 
 /// Run the Pipeline bottom to top over the response message. Without a `protobuf` step the
@@ -115,7 +112,7 @@ fn bytes(data: Data) -> Result<Vec<u8>, GrpcCodecError> {
 }
 
 /// One uncompressed length-prefixed message.
-pub(super) fn unframe(bytes: &[u8]) -> Result<Vec<u8>, GrpcCodecError> {
+pub(super) fn unframe(bytes: &[u8]) -> Result<&[u8], GrpcCodecError> {
     let [compressed, a, b, c, d, rest @ ..] = bytes else {
         return Err(GrpcCodecError::ShortFrame);
     };
@@ -129,7 +126,7 @@ pub(super) fn unframe(bytes: &[u8]) -> Result<Vec<u8>, GrpcCodecError> {
             carried: rest.len(),
         });
     }
-    Ok(rest.to_vec())
+    Ok(rest)
 }
 
 pub(super) fn frame(message: &[u8]) -> Vec<u8> {
