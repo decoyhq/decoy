@@ -96,7 +96,7 @@ async function goneWithin(pid: number, ms: number): Promise<boolean> {
   return !isAlive(pid)
 }
 
-function signalGroup(pid: number, signal: NodeJS.Signals): void {
+export function signalGroup(pid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(-pid, signal)
   } catch {
