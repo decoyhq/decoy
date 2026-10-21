@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
@@ -74,8 +74,8 @@ cases:
 "#,
     );
 
-    let port = unused_port();
-    let _server = fixture.spawn(port, &[]);
+    let mut server = fixture.spawn(&[]);
+    let port = server.port("port");
     wait_for_server(port).await;
 
     let response = reqwest::get(format!("http://127.0.0.1:{port}/users/123"))
@@ -149,8 +149,8 @@ cases:
 "#,
     );
 
-    let port = unused_port();
-    let _server = fixture.spawn(port, &["--collection", "not-found"]);
+    let mut server = fixture.spawn(&["--collection", "not-found"]);
+    let port = server.port("port");
     wait_for_server(port).await;
 
     let client = reqwest::Client::new();
@@ -196,8 +196,8 @@ cases:
 "#,
     );
 
-    let port = unused_port();
-    let _server = fixture.spawn(port, &[]);
+    let mut server = fixture.spawn(&[]);
+    let port = server.port("port");
     wait_for_server(port).await;
 
     let response = reqwest::Client::new()
@@ -255,8 +255,8 @@ cases:
 "#,
     );
 
-    let port = unused_port();
-    let _server = fixture.spawn(port, &["--passthrough-base-url", &upstream_url]);
+    let mut server = fixture.spawn(&["--passthrough-base-url", &upstream_url]);
+    let port = server.port("port");
     wait_for_server(port).await;
 
     let response = reqwest::get(format!("http://127.0.0.1:{port}/users/456?source=cli"))
@@ -298,18 +298,14 @@ cases:
 "#,
     );
     let empty = TempDir::new().unwrap();
-    let port = unused_port();
-    let _server = Server(
-        Command::new(env!("CARGO_BIN_EXE_decoy"))
-            .args(fixture.args(port, &["--passthrough-base-url", &upstream_url]))
-            .current_dir(fixture.temp.path())
-            .env("SSL_CERT_FILE", empty.path().join("none.pem"))
-            .env("SSL_CERT_DIR", empty.path())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap(),
-    );
+    let mut command = Command::new(env!("CARGO_BIN_EXE_decoy"));
+    command
+        .args(fixture.args(&["--passthrough-base-url", &upstream_url]))
+        .current_dir(fixture.temp.path())
+        .env("SSL_CERT_FILE", empty.path().join("none.pem"))
+        .env("SSL_CERT_DIR", empty.path());
+    let mut server = Server::start(command);
+    let port = server.port("port");
     wait_for_server(port).await;
 
     let response = reqwest::get(format!("http://127.0.0.1:{port}/users"))
@@ -350,8 +346,8 @@ cases:
     - users:any:forward
 "#,
     );
-    let port = unused_port();
-    let _server = fixture.spawn(port, &["--passthrough-base-url", &upstream_url]);
+    let mut server = fixture.spawn(&["--passthrough-base-url", &upstream_url]);
+    let port = server.port("port");
     wait_for_server(port).await;
 
     let response = reqwest::Client::builder()
@@ -387,16 +383,16 @@ async fn serve_reads_native_config_file_and_uses_first_collection_by_default() {
     - users:any:ok
 "#,
     );
-    let port = unused_port();
-    fixture.write_config(format!(
+    fixture.write_config(
         r#"
 routes: routes
 collections: collections.yaml
-port: {port}
-"#
-    ));
+port: 0
+"#,
+    );
 
-    let _server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let port = server.port("port");
     wait_for_server(port).await;
 
     let response = reqwest::get(format!("http://127.0.0.1:{port}/users/123"))
@@ -445,8 +441,7 @@ port: 1
 "#,
     );
 
-    let port = unused_port();
-    let _server = fixture.spawn_raw(&[
+    let mut server = fixture.spawn_raw(&[
         "serve",
         "--config",
         "decoy.yaml",
@@ -457,8 +452,9 @@ port: 1
         "--collection",
         "flag",
         "--port",
-        &port.to_string(),
+        "0",
     ]);
+    let port = server.port("port");
     wait_for_server(port).await;
 
     let response = reqwest::get(format!("http://127.0.0.1:{port}/who"))
@@ -519,12 +515,11 @@ async fn serve_starts_with_configured_proto_root() {
     let fixture = Fixture::new();
     fixture.write_route("users.yaml", route_with_id("users"));
     fixture.write_collections("- id: default\n  routes: [users:any:ok]\n");
-    let port = unused_port();
     fixture.write_config(format!(
         r#"
 routes: routes
 collections: collections.yaml
-port: {port}
+port: 0
 protos:
   roots: [{}]
 "#,
@@ -533,7 +528,8 @@ protos:
             .display()
     ));
 
-    let _server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let port = server.port("port");
     wait_for_server(port).await;
 
     let response = reqwest::get(format!("http://127.0.0.1:{port}/users/123"))
@@ -653,11 +649,11 @@ cases:
     fixture.write_collections(
         "- id: main\n  routes: [who:any:ok]\n- id: alt\n  routes: [who-alt:any:ok]\n",
     );
-    let (port, extra) = (unused_port(), unused_port());
-    fixture.write_config(format!(
-        "routes: routes\ncollections: collections.yaml\nport: {port}\nlisteners: {{ grpc: {extra} }}\n"
-    ));
-    let _server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    fixture.write_config(
+        "routes: routes\ncollections: collections.yaml\nport: 0\nlisteners: { grpc: 0 }\n",
+    );
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let (port, extra) = (server.port("port"), server.port("listeners.grpc"));
     wait_for_server(port).await;
     wait_for_server(extra).await;
 
@@ -695,8 +691,8 @@ async fn default_host_serves_both_loopback_addresses() {
     let fixture = Fixture::new();
     fixture.write_route("who.yaml", route_response("who", "MAIN"));
     fixture.write_collections("- id: main\n  routes: [who:any:ok]\n");
-    let port = unused_port();
-    let _server = fixture.spawn(port, &[]);
+    let mut server = fixture.spawn(&[]);
+    let port = server.port("port");
     wait_for_server(port).await;
 
     let get = |host: &str| reqwest::get(format!("http://{host}:{port}/who"));
@@ -717,8 +713,8 @@ async fn explicit_host_binds_only_that_address() {
     let fixture = Fixture::new();
     fixture.write_route("who.yaml", route_response("who", "MAIN"));
     fixture.write_collections("- id: main\n  routes: [who:any:ok]\n");
-    let port = unused_port();
-    let _server = fixture.spawn(port, &["--host", "127.0.0.1"]);
+    let mut server = fixture.spawn(&["--host", "127.0.0.1"]);
+    let port = server.port("port");
     wait_for_server(port).await;
 
     assert!(
@@ -754,8 +750,8 @@ cases:
 "#,
     );
     fixture.write_collections("- id: main\n  routes: [loop:any:forward]\n");
-    let port = unused_port();
-    let _server = fixture.spawn(port, &[]);
+    let mut server = fixture.spawn(&[]);
+    let port = server.port("port");
     wait_for_server(port).await;
 
     let response = reqwest::Client::new()
@@ -775,11 +771,11 @@ async fn request_bodies_over_max_body_bytes_get_413() {
         route_response("who", "MAIN").replace("GET", "POST"),
     );
     fixture.write_collections("- id: main\n  routes: [who:any:ok]\n");
-    let port = unused_port();
-    fixture.write_config(format!(
-        "routes: routes\ncollections: collections.yaml\nport: {port}\nmaxBodyBytes: 1024\n"
-    ));
-    let _server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    fixture.write_config(
+        "routes: routes\ncollections: collections.yaml\nport: 0\nmaxBodyBytes: 1024\n",
+    );
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let port = server.port("port");
     wait_for_server(port).await;
     let post = |size: usize| {
         reqwest::Client::new()
@@ -809,8 +805,8 @@ cases:
 "#,
     );
     fixture.write_collections("- id: main\n  routes: [slow:any:wait]\n");
-    let port = unused_port();
-    let mut server = fixture.spawn(port, &[]);
+    let mut server = fixture.spawn(&[]);
+    let port = server.port("port");
     wait_for_server(port).await;
     // A request stuck in a 60s delay must not hold shutdown.
     let in_flight = tokio::spawn(reqwest::get(format!("http://127.0.0.1:{port}/slow")));
@@ -818,12 +814,12 @@ cases:
 
     let started = Instant::now();
     let killed = Command::new("kill")
-        .args(["-TERM", &server.0.id().to_string()])
+        .args(["-TERM", &server.child.id().to_string()])
         .status()
         .unwrap();
     assert!(killed.success());
     let status = loop {
-        if let Some(status) = server.0.try_wait().unwrap() {
+        if let Some(status) = server.child.try_wait().unwrap() {
             break status;
         }
         assert!(
@@ -848,8 +844,8 @@ async fn end_session_forgets_the_sessions_selection() {
     fixture.write_collections(
         "- id: main\n  routes: [who:any:ok]\n- id: alt\n  routes: [who-alt:any:ok]\n",
     );
-    let port = unused_port();
-    let _server = fixture.spawn(port, &[]);
+    let mut server = fixture.spawn(&[]);
+    let port = server.port("port");
     wait_for_server(port).await;
     let client = reqwest::Client::new();
     let control = |verb: &'static str, body: &'static str| {
@@ -912,8 +908,8 @@ cases:
 "#,
     );
     fixture.write_collections("- id: main\n  routes: [user:any:ok, docs:any:ok]\n");
-    let port = unused_port();
-    let _server = fixture.spawn(port, &[]);
+    let mut server = fixture.spawn(&[]);
+    let port = server.port("port");
     wait_for_server(port).await;
     let get = |path: &'static str| async move {
         reqwest::get(format!("http://127.0.0.1:{port}{path}"))
@@ -936,8 +932,7 @@ fn taken_extra_port_fails_startup() {
     let taken = TcpListener::bind("127.0.0.1:0").unwrap();
     let taken_port = taken.local_addr().unwrap().port();
     fixture.write_config(format!(
-        "routes: routes\ncollections: collections.yaml\nport: {}\nlisteners: {{ grpc: {taken_port} }}\n",
-        unused_port()
+        "routes: routes\ncollections: collections.yaml\nport: 0\nlisteners: {{ grpc: {taken_port} }}\n"
     ));
 
     let output = Command::new(env!("CARGO_BIN_EXE_decoy"))
@@ -1032,12 +1027,62 @@ fn spawn_upstream() -> (
     (format!("http://{addr}"), rx, handle)
 }
 
-struct Server(Child);
+struct Server {
+    child: Child,
+    /// Every stderr line.
+    lines: mpsc::Receiver<String>,
+    ports: BTreeMap<String, u16>,
+}
+
+impl Server {
+    /// Port 0 lets decoy pick its ports; picking one here and rebinding it races other tests.
+    /// Reads them from `listening on`, then keeps echoing stderr so the pipe never fills.
+    fn start(mut command: Command) -> Self {
+        let mut child = command
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let stderr = BufReader::new(child.stderr.take().unwrap());
+        let (tx, lines) = mpsc::channel();
+        thread::spawn(move || {
+            for line in stderr.lines().map_while(Result::ok) {
+                eprintln!("{line}");
+                let _ = tx.send(line);
+            }
+        });
+        Self {
+            child,
+            lines,
+            ports: BTreeMap::new(),
+        }
+    }
+
+    /// The port decoy bound for the config key `name`: `port` or `listeners.<name>`.
+    fn port(&mut self, name: &str) -> u16 {
+        loop {
+            if let Some(port) = self.ports.get(name) {
+                return *port;
+            }
+            let line = self
+                .lines
+                .recv_timeout(Duration::from_secs(10))
+                .unwrap_or_else(|_| panic!("decoy did not report its `{name}` port"));
+            // `<url>` for the main `port`, `<url> (listeners.<name>)` for the others.
+            if let Some(label) = line.strip_prefix("decoy serve listening on ") {
+                let (url, listener) = label.split_once(" (").unwrap_or((label, "port)"));
+                let port = url.rsplit(':').next().unwrap().parse().unwrap();
+                self.ports
+                    .insert(listener.trim_end_matches(')').to_owned(), port);
+            }
+        }
+    }
+}
 
 impl Drop for Server {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 
@@ -1066,40 +1111,25 @@ impl Fixture {
         fs::write(self.temp.path().join("decoy.yaml"), contents.as_ref()).unwrap();
     }
 
-    fn spawn(&self, port: u16, extra: &[&str]) -> Server {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_decoy"));
-        command.args(self.args(port, extra));
-        Server(
-            command
-                .current_dir(self.temp.path())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .unwrap(),
-        )
+    fn spawn(&self, extra: &[&str]) -> Server {
+        self.spawn_raw(&self.args(extra))
     }
 
-    fn spawn_raw(&self, args: &[&str]) -> Server {
-        Server(
-            Command::new(env!("CARGO_BIN_EXE_decoy"))
-                .args(args)
-                .current_dir(self.temp.path())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .unwrap(),
-        )
+    fn spawn_raw(&self, args: &[impl AsRef<std::ffi::OsStr>]) -> Server {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_decoy"));
+        command.args(args).current_dir(self.temp.path());
+        Server::start(command)
     }
 
     fn output(&self, extra: &[&str]) -> std::process::Output {
         Command::new(env!("CARGO_BIN_EXE_decoy"))
-            .args(self.args(unused_port(), extra))
+            .args(self.args(extra))
             .current_dir(self.temp.path())
             .output()
             .unwrap()
     }
 
-    fn args(&self, port: u16, extra: &[&str]) -> Vec<String> {
+    fn args(&self, extra: &[&str]) -> Vec<String> {
         let mut args = vec![
             "serve".to_owned(),
             "--routes".to_owned(),
@@ -1111,7 +1141,7 @@ impl Fixture {
                 .display()
                 .to_string(),
             "--port".to_owned(),
-            port.to_string(),
+            "0".to_owned(),
         ];
         args.extend(extra.iter().map(|arg| (*arg).to_owned()));
         args
@@ -1151,17 +1181,6 @@ cases:
         status: 200
 "#
     )
-}
-
-/// A port free on both loopbacks, since Decoy binds `127.0.0.1` and `::1` by default.
-fn unused_port() -> u16 {
-    loop {
-        let v4 = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = v4.local_addr().unwrap().port();
-        if TcpListener::bind(("::1", port)).is_ok() || TcpListener::bind("[::1]:0").is_err() {
-            return port;
-        }
-    }
 }
 
 async fn wait_for_server(port: u16) {
@@ -1228,8 +1247,8 @@ impl ControlServer {
         let fixture = Fixture::new();
         fixture.write_route("user.yaml", CONTROL_ROUTE);
         fixture.write_collections(CONTROL_COLLECTIONS);
-        let port = unused_port();
-        let server = fixture.spawn(port, &[]);
+        let mut server = fixture.spawn(&[]);
+        let port = server.port("port");
         wait_for_server(port).await;
         Self {
             _server: server,
@@ -1505,8 +1524,8 @@ cases:
     - orders:vip:ok
 "#,
     );
-    let port = unused_port();
-    let _server = fixture.spawn(port, &[]);
+    let mut server = fixture.spawn(&[]);
+    let port = server.port("port");
     wait_for_server(port).await;
     let client = reqwest::Client::new();
     let url = format!("http://127.0.0.1:{port}/orders");
@@ -1602,8 +1621,8 @@ cases:
     fixture.write_collections(
         "- id: default\n  routes:\n    - graphql:get-user:ok\n    - graphql:big-order:ok\n",
     );
-    let port = unused_port();
-    let _server = fixture.spawn(port, &[]);
+    let mut server = fixture.spawn(&[]);
+    let port = server.port("port");
     wait_for_server(port).await;
     let client = reqwest::Client::new();
     let post = |body: &'static str| {
@@ -1691,8 +1710,8 @@ cases:
 "#,
     );
     fixture.write_collections("- id: default\n  routes:\n    - users:any:echo\n");
-    let port = unused_port();
-    let _server = fixture.spawn(port, &[]);
+    let mut server = fixture.spawn(&[]);
+    let port = server.port("port");
     wait_for_server(port).await;
     let client = reqwest::Client::new();
 
@@ -1778,8 +1797,8 @@ cases:
     fixture.write_collections(
         "- id: default\n  routes:\n    - timing:slow:wait\n    - timing:fast:now\n",
     );
-    let port = unused_port();
-    let _server = fixture.spawn(port, &[]);
+    let mut server = fixture.spawn(&[]);
+    let port = server.port("port");
     wait_for_server(port).await;
     let client = reqwest::Client::new();
     let get = |speed: &str| {
@@ -1840,23 +1859,8 @@ fn watch_reloads_on_save_and_reports_a_parse_error_once() {
     let fixture = Fixture::new();
     fixture.write_route("users.yaml", route_with_id("users"));
     fixture.write_collections("- id: default\n  routes: []\n");
-    let mut child = Command::new(env!("CARGO_BIN_EXE_decoy"))
-        .args(fixture.args(unused_port(), &["--watch"]))
-        .current_dir(fixture.temp.path())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    let stderr = child.stderr.take().unwrap();
-    let _server = Server(child);
-    let (tx, lines) = mpsc::channel();
-    thread::spawn(move || {
-        for line in std::io::BufRead::lines(std::io::BufReader::new(stderr)) {
-            if tx.send(line.unwrap()).is_err() {
-                return;
-            }
-        }
-    });
+    let server = fixture.spawn(&["--watch"]);
+    let lines = &server.lines;
     let next = |what: &str| loop {
         let line = lines
             .recv_timeout(Duration::from_secs(5))
