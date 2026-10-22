@@ -1,5 +1,6 @@
 //! `decoy serve` answering WebSocket clients on the HTTP port: Routes by path and query,
-//! `on: connect` Cases, message Cases, timed `messages`, `close`, Sessions and Control API `send` and `wait`.
+//! `on: connect` Cases, message Cases, timed `messages`, `close`, Sessions and Control API `send`
+//! and `wait`.
 
 use std::fs;
 use std::io::{BufRead, BufReader};

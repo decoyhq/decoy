@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::connections::{Connections, SendError};
+use crate::connections::{Connections, LiveError};
 pub use crate::engine::session::{DEFAULT_SESSION, SESSION_HEADER};
 use crate::engine::{Catalog, ControlError, Controller, SelectionSnapshot};
 use crate::events::SessionSource;
@@ -21,7 +22,7 @@ pub const SEND_PATH: &str = "/__decoy__/control/send";
 /// Waits for a Route's live connection in the caller's Session; see [`handle_wait_request`].
 pub const WAIT_PATH: &str = "/__decoy__/control/wait";
 /// How long `send` and `wait` wait for a live connection when the body sets no `timeout` (Q5).
-pub const DEFAULT_SEND_TIMEOUT: Duration = Duration::from_secs(5);
+pub const DEFAULT_LIVE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControlApiRequest {
@@ -130,11 +131,11 @@ pub enum ControlApiError {
     #[error(transparent)]
     Control(#[from] ControlError),
     #[error("unknown route `{route}`")]
-    SendUnknownRoute { route: String },
+    UnknownRoute { route: String },
     #[error(
-        "route `{route}` has no live connections to send to; `send` needs a ws, sse or streaming gRPC Route"
+        "route `{route}` never has live connections; `{verb}` needs a ws or streaming gRPC Route"
     )]
-    SendNotLongLived { route: String },
+    NotLongLived { route: String, verb: &'static str },
     #[error(transparent)]
     SendMessage(GrpcCodecError),
     #[error(
@@ -146,15 +147,11 @@ pub enum ControlApiError {
         timeout_ms: u128,
     },
     #[error("decoy is shutting down")]
-    SendClosed,
+    Closed,
     #[error("`wait` needs `connected: true`; other conditions are not supported yet")]
     WaitCondition,
     #[error(
-        "route `{route}` never has live connections; `wait` needs a ws, sse or streaming gRPC Route"
-    )]
-    WaitNotLongLived { route: String },
-    #[error(
-        "no live connection of route `{route}` opened in session `{session}` within {timeout_ms}ms"
+        "no live connection of route `{route}` opened in session `{session}` within {timeout_ms}ms (or every one opened before a reload changed the output type)"
     )]
     WaitTimeout {
         route: String,
@@ -169,11 +166,11 @@ impl ControlApiError {
             Self::UnknownEndpoint { .. } => 404,
             Self::NotJson => 415,
             Self::InvalidJson(_) | Self::Control(_) | Self::WaitCondition => 400,
-            Self::SendUnknownRoute { .. } => 404,
-            Self::SendNotLongLived { .. } | Self::WaitNotLongLived { .. } => 409,
+            Self::UnknownRoute { .. } => 404,
+            Self::NotLongLived { .. } => 409,
             Self::SendMessage(_) => 400,
             Self::SendTimeout { .. } | Self::WaitTimeout { .. } => 408,
-            Self::SendClosed => 503,
+            Self::Closed => 503,
         }
     }
 }
@@ -236,46 +233,39 @@ async fn try_send(
     connections: &Connections,
     request: ControlApiRequest,
 ) -> Result<usize, ControlApiError> {
-    if !is_json(&request.headers) {
-        return Err(ControlApiError::NotJson);
-    }
-    let session = session_id(&request.headers);
-    let body: SendBody = parse_body(request.body)?;
-    let Some(route) = catalog.route(&body.route) else {
-        return Err(ControlApiError::SendUnknownRoute { route: body.route });
-    };
+    let LiveCall {
+        session,
+        body,
+        route,
+        method,
+        output,
+    } = live_call(catalog, request, "send", |body: &SendBody| Ok(&body.route))?;
     // Encoded here, against the current Catalog, so a bad message fails the call instead of the
     // client's stream, and streams opened before a reload write exactly these bytes.
-    let (output, message) = if let RouteMatch::Ws(_) = route.route_match {
-        let text = crate::ws::encode_text(&body.message);
-        (crate::ws::OUTPUT.to_owned(), text.into_bytes())
-    } else {
-        let Some(method) = send_method(catalog, route) else {
-            return Err(ControlApiError::SendNotLongLived { route: body.route });
-        };
-        let message = crate::grpc::encode_response(route, &method, body.message)
-            .map_err(ControlApiError::SendMessage)?;
-        (method.output().full_name().to_owned(), message)
+    let message = match &method {
+        None => crate::ws::encode_text(&body.message).into_bytes(),
+        Some(method) => crate::grpc::encode_response(route, method, body.message)
+            .map_err(ControlApiError::SendMessage)?,
     };
     let timeout = body
         .timeout
-        .map_or(DEFAULT_SEND_TIMEOUT, Duration::from_millis);
+        .map_or(DEFAULT_LIVE_TIMEOUT, Duration::from_millis);
     connections
         .send(&session, &body.route, &output, message, timeout)
         .await
         .map_err(|error| match error {
-            SendError::Timeout => ControlApiError::SendTimeout {
+            LiveError::Timeout => ControlApiError::SendTimeout {
                 route: body.route,
                 session,
                 timeout_ms: timeout.as_millis(),
             },
-            SendError::Closed => ControlApiError::SendClosed,
+            LiveError::Closed => ControlApiError::Closed,
         })
 }
 
 /// `POST /__decoy__/control/wait` with `{ "route": "...", "connected": true, "timeout"?: <ms> }`:
-/// waits until the request's Session has a live connection of the Route, of any output type, and
-/// answers `{ "connections": <n> }`. Past `timeout` (default 5000) it fails with `408`. Unknown
+/// waits until the request's Session has a live connection of the Route that `send` would reach
+/// now (its current output type), and answers `{ "connections": <n> }`. Past `timeout` (default 5000) it fails with `408`. Unknown
 /// Route: `404`; a Route without long-lived connections: `409`; a missing or `false` `connected`:
 /// `400`. Like `send`, the server calls it without holding the Controller.
 pub async fn handle_wait_request(
@@ -294,34 +284,82 @@ async fn try_wait(
     connections: &Connections,
     request: ControlApiRequest,
 ) -> Result<usize, ControlApiError> {
-    if !is_json(&request.headers) {
-        return Err(ControlApiError::NotJson);
-    }
-    let session = session_id(&request.headers);
-    let body: WaitBody = parse_body(request.body)?;
-    if body.connected != Some(true) {
-        return Err(ControlApiError::WaitCondition);
-    }
-    let Some(route) = catalog.route(&body.route) else {
-        return Err(ControlApiError::SendUnknownRoute { route: body.route });
-    };
-    if !matches!(route.route_match, RouteMatch::Ws(_)) && send_method(catalog, route).is_none() {
-        return Err(ControlApiError::WaitNotLongLived { route: body.route });
-    }
+    let LiveCall {
+        session,
+        body,
+        output,
+        ..
+    } = live_call(catalog, request, "wait", |body: &WaitBody| {
+        if body.connected != Some(true) {
+            return Err(ControlApiError::WaitCondition);
+        }
+        Ok(&body.route)
+    })?;
     let timeout = body
         .timeout
-        .map_or(DEFAULT_SEND_TIMEOUT, Duration::from_millis);
+        .map_or(DEFAULT_LIVE_TIMEOUT, Duration::from_millis);
     connections
-        .wait_connected(&session, &body.route, timeout)
+        .wait_connected(&session, &body.route, &output, timeout)
         .await
         .map_err(|error| match error {
-            SendError::Timeout => ControlApiError::WaitTimeout {
+            LiveError::Timeout => ControlApiError::WaitTimeout {
                 route: body.route,
                 session,
                 timeout_ms: timeout.as_millis(),
             },
-            SendError::Closed => ControlApiError::SendClosed,
+            LiveError::Closed => ControlApiError::Closed,
         })
+}
+
+/// What `send` and `wait` share: the caller's Session, its body, and the long-lived Route it
+/// names with the output type `send` would write now.
+struct LiveCall<'c, B> {
+    session: String,
+    body: B,
+    route: &'c Route,
+    /// The streaming gRPC method; `None` for a WebSocket Route.
+    method: Option<prost_reflect::MethodDescriptor>,
+    output: String,
+}
+
+/// Checks the JSON content type, parses the body, and resolves the Route `route_of` picks from
+/// it, which may reject the body first. A Route `verb` can't reach (HTTP, unary gRPC) is `409`.
+fn live_call<'c, B: DeserializeOwned>(
+    catalog: &'c Catalog,
+    request: ControlApiRequest,
+    verb: &'static str,
+    route_of: impl FnOnce(&B) -> Result<&String, ControlApiError>,
+) -> Result<LiveCall<'c, B>, ControlApiError> {
+    if !is_json(&request.headers) {
+        return Err(ControlApiError::NotJson);
+    }
+    let session = session_id(&request.headers);
+    let body: B = parse_body(request.body)?;
+    let route_id = route_of(&body)?;
+    let Some(route) = catalog.route(route_id) else {
+        return Err(ControlApiError::UnknownRoute {
+            route: route_id.clone(),
+        });
+    };
+    let (method, output) = if let RouteMatch::Ws(_) = route.route_match {
+        (None, crate::ws::OUTPUT.to_owned())
+    } else {
+        let Some(method) = send_method(catalog, route) else {
+            return Err(ControlApiError::NotLongLived {
+                route: route_id.clone(),
+                verb,
+            });
+        };
+        let output = method.output().full_name().to_owned();
+        (Some(method), output)
+    };
+    Ok(LiveCall {
+        session,
+        body,
+        route,
+        method,
+        output,
+    })
 }
 
 /// The method of a server-streaming gRPC Route; WebSocket Routes need none, SSE comes with #218.

@@ -266,6 +266,46 @@ async fn an_open_stream_takes_sends_from_its_session_until_the_client_cancels() 
 }
 
 #[tokio::test]
+async fn wait_resolves_once_that_sessions_stream_opens() {
+    let server = Server::start(WATCH_ROUTE, WATCH_COLLECTIONS).await;
+    server
+        .control("useCollection", r#"{"collection":"open"}"#, "s1")
+        .await;
+    let connected = r#"{"route":"approvals-watch","connected":true,"timeout":100}"#;
+    assert_eq!(server.post("wait", connected, "s1").await.0, 408);
+
+    let mut client = server.client().await;
+    let mut stream = client
+        .watch(json!({ "ids": ["a-1"] }), &[("x-mock-session", "s1")])
+        .await
+        .unwrap();
+    assert!(next(&mut stream).await.unwrap().is_some());
+
+    assert_eq!(
+        server.post("wait", connected, "s1").await,
+        (200, json!({ "connections": 1 }))
+    );
+    assert_eq!(server.post("wait", connected, "s2").await.0, 408);
+}
+
+#[tokio::test]
+async fn wait_on_a_unary_route_is_a_conflict() {
+    let server = Server::start(ROUTE, COLLECTIONS).await;
+    let (status, body) = server
+        .post(
+            "wait",
+            r#"{"route":"approvals-get","connected":true}"#,
+            "s1",
+        )
+        .await;
+    assert_eq!(status, 409, "{body}");
+    assert_eq!(
+        body["error"],
+        "route `approvals-get` never has live connections; `wait` needs a ws or streaming gRPC Route"
+    );
+}
+
+#[tokio::test]
 async fn a_send_that_does_not_fit_the_output_type_is_rejected_and_the_stream_stays_open() {
     let server = Server::start(WATCH_ROUTE, WATCH_COLLECTIONS).await;
     server
@@ -575,9 +615,13 @@ impl Server {
     }
 
     async fn send(&self, body: &str, session: &str) -> (u16, Value) {
+        self.post("send", body, session).await
+    }
+
+    async fn post(&self, verb: &str, body: &str, session: &str) -> (u16, Value) {
         let response = self
             .http()
-            .post(format!("{}/__decoy__/control/send", self.base_url()))
+            .post(format!("{}/__decoy__/control/{verb}", self.base_url()))
             .header("content-type", "application/json")
             .header("x-mock-session", session)
             .body(body.to_owned())
