@@ -55,13 +55,15 @@ impl Controller {
         }
     }
 
+    /// Publishes events on `events`, a channel made before the Controller (plugins log to it).
+    pub(crate) fn with_events(mut self, events: crate::events::Sender) -> Self {
+        self.events = events;
+        self
+    }
+
     /// Every [`RequestEvent`](crate::events::RequestEvent) and [`SessionEvent`] from now on.
     pub fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Event> {
         self.events.subscribe()
-    }
-
-    pub(crate) fn events(&self) -> crate::events::Sender {
-        self.events.clone()
     }
 
     /// Runs `verbs` with every [`SessionEvent`] they emit tagged `source`, then restores the

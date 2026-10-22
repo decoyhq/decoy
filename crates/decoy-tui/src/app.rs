@@ -277,6 +277,7 @@ impl App {
             }
             RuntimeEvent::Session(event) => self.on_session(event),
             RuntimeEvent::Log(LogEvent { level, message }) => self.push(match level {
+                Level::Info => Entry::Info(message),
                 Level::Warn => Entry::Warn(message),
                 Level::Error => Entry::Error(message),
             }),

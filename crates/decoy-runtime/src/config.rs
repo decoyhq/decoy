@@ -35,6 +35,29 @@ pub struct ServeConfig {
     pub passthrough_base_url: Option<String>,
     pub protos: ProtoSources,
     pub max_body_bytes: usize,
+    /// `plugins:` entries by key, the namespace of their steps (`<key>/<step>`).
+    pub plugins: BTreeMap<String, PluginConfig>,
+}
+
+/// One plugin process (`docs/design/plugin-protocol.md`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginConfig {
+    /// Run by the shell.
+    pub command: String,
+    /// Where `command` runs: the config file's directory.
+    pub dir: PathBuf,
+    /// Longest a call may take.
+    pub timeout: std::time::Duration,
+}
+
+/// A plugin call's timeout when its entry sets none.
+pub const DEFAULT_PLUGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PluginFile {
+    command: String,
+    timeout: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +189,8 @@ struct NativeConfigFile {
     passthrough_base_url: Option<String>,
     protos: Option<ProtoSources>,
     max_body_bytes: Option<usize>,
+    #[serde(default)]
+    plugins: BTreeMap<String, PluginFile>,
 }
 
 impl ServeConfig {
@@ -298,6 +323,13 @@ impl ServeConfig {
             .as_ref()
             .and_then(|config| config.max_body_bytes)
             .unwrap_or(DEFAULT_MAX_BODY_BYTES);
+        let plugins = file_config
+            .as_ref()
+            .map(|config| config.plugins.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(key, plugin)| Ok((key.clone(), plugin_config(&key, plugin, &config_base)?)))
+            .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
         let protos = file_config
             .and_then(|config| config.protos)
             .map(|protos| ProtoSources {
@@ -329,8 +361,42 @@ impl ServeConfig {
             passthrough_base_url,
             protos,
             max_body_bytes,
+            plugins,
         })
     }
+}
+
+/// A key is the namespace in `<key>/<step>` and `<key>.<function>()`, so it takes neither
+/// separator.
+fn plugin_config(key: &str, plugin: PluginFile, dir: &Path) -> Result<PluginConfig, ConfigError> {
+    let invalid = |reason: String| ConfigError::InvalidPlugin {
+        key: key.to_owned(),
+        reason,
+    };
+    if key.is_empty()
+        || !key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(invalid(
+            "a key takes only letters, digits, `-` and `_`".to_owned(),
+        ));
+    }
+    if plugin.command.trim().is_empty() {
+        return Err(invalid("`command` is empty".to_owned()));
+    }
+    let timeout = match plugin.timeout {
+        None => DEFAULT_PLUGIN_TIMEOUT,
+        Some(text) => humantime::parse_duration(&text)
+            .ok()
+            .filter(|timeout| !timeout.is_zero())
+            .ok_or_else(|| invalid(format!("`timeout: {text}` is not a duration like `5s`")))?,
+    };
+    Ok(PluginConfig {
+        command: plugin.command,
+        dir: dir.to_path_buf(),
+        timeout,
+    })
 }
 
 fn read_config_file(path: &Path) -> Result<NativeConfigFile, ConfigError> {
@@ -394,6 +460,8 @@ pub enum ConfigError {
     InvalidPassthroughBaseUrl { name: &'static str, url: String },
     #[error("missing required serve {name}; pass --{name} or set it in --config")]
     MissingValue { name: &'static str },
+    #[error("plugin `{key}`: {reason}")]
+    InvalidPlugin { key: String, reason: String },
 }
 
 #[cfg(test)]

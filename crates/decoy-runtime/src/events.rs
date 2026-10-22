@@ -183,7 +183,8 @@ pub enum SessionSource {
     ControlApi,
 }
 
-/// A runtime warning or error, e.g. a predicate that failed to evaluate.
+/// A runtime log line: a warning or error (a predicate that failed to evaluate), or a line a plugin
+/// wrote to its stderr.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogEvent {
     pub level: Level,
@@ -192,6 +193,8 @@ pub struct LogEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
+    /// Plain output, e.g. a plugin's stderr.
+    Info,
     Warn,
     Error,
 }
@@ -218,6 +221,10 @@ pub(crate) fn logging_to_sync<R>(events: Option<Sender>, f: impl FnOnce() -> R) 
         Some(events) => SINK.sync_scope(events, f),
         None => f(),
     }
+}
+
+pub(crate) fn info(message: impl Into<String>) {
+    log(Level::Info, message.into());
 }
 
 pub(crate) fn warn(message: impl Into<String>) {

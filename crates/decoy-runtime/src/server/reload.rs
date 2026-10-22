@@ -14,6 +14,9 @@ pub struct Reloader {
     pub(super) controller: Arc<RwLock<Controller>>,
     pub(super) max_body_bytes: Arc<AtomicUsize>,
     pub(super) listeners: Arc<ListenerFields>,
+    pub(super) plugins: crate::plugins::Plugins,
+    /// The `plugins:` the processes started with; a reload doesn't restart them.
+    pub(super) plugin_configs: Arc<BTreeMap<String, crate::config::PluginConfig>>,
     /// One reload at a time (`/reload` and `--watch`).
     pub(super) running: Arc<tokio::sync::Mutex<()>>,
 }
@@ -25,7 +28,7 @@ pub struct Reloaded {
     pub catalog: Arc<Catalog>,
     /// What a Session that never picked a Collection now uses.
     pub default_collection: String,
-    /// `listener changes need restart`, then one line per Selection fallback or dropped override.
+    /// `listener changes need restart`, `plugin changes need restart`, then one line per Selection fallback or dropped override.
     pub warnings: Vec<String>,
 }
 
@@ -82,6 +85,11 @@ impl Reloader {
         if ListenerFields::of(&config) != *self.listeners {
             warnings.push("listener changes need restart".to_owned());
         }
+        if config.plugins != *self.plugin_configs {
+            warnings.push("plugin changes need restart".to_owned());
+        }
+        self.plugins
+            .set_protos(startup.catalog.runtime().protos.clone());
         let mut controller = self.controller.write().await;
         warnings.extend(controller.reload(startup.catalog, startup.default_collection));
         self.max_body_bytes

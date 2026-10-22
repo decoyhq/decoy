@@ -16,7 +16,7 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls-no-p
 webpki-root-certs = "1"
 serde_norway = "0.9"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 url = "2"
 percent-encoding = "2"
 walkdir = "2"
@@ -38,6 +38,7 @@ rcgen = "0.14"
 time = "0.3"
 hyper-util = { version = "0.1", features = ["server-auto", "server-graceful", "service", "tokio"] }
 notify = "8"
+rmpv = "1"
 
 [dev-dependencies]
 pretty_assertions = "1"
