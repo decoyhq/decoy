@@ -37,6 +37,8 @@ pub struct ServeConfig {
     pub max_body_bytes: usize,
     /// `plugins:` entries by key, the namespace of their steps (`<key>/<step>`).
     pub plugins: BTreeMap<String, PluginConfig>,
+    /// Named step lists a Route uses with `pipeline: <name>`.
+    pub pipelines: BTreeMap<String, Vec<crate::schema::PipelineStep>>,
 }
 
 /// One plugin process (`docs/design/plugin-protocol.md`).
@@ -191,6 +193,8 @@ struct NativeConfigFile {
     max_body_bytes: Option<usize>,
     #[serde(default)]
     plugins: BTreeMap<String, PluginFile>,
+    #[serde(default)]
+    pipelines: BTreeMap<String, Vec<crate::schema::PipelineStep>>,
 }
 
 impl ServeConfig {
@@ -330,6 +334,10 @@ impl ServeConfig {
             .into_iter()
             .map(|(key, plugin)| Ok((key.clone(), plugin_config(&key, plugin, &config_base)?)))
             .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
+        let pipelines = file_config
+            .as_ref()
+            .map(|config| config.pipelines.clone())
+            .unwrap_or_default();
         let protos = file_config
             .and_then(|config| config.protos)
             .map(|protos| ProtoSources {
@@ -362,6 +370,7 @@ impl ServeConfig {
             protos,
             max_body_bytes,
             plugins,
+            pipelines,
         })
     }
 }

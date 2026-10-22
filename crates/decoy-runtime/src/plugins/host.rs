@@ -26,7 +26,7 @@ pub enum Op {
 }
 
 impl Op {
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::Decode => "decode",
             Self::Encode => "encode",

@@ -25,19 +25,71 @@ pub struct Route {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub passthrough: Option<PassthroughTarget>,
     /// Steps that turn request bytes into the envelope's JSON and back (ADR 0002). `None` uses the
-    /// transport default: `[grpc-frame, protobuf]` for gRPC.
+    /// transport default: `[grpc-frame, protobuf]` for gRPC, none for WebSocket.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<Vec<PipelineStep>>,
+    /// `pipeline: <name>` as written, until startup replaces it with that `pipelines:` entry.
+    #[serde(skip)]
+    pub pipeline_name: Option<String>,
 }
 
-/// A built-in Pipeline step. Plugin steps come later.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
+/// A Pipeline step: one of the built-ins (gRPC only, ADR 0004), or `<key>/<step>` of a plugin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub enum PipelineStep {
     /// gRPC length-prefixed message framing.
     GrpcFrame,
     /// Protobuf bytes ⇄ protobuf JSON, typed by the gRPC method.
     Protobuf,
+    /// A step the `plugins:` entry `key` serves.
+    Plugin { key: String, step: String },
+}
+
+impl TryFrom<String> for PipelineStep {
+    type Error = String;
+
+    fn try_from(name: String) -> Result<Self, Self::Error> {
+        match name.as_str() {
+            "grpc-frame" => Ok(Self::GrpcFrame),
+            "protobuf" => Ok(Self::Protobuf),
+            _ => match name.split_once('/') {
+                Some((key, step)) if !key.is_empty() && !step.is_empty() && !step.contains('/') => {
+                    Ok(Self::Plugin {
+                        key: key.to_owned(),
+                        step: step.to_owned(),
+                    })
+                }
+                _ => Err(format!(
+                    "unknown pipeline step `{name}`: the built-ins are `grpc-frame` and `protobuf`, plugin steps are `<key>/<step>`"
+                )),
+            },
+        }
+    }
+}
+
+impl From<PipelineStep> for String {
+    fn from(step: PipelineStep) -> Self {
+        step.to_string()
+    }
+}
+
+impl std::fmt::Display for PipelineStep {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::GrpcFrame => formatter.write_str("grpc-frame"),
+            Self::Protobuf => formatter.write_str("protobuf"),
+            Self::Plugin { key, step } => write!(formatter, "{key}/{step}"),
+        }
+    }
+}
+
+/// `pipeline:` as written: a list of steps, or the name of a `pipelines:` entry in decoy.yaml.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PipelineSpec {
+    Named(String),
+    /// Parsed into steps once the shape is known, so a bad name keeps its own message.
+    Steps(Vec<String>),
 }
 
 /// A Route as written; `match` is decoded once `transport` says which shape it has.
@@ -53,7 +105,7 @@ struct RawRoute {
     #[serde(default)]
     passthrough: Option<PassthroughTarget>,
     #[serde(default)]
-    pipeline: Option<Vec<PipelineStep>>,
+    pipeline: Option<PipelineSpec>,
 }
 
 impl TryFrom<RawRoute> for Route {
@@ -71,7 +123,20 @@ impl TryFrom<RawRoute> for Route {
             route_match,
             cases: raw.cases,
             passthrough: raw.passthrough,
-            pipeline: raw.pipeline,
+            pipeline_name: match &raw.pipeline {
+                Some(PipelineSpec::Named(name)) => Some(name.clone()),
+                _ => None,
+            },
+            pipeline: match raw.pipeline {
+                Some(PipelineSpec::Steps(steps)) => Some(
+                    steps
+                        .into_iter()
+                        .map(PipelineStep::try_from)
+                        .collect::<Result<_, _>>()
+                        .map_err(<serde_json::Error as serde::de::Error>::custom)?,
+                ),
+                _ => None,
+            },
         })
     }
 }
@@ -83,6 +148,30 @@ impl Route {
         Ok(route)
     }
 
+    fn validate_pipeline(&self) -> Result<(), String> {
+        if let Some(name) = &self.pipeline_name {
+            return Err(format!("no `pipelines:` entry `{name}` in the config file"));
+        }
+        let Some(steps) = &self.pipeline else {
+            return Ok(());
+        };
+        let plugin = |step: &PipelineStep| matches!(step, PipelineStep::Plugin { .. });
+        match self.transport {
+            Transport::Http => Err("HTTP Routes do not take a `pipeline` yet".to_owned()),
+            Transport::Grpc if steps.iter().any(plugin) => {
+                Err("gRPC Routes take only `grpc-frame` and `protobuf` for now".to_owned())
+            }
+            Transport::Grpc => crate::grpc::schema::validate_pipeline(steps),
+            Transport::Ws if steps.is_empty() => Err("the pipeline has no steps".to_owned()),
+            Transport::Ws => match steps.iter().find(|step| !plugin(step)) {
+                Some(step) => Err(format!(
+                    "`{step}` is for gRPC Routes; WebSocket Routes take plugin steps (`<key>/<step>`)"
+                )),
+                None => Ok(()),
+            },
+        }
+    }
+
     /// Whether the envelope's `message` is protobuf JSON (the default) rather than raw bytes.
     pub fn decodes_protobuf(&self) -> bool {
         self.pipeline
@@ -90,28 +179,37 @@ impl Route {
             .is_none_or(|steps| steps.contains(&PipelineStep::Protobuf))
     }
 
+    /// Replaces `pipeline: <name>` with the steps of that `pipelines:` entry; an unknown name is
+    /// left for [`Self::validate`] to report.
+    pub fn resolve_pipeline(&mut self, pipelines: &BTreeMap<String, Vec<PipelineStep>>) {
+        if let Some(steps) = self
+            .pipeline_name
+            .as_ref()
+            .and_then(|name| pipelines.get(name))
+        {
+            self.pipeline = Some(steps.clone());
+            self.pipeline_name = None;
+        }
+    }
+
+    /// The plugin steps of the Route's Pipeline, as `(key, step)`.
+    pub fn plugin_steps(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.pipeline
+            .iter()
+            .flatten()
+            .filter_map(|step| match step {
+                PipelineStep::Plugin { key, step } => Some((key.as_str(), step.as_str())),
+                _ => None,
+            })
+    }
+
     pub fn validate(&self) -> Result<(), ValidationError> {
         validate_id("route", &self.id)?;
-
-        if self.pipeline.is_some() && self.transport != Transport::Grpc {
-            let transport = match self.transport {
-                Transport::Ws => "WebSocket",
-                _ => "HTTP",
-            };
-            return Err(ValidationError::InvalidPipeline {
+        self.validate_pipeline()
+            .map_err(|reason| ValidationError::InvalidPipeline {
                 route: self.id.clone(),
-                reason: format!("{transport} Routes do not take a `pipeline` yet"),
-            });
-        }
-
-        if let Some(steps) = &self.pipeline {
-            crate::grpc::schema::validate_pipeline(steps).map_err(|reason| {
-                ValidationError::InvalidPipeline {
-                    route: self.id.clone(),
-                    reason,
-                }
+                reason,
             })?;
-        }
 
         if let Some(target) = &self.passthrough {
             target.validate()?;

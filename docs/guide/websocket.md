@@ -4,7 +4,7 @@ Decoy accepts WebSocket upgrades on its normal port, next to plain HTTP, gRPC an
 Point the client's socket URL at Decoy. With [TLS](tls.md) on, the same port serves `wss://`.
 
 Supported so far: text frames carrying JSON or plain text, `on: connect` Cases, timed replies,
-`close`, and Control API `send`. Binary frames and `pipeline` (msgpack, protobuf) come later.
+`close`, Control API `send`, and binary formats through [plugin steps](#binary-formats-plugin-steps).
 
 ## WebSocket Routes
 
@@ -54,8 +54,8 @@ cases:
   like HTTP `body`) plus `pathParams`, `query`, `headers` and `cookies` of the upgrade, or one
   `${ }` predicate. A frame that parses as JSON is JSON, anything else stays a string:
   ``match: '${ message == `"ping"` }'``.
-- **Unmatched message:** Decoy sends nothing, logs a miss, and keeps the socket open. A binary frame
-  is always a miss for now.
+- **Unmatched message:** Decoy sends nothing, logs a miss, and keeps the socket open. Without a
+  `pipeline`, a binary frame is always a miss.
 
 Collections and Sessions work as for HTTP: `on: connect` Cases are entries like any other.
 
@@ -108,3 +108,69 @@ curl -X POST localhost:8080/__decoy__/control/send \
 ```
 
 The [ws-node example](../../examples/ws-node) runs all of the above against a real client.
+
+## Binary formats: plugin steps
+
+Decoy has no built-in step for binary socket formats (msgpack envelopes, hand-rolled frames,
+protobuf on a socket). A plugin step turns frames into JSON for the Cases and turns replies back into
+frames, so Routes, Collections and Sessions work unchanged.
+
+A plugin is a file that calls `definePlugin` from [`@decoyhq/plugin`](../../packages/plugin),
+usually through a package's factory that takes typed options:
+
+```ts
+// plugins/binary-rpc.ts
+import { binaryRpc } from '@acme/decoy-plugin-binary-rpc'
+
+export default binaryRpc({
+  topics: { 'users.get': { request: 'users.v1.GetUserRequest', reply: 'users.v1.User' } },
+})
+```
+
+```yaml
+# mocks/decoy.yaml
+protos:
+  roots: [../proto] # plugins use these through ctx.protobuf
+plugins:
+  rpc:
+    command: node ../plugins/binary-rpc.ts # Decoy starts it; it serves until Decoy stops
+pipelines:
+  rpc: [rpc/frame] # <plugins key>/<step>
+```
+
+```yaml
+# mocks/routes/rpc.yaml
+id: rpc
+transport: ws
+match: { path: /ws/rpc }
+pipeline: rpc # or inline: [rpc/frame]
+cases:
+  get-user:
+    match:
+      message: { kind: REQUEST, topic: users.get, payload: { id: u-1 } }
+    behaviors:
+      ann:
+        message:
+          kind: REPLY
+          topic: users.get
+          id: '${ message.id }'
+          payload: { id: u-1, name: Ann }
+```
+
+- **Inbound:** each frame, text or binary, goes through the steps in order. Cases match the JSON the
+  last one returns. A step can call `miss(reason)`: Decoy logs a miss and keeps the socket open.
+- **Outbound:** each message goes through the steps in reverse as it is sent. The first step returns
+  a string (sent as a text frame) or bytes (a binary frame), so one socket can mix both.
+- **Control API `send`** goes through the same steps, per socket. A message that can't encode at
+  all answers `400` with the plugin's error.
+- **Startup:** a pipeline step no plugin serves fails startup. So does an outbound literal the step's
+  `check` rejects, e.g. a typo in a protobuf payload next to a `${ }` template.
+- **Failures:** a step that throws is an error event (stderr, TUI) naming the plugin, step, Route,
+  connection, Session, the value and the plugin's stack; the socket stays open. A plugin that exits
+  stops Decoy with its exit code and last stderr lines. Plugin stderr is shown as
+  `[rpc: binary-rpc@0.1.0] …`.
+- **Reload** applies Route changes; a changed `plugins:` entry needs a restart, and plugin `check`
+  runs at startup only.
+
+Other languages speak the [plugin protocol](../design/plugin-protocol.md) directly. The
+[ws-plugin-node example](../../examples/ws-plugin-node) runs two plugins against real sockets.

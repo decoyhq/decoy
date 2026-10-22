@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use super::resolve::WsResolution;
-use super::{Trigger, WsConnection, WsReply, encode_text};
+use super::{Trigger, WsConnection, WsReply};
 use crate::collections::Activation;
 use crate::engine::Catalog;
 use crate::events::{Match, Outcome};
@@ -44,9 +44,11 @@ impl Catalog {
                 conditions,
                 response,
             } => WsCall {
-                reply: respond(response, envelope).map(Some).map_err(|reason| {
-                    format!("behavior `{}` failed: {reason}", activation.address())
-                }),
+                reply: respond(response, envelope, activation.address())
+                    .map(Some)
+                    .map_err(|reason| {
+                        format!("behavior `{}` failed: {reason}", activation.address())
+                    }),
                 outcome: capture.then(|| {
                     Outcome::Hit(Match {
                         path_params: path_params(envelope),
@@ -64,21 +66,24 @@ impl Catalog {
     }
 }
 
-fn respond(response: &ResponseBehavior, envelope: &Value) -> Result<WsReply, String> {
+fn respond(
+    response: &ResponseBehavior,
+    envelope: &Value,
+    behavior: String,
+) -> Result<WsReply, String> {
     let jmes = OnceCell::new();
     let rendered = render_ws_response(response, &|| {
         jmes.get_or_init(|| to_rcvar(envelope)).clone()
     })
     .map_err(|error| error.to_string())?;
-    let single = rendered
-        .message
-        .map(|message| (None, encode_text(&message)));
+    let single = rendered.message.map(|message| (None, message));
     let listed = rendered
         .messages
         .into_iter()
         .flatten()
-        .map(|item| (item.delay, encode_text(&item.message)));
+        .map(|item| (item.delay, item.message));
     Ok(WsReply {
+        behavior,
         delay: rendered.delay,
         messages: single.into_iter().chain(listed).collect(),
         close: rendered.close,
@@ -131,7 +136,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_messages_as_text_frames_with_their_delays_and_close() {
+    fn renders_messages_with_their_delays_and_close() {
         let catalog = catalog(
             r#"      b:
         delay: 50ms
@@ -144,10 +149,11 @@ mod tests {
         assert_eq!(
             reply(&catalog, json!({ "id": 7 })).unwrap(),
             Some(WsReply {
+                behavior: "live:any:b".to_owned(),
                 delay: Some(Duration::from_millis(50)),
                 messages: vec![
-                    (None, r#"{"id":7,"topic":"news"}"#.to_owned()),
-                    (Some(Duration::from_secs(1)), "bye 7".to_owned()),
+                    (None, json!({ "id": 7, "topic": "news" })),
+                    (Some(Duration::from_secs(1)), json!("bye 7")),
                 ],
                 close: Some(WsClose {
                     code: 4001,

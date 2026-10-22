@@ -20,6 +20,10 @@ pub struct RuntimeConfig {
     pub passthrough: Option<PassthroughTarget>,
     /// Message types for gRPC Routes, from the configured proto roots and descriptor sets.
     pub protos: DescriptorPool,
+    /// `pipelines:` from the config file, for Routes that name one.
+    pub pipelines: std::collections::BTreeMap<String, Vec<crate::schema::PipelineStep>>,
+    /// The running plugins; Routes' plugin steps must name one of their steps.
+    pub plugins: crate::plugins::Plugins,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

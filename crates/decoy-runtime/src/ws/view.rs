@@ -1,17 +1,25 @@
 use serde_json::Value;
 
-use super::{Trigger, WsConnection, WsReply, decode_text};
+use super::{Trigger, WsConnection, WsReply, decode_text, encode_text};
 use crate::engine::{MissDiagnostic, SessionView};
 use crate::events::{CapturedBody, CapturedResponse, Outcome};
 use crate::schema::Transport;
 
 /// What arrived on a connection.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Inbound<'a> {
     /// The upgrade was accepted.
     Open,
     Text(&'a str),
+    /// A binary frame on a Route without a Pipeline: always a miss.
     Binary(&'a [u8]),
+    /// A frame the Route's Pipeline decoded.
+    Decoded(Value),
+    /// A frame a Pipeline step called `miss` on.
+    Missed {
+        payload: &'a [u8],
+        reason: String,
+    },
 }
 
 /// Events show a WebSocket exchange with this method and status.
@@ -21,9 +29,9 @@ const SWITCHING_PROTOCOLS: u16 = 101;
 impl SessionView {
     /// Answers the open or one inbound message on `connection`, and, if anyone subscribed, emits
     /// its [`RequestEvent`](crate::events::RequestEvent). The open emits one only when an
-    /// `on: connect` Case answered it. An unmatched message, or a binary one (no Pipeline yet), is
-    /// a miss: nothing to send, and a warning when nobody subscribed (Q4).
-    pub fn execute_ws(&self, connection: &WsConnection, inbound: Inbound) -> Option<WsReply> {
+    /// `on: connect` Case answered it. An unmatched message, a binary one without a Pipeline, or one
+    /// a step skipped is a miss: nothing to send, and a warning when nobody subscribed (Q4).
+    pub fn execute_ws(&self, connection: &WsConnection, inbound: Inbound<'_>) -> Option<WsReply> {
         let capture = self.events.receiver_count() > 0;
         let started = capture.then(|| self.start(METHOD, &connection.url, &connection.headers));
         let (trigger, message, body) = match inbound {
@@ -37,24 +45,17 @@ impl SessionView {
                 };
                 (Trigger::Message, Some(message), body)
             }
-            Inbound::Binary(bytes) => {
-                let reason =
-                    "binary frames need a pipeline, which WebSocket Routes do not take yet";
-                let outcome = Outcome::Miss(MissDiagnostic {
-                    collection: self.selection.collection.clone(),
-                    reason: reason.to_owned(),
-                    candidates: Vec::new(),
-                });
-                match started {
-                    Some(started) => self.emit(
-                        Transport::Ws,
-                        started,
-                        CapturedBody::raw(bytes),
-                        outcome,
-                        response(None),
-                    ),
-                    None => miss_warning(connection, reason),
-                }
+            Inbound::Decoded(message) => {
+                let body = CapturedBody::decoded(&message);
+                (Trigger::Message, Some(message), body)
+            }
+            Inbound::Binary(payload) => {
+                let reason = "binary frames need a `pipeline` on the Route".to_owned();
+                self.missed(connection, started, payload, reason);
+                return None;
+            }
+            Inbound::Missed { payload, reason } => {
+                self.missed(connection, started, payload, reason);
                 return None;
             }
         };
@@ -92,6 +93,33 @@ impl SessionView {
     }
 }
 
+impl SessionView {
+    fn missed(
+        &self,
+        connection: &WsConnection,
+        started: Option<crate::engine::view::Started>,
+        payload: &[u8],
+        reason: String,
+    ) {
+        let Some(started) = started else {
+            miss_warning(connection, &reason);
+            return;
+        };
+        let outcome = Outcome::Miss(MissDiagnostic {
+            collection: self.selection.collection.clone(),
+            reason,
+            candidates: Vec::new(),
+        });
+        self.emit(
+            Transport::Ws,
+            started,
+            CapturedBody::raw(payload),
+            outcome,
+            response(None),
+        );
+    }
+}
+
 fn miss_warning(connection: &WsConnection, reason: &str) {
     crate::events::warn(format!(
         "ws `{}` {}: {reason}; nothing sent",
@@ -111,7 +139,7 @@ fn response(reply: Option<&WsReply>) -> CapturedResponse {
     let frames: Vec<Value> = reply
         .messages
         .iter()
-        .map(|(_, text)| Value::String(text.clone()))
+        .map(|(_, message)| Value::String(encode_text(message)))
         .collect();
     let headers = reply.close.iter().flat_map(|close| {
         [

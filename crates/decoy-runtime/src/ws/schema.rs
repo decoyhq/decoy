@@ -80,6 +80,7 @@ pub fn tie_error(route: &Route, other: &Route) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::schema::PipelineStep;
 
     fn ws(id: &str, query: &str) -> Route {
         Route::from_yaml(&format!(
@@ -140,6 +141,47 @@ mod tests {
                 .contains("3000–4999")
         );
         assert!(behavior("{ message: '${ [ }' }").is_err());
+    }
+
+    #[test]
+    fn pipelines_take_plugin_steps_or_a_name_startup_resolves() {
+        let route = |pipeline: &str| {
+            Route::from_yaml(&format!(
+                "id: s\ntransport: ws\nmatch: {{ path: /s }}\npipeline: {pipeline}\ncases:\n  any:\n    behaviors:\n      b: {{ message: x }}\n"
+            ))
+        };
+        let plugin = route("[env/envelope, rpc/frame]").unwrap();
+        assert_eq!(
+            plugin.plugin_steps().collect::<Vec<_>>(),
+            [("env", "envelope"), ("rpc", "frame")]
+        );
+        let builtin = route("[protobuf]").unwrap_err().to_string();
+        assert!(
+            builtin.contains("`protobuf` is for gRPC Routes; WebSocket Routes take plugin steps"),
+            "{builtin}"
+        );
+        assert!(route("[]").unwrap_err().to_string().contains("no steps"));
+        assert!(route("[env/]").is_err());
+
+        let unresolved = route("approvals-ws").unwrap_err().to_string();
+        assert!(
+            unresolved.contains("no `pipelines:` entry `approvals-ws`"),
+            "{unresolved}"
+        );
+        let mut named: Route = serde_norway::from_str(
+            "id: s\ntransport: ws\nmatch: { path: /s }\npipeline: approvals-ws\ncases:\n  any:\n    behaviors:\n      b: { message: x }\n",
+        )
+        .unwrap();
+        let steps = vec![PipelineStep::Plugin {
+            key: "env".to_owned(),
+            step: "envelope".to_owned(),
+        }];
+        named.resolve_pipeline(&std::collections::BTreeMap::from([(
+            "approvals-ws".to_owned(),
+            steps.clone(),
+        )]));
+        assert_eq!(named.pipeline, Some(steps));
+        assert!(named.validate().is_ok());
     }
 
     #[test]

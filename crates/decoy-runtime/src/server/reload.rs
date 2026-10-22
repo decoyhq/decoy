@@ -75,9 +75,10 @@ impl Reloader {
     ) -> Result<Reloaded, ServeError> {
         let _running = self.running.lock().await;
         // File IO and the proto compile block, so keep them off the async workers.
+        let plugins = self.plugins.clone();
         let (config, startup) = tokio::task::spawn_blocking(move || {
             let config = read_config()?;
-            let startup = load(&config)?;
+            let startup = load(&config, &plugins)?;
             Ok::<_, ServeError>((config, startup))
         })
         .await??;

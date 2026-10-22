@@ -57,7 +57,9 @@ impl Host for ProtoHost {
                 let message = self.message(args)?;
                 let value = to_json(args.get(1).unwrap_or(&Msgpack::Nil))?;
                 if self.checking.load(Ordering::Relaxed) {
-                    crate::grpc::schema::check_response_message(&value, &message, "message")?;
+                    // The plugin knows where in its message this value sits; paths start here.
+                    crate::grpc::schema::check_response_message(&value, &message, "")
+                        .map_err(|error| error.replace("`.", "`"))?;
                     return Ok(Msgpack::Binary(Vec::new()));
                 }
                 let encoded = DynamicMessage::deserialize(message.clone(), value)
@@ -144,6 +146,6 @@ mod tests {
         let error = host
             .call("protobuf.encode", &["users.v1.User".into(), typo])
             .unwrap_err();
-        assert_eq!(error, "unknown field `message.nmae` in users.v1.User");
+        assert_eq!(error, "unknown field `nmae` in users.v1.User");
     }
 }

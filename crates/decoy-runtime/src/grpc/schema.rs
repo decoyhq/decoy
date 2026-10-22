@@ -59,17 +59,10 @@ pub fn validate_pipeline(steps: &[PipelineStep]) -> Result<(), String> {
     }
     for (index, step) in steps.iter().enumerate() {
         if steps[..index].contains(step) {
-            return Err(format!("step `{}` appears twice", step_name(*step)));
+            return Err(format!("step `{step}` appears twice"));
         }
     }
     Ok(())
-}
-
-fn step_name(step: PipelineStep) -> &'static str {
-    match step {
-        PipelineStep::GrpcFrame => "grpc-frame",
-        PipelineStep::Protobuf => "protobuf",
-    }
 }
 
 /// Shape of a gRPC response Behavior: `message` (success), or `status` plus an optional `message`
@@ -840,7 +833,19 @@ cases:
         )
         .unwrap_err()
         .to_string();
-        assert!(unknown.contains("unknown variant `msgpack`"), "{unknown}");
+        assert!(
+            unknown.contains("unknown pipeline step `msgpack`"),
+            "{unknown}"
+        );
+        let plugin = Route::from_yaml(
+            "id: r\ntransport: grpc\nmatch: { service: s, method: m }\npipeline: [grpc-frame, env/envelope]\ncases: {}\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            plugin.contains("gRPC Routes take only `grpc-frame` and `protobuf` for now"),
+            "{plugin}"
+        );
 
         let http = Route::from_yaml(
             "id: r\ntransport: http\nmatch: { method: GET, path: /x }\npipeline: [protobuf]\ncases:\n  any:\n    behaviors:\n      ok: {}\n",

@@ -75,8 +75,11 @@ pub async fn serve(
     let events = crate::events::channel();
     // Before the Catalog: Routes name plugin steps.
     let (plugins, supervisor) = crate::plugins::start(&config.plugins, &events).await?;
-    let startup = load(&config)?;
+    let startup = load(&config, &plugins)?;
     plugins.set_protos(startup.catalog.runtime().protos.clone());
+    crate::ws::pipeline::check_routes(&startup.catalog)
+        .await
+        .map_err(crate::plugins::PluginError::Check)?;
     let controller =
         Controller::new(startup.catalog, startup.default_collection).with_events(events.clone());
     let mut notices = Vec::new();
@@ -168,7 +171,7 @@ pub async fn serve(
 }
 
 /// Builds the Catalog from `config`'s protos, Routes and Collections.
-fn load(config: &ServeConfig) -> Result<Startup, ServeError> {
+fn load(config: &ServeConfig, plugins: &crate::plugins::Plugins) -> Result<Startup, ServeError> {
     let protos = load_descriptor_pool(&config.protos).map_err(ServeError::Protos)?;
     Ok(load_catalog_from_files(
         &config.routes,
@@ -179,6 +182,8 @@ fn load(config: &ServeConfig) -> Result<Startup, ServeError> {
                 .clone()
                 .map(|base_url| PassthroughTarget { base_url }),
             protos,
+            pipelines: config.pipelines.clone(),
+            plugins: plugins.clone(),
         },
         config.collection.as_deref(),
     )?)

@@ -43,6 +43,9 @@ pub enum PluginError {
         reason: String,
         tail: String,
     },
+    /// A Route's outbound literal failed its plugin step's startup `check`.
+    #[error("{0}")]
+    Check(String),
     #[error("plugin `{label}` {how}; Decoy stops without it{tail}")]
     Exited {
         label: String,
@@ -57,6 +60,15 @@ pub struct Plugins {
     by_key: Arc<BTreeMap<String, Arc<Plugin>>>,
     host: Arc<ProtoHost>,
 }
+
+/// The same running plugins (a reload keeps them).
+impl PartialEq for Plugins {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.by_key, &other.by_key)
+    }
+}
+
+impl Eq for Plugins {}
 
 impl Plugins {
     pub fn get(&self, key: &str) -> Option<&Arc<Plugin>> {

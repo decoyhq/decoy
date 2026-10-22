@@ -1,9 +1,9 @@
 # Transports: worked examples
 
 Status: **draft for review** (#216). Once agreed, this becomes the spec for gRPC (#217) and
-WebSocket/SSE (#218). Implemented: HTTP, gRPC unary and server streaming, and WebSocket text frames
-without pipelines (section 6; `every`, Control API `close` and the `wait` conditions other than
-`connected: true` not yet).
+WebSocket/SSE (#218). Implemented: HTTP, gRPC unary and server streaming, WebSocket (section 6;
+`every`, Control API `close` and the `wait` conditions other than `connected: true` not yet), and
+plugin steps (section 7; plugin functions not yet).
 
 Read it as "what would I write in my mocks". Every open choice is marked **Q** with a recommendation
 at the end.
@@ -103,8 +103,8 @@ parses and a string otherwise; a binary frame is a MISS. With a pipeline, a fram
 a MISS too (nothing is sent, a miss is logged); a step that throws or times out is a plugin error
 (section 7).
 
-**What exists today.** Only gRPC Routes run pipelines, with `grpc-frame` and `protobuf`; `ws` Routes
-take no `pipeline` yet. Named `pipelines:` and plugins are design only.
+**What exists today.** gRPC Routes run `grpc-frame` and `protobuf`; `ws` Routes run plugin steps
+(section 7). Named `pipelines:` work for both. Plugin functions (`env.<fn>()`) are design only.
 
 On a single port, one entry handler dispatches per request: `/__decoy__/*` → Control API,
 `content-type: application/grpc*` → gRPC, everything else → HTTP (so REST over HTTP/2 works).

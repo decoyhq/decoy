@@ -60,6 +60,7 @@ pub(super) fn decode(
     for (index, step) in steps.iter().enumerate() {
         match step {
             PipelineStep::GrpcFrame => bytes = unframe(bytes)?,
+            PipelineStep::Plugin { .. } => unreachable!("gRPC Routes take no plugin steps"),
             PipelineStep::Protobuf => {
                 // `validate_pipeline` keeps `protobuf` last and each step once.
                 assert_eq!(index, steps.len() - 1, "no step follows `protobuf`");
@@ -98,6 +99,7 @@ pub(super) fn encode(
             }
             (PipelineStep::GrpcFrame, data) => Data::Bytes(frame(&bytes(data)?)),
             (PipelineStep::Protobuf, Data::Bytes(_)) => unreachable!("no step follows `protobuf`"),
+            (PipelineStep::Plugin { .. }, _) => unreachable!("gRPC Routes take no plugin steps"),
         };
     }
     bytes(data)

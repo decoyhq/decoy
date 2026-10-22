@@ -141,6 +141,9 @@ pub enum ControlApiError {
     NotLongLived { route: String, verb: &'static str },
     #[error(transparent)]
     SendMessage(GrpcCodecError),
+    /// The Route's Pipeline didn't encode the message (a dry run, before any connection).
+    #[error("{0}")]
+    SendEncode(String),
     #[error(
         "no live connection of route `{route}` in session `{session}` took the message within {timeout_ms}ms (none open, every queue full, or opened before a reload changed the output type)"
     )]
@@ -171,7 +174,7 @@ impl ControlApiError {
             Self::InvalidJson(_) | Self::Control(_) | Self::WaitCondition => 400,
             Self::UnknownRoute { .. } => 404,
             Self::NotLongLived { .. } => 409,
-            Self::SendMessage(_) => 400,
+            Self::SendMessage(_) | Self::SendEncode(_) => 400,
             Self::SendTimeout { .. } | Self::WaitTimeout { .. } => 408,
             Self::Closed => 503,
         }
@@ -217,7 +220,8 @@ impl From<ControlApiError> for ControlApiResponse {
 /// delivers `message` to every live connection of the Route in the request's Session and answers
 /// `{ "delivered": <n> }`; a connection whose queue is full is skipped and not counted. With no
 /// live connection it waits up to `timeout` (default 5000) and fails with `408` (Q5). Unknown Route: `404`; a Route without long-lived connections: `409`; a
-/// `message` that doesn't encode for the Route: `400`.
+/// `message` that doesn't encode for the Route (its proto type, or a dry run of its plugin
+/// Pipeline): `400`.
 ///
 /// Unlike the other verbs it waits, so the server calls it without holding the Controller.
 pub async fn handle_send_request(
@@ -246,7 +250,18 @@ async fn try_send(
     // Encoded here, against the current Catalog, so a bad message fails the call instead of the
     // client's stream, and streams opened before a reload write exactly these bytes.
     let message = match &method {
-        None => crate::ws::encode_text(&body.message).into_bytes(),
+        None => match crate::ws::pipeline::WsPipeline::of(route, &catalog.runtime().plugins) {
+            // Each connection encodes it in turn, with its own plugin state; this dry run (fresh
+            // state, no connection) catches a message that can't encode at all.
+            Some(pipeline) => {
+                pipeline
+                    .encode(&body.message, None)
+                    .await
+                    .map_err(|error| ControlApiError::SendEncode(error.to_string()))?;
+                serde_json::to_vec(&body.message).expect("JSON values serialize")
+            }
+            None => crate::ws::encode_text(&body.message).into_bytes(),
+        },
         Some(method) => crate::grpc::encode_response(route, method, body.message)
             .map_err(ControlApiError::SendMessage)?,
     };
@@ -341,7 +356,12 @@ fn live_call<'c, B: DeserializeOwned>(
         });
     };
     let (method, output) = if let RouteMatch::Ws(_) = route.route_match {
-        (None, crate::ws::OUTPUT.to_owned())
+        // A Route with a Pipeline sends JSON that each connection encodes (`ws:json`).
+        let output = match route.pipeline {
+            Some(_) => crate::ws::OUTPUT_PIPELINE,
+            None => crate::ws::OUTPUT,
+        };
+        (None, output.to_owned())
     } else {
         let Some(method) = send_method(catalog, route) else {
             return Err(ControlApiError::NotLongLived {

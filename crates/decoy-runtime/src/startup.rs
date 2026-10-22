@@ -107,7 +107,7 @@ pub fn load_catalog_from_files(
         let input = fs::read_to_string(&route_path).map_err(|error| {
             StartupError::new(StartupDiagnosticKind::Io, &route_path, error.to_string())
         })?;
-        let route = decode_route(&route_path, &input)?;
+        let route = decode_route(&route_path, &input, &runtime)?;
         crate::grpc::schema::check_route(&route, &runtime.protos).map_err(|reason| {
             StartupError::new(StartupDiagnosticKind::Schema, &route_path, reason)
         })?;
@@ -247,18 +247,42 @@ fn normalize_for_sort(routes_dir: &Path, path: &Path) -> String {
         .join("/")
 }
 
-fn decode_route(path: &Path, input: &str) -> Result<Route, StartupError> {
+fn decode_route(path: &Path, input: &str, runtime: &RuntimeConfig) -> Result<Route, StartupError> {
     parse_yaml(path, input)?;
     // Decode from text, not the parsed value, so schema errors keep their line.
-    let route = serde_norway::from_str::<Route>(input).map_err(|error| {
+    let mut route = serde_norway::from_str::<Route>(input).map_err(|error| {
         StartupError::with_source(
             StartupDiagnosticKind::Schema,
             source_from_yaml_error(path, &error),
             format!("failed to decode route schema: {error}"),
         )
     })?;
+    route.resolve_pipeline(&runtime.pipelines);
     route.validate().map_err(|error| route_error(path, error))?;
+    check_plugin_steps(&route, &runtime.plugins)
+        .map_err(|reason| StartupError::new(StartupDiagnosticKind::Schema, path, reason))?;
     Ok(route)
+}
+
+/// Each plugin step names a running plugin and one of the steps it listed in `ready`.
+fn check_plugin_steps(route: &Route, plugins: &crate::plugins::Plugins) -> Result<(), String> {
+    for (key, step) in route.plugin_steps() {
+        let Some(plugin) = plugins.get(key) else {
+            return Err(format!(
+                "route `{}` uses step `{key}/{step}`, but there is no `plugins:` entry `{key}`",
+                route.id
+            ));
+        };
+        if !plugin.has_step(step) {
+            return Err(format!(
+                "route `{}` uses step `{key}/{step}`, but plugin `{}` serves only: {}",
+                route.id,
+                plugin.label(),
+                plugin.steps.join(", ")
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn decode_collections(path: &Path, input: &str) -> Result<Vec<Collection>, StartupError> {
