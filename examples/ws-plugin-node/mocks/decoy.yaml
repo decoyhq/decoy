@@ -1,0 +1,18 @@
+routes: routes
+collections: collections.yaml
+port: 8095 # WebSocket upgrades and the Control API share this port
+
+protos:
+  roots: [../proto] # plugins reach these through ctx.protobuf; they load no .proto files
+
+plugins:
+  # Each entry is one process, started with Decoy. Its key namespaces its steps: `env/envelope`.
+  env:
+    command: node ../plugins/typed-envelope.ts # the file calls definePlugin, which serves
+  rpc:
+    command: node ../plugins/binary-rpc.ts
+    timeout: 2s
+
+pipelines:
+  approvals-ws: [env/envelope]
+  rpc: [rpc/frame]

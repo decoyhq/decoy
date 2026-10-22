@@ -296,6 +296,51 @@ importers:
         specifier: 'catalog:'
         version: 24.19.2
 
+  examples/ws-plugin-node:
+    dependencies:
+      '@acme/decoy-plugin-binary-rpc':
+        specifier: workspace:*
+        version: link:acme/decoy-plugin-binary-rpc
+      '@acme/decoy-plugin-typed-envelope':
+        specifier: workspace:*
+        version: link:acme/decoy-plugin-typed-envelope
+      '@decoyhq/plugin':
+        specifier: workspace:*
+        version: link:../../packages/plugin
+    devDependencies:
+      '@msgpack/msgpack':
+        specifier: ^3.1.2
+        version: 3.1.3
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.19.2
+      protobufjs:
+        specifier: ^7.6.0
+        version: 7.6.6
+
+  examples/ws-plugin-node/acme/decoy-plugin-binary-rpc:
+    dependencies:
+      '@decoyhq/plugin':
+        specifier: workspace:*
+        version: link:../../../../packages/plugin
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.19.2
+
+  examples/ws-plugin-node/acme/decoy-plugin-typed-envelope:
+    dependencies:
+      '@decoyhq/plugin':
+        specifier: workspace:*
+        version: link:../../../../packages/plugin
+      '@msgpack/msgpack':
+        specifier: ^3.1.2
+        version: 3.1.3
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.19.2
+
   packages/cli:
     devDependencies:
       '@types/node':
