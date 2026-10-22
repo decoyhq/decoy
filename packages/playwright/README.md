@@ -19,6 +19,7 @@ export default defineConfig<DecoyTestOptions>({
       url: 'http://127.0.0.1:8080',
       command: 'decoy serve',
       urls: '**/api/**', // browser requests sent to Decoy
+      webSocketUrls: '**/live', // page WebSockets bridged to Decoy
       collection: 'happy-path', // each test's Session starts here
     },
   },
@@ -31,6 +32,12 @@ test('empty state', async ({ page, decoy }) => {
   await decoy.useCollection('empty')
   await decoy.useRoute('users-by-id:user-123:missing') // or ('users-by-id', 'user-123', 'missing')
   await decoy.reset()
+})
+
+test('server push', async ({ page, decoy }) => {
+  await page.goto('/live.html')
+  const live = await decoy.connection('friend-socket', { timeout: 5000 }) // the page's socket
+  await live.send({ type: 'notice', text: 'hello' })
 })
 ```
 
@@ -56,5 +63,12 @@ base yourself: `base.extend<DecoyFixtures>(createDecoyFixtures())`.
   browser as-is (Set-Cookie included, for the page's origin; forwarding keeps no cookies of its
   own); if Decoy is unreachable the request is aborted, never sent to the real network.
   Other requests continue normally.
+- With `webSocketUrls` (Playwright 1.48+), every matching page WebSocket is bridged to Decoy at the
+  same path and query, with `x-mock-session` set on the upgrade. Frames pass both ways and a close
+  on either side closes the other. The real server is never contacted; if Decoy is unreachable the
+  page socket is closed.
+- `decoy.connection(routeId, { timeout })` waits until this test's Session has a live connection on
+  the Route; its `.send(message)` pushes to that Session's connections only. Call `connection`
+  again after a reconnect.
 - Only the fixture's `context` (and its `page`) is routed. A context you create yourself with
   `browser.newContext()` is not: its requests skip Decoy and carry no Session.

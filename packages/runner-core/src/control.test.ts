@@ -85,6 +85,43 @@ describe('createRouter', () => {
     await expect(createRouter(decoy.url, 's').reset()).rejects.toThrow('reset failed (500): boom')
   })
 
+  test('connection waits for a live connection on the Route, then sends to it', async () => {
+    const decoy = await fake()
+    const live = await createRouter(decoy.url, 's').connection('friend-socket', { timeout: 300 })
+    await live.send({ type: 'update', count: 5 })
+
+    expect(live.route).toBe('friend-socket')
+    expect(decoy.calls).toEqual([
+      {
+        path: '/__decoy__/control/wait',
+        session: 's',
+        body: '{"route":"friend-socket","connected":true,"timeout":300}',
+      },
+      {
+        path: '/__decoy__/control/send',
+        session: 's',
+        body: '{"route":"friend-socket","message":{"type":"update","count":5}}',
+      },
+    ])
+  })
+
+  test('connection rejects when no connection opens in time', async () => {
+    const decoy = await fake(() => ({ status: 408, body: '{"error":"timed out"}' }))
+    await expect(createRouter(decoy.url, 's').connection('friend-socket')).rejects.toThrow(
+      'Decoy wait failed (408): timed out',
+    )
+  })
+
+  test('connection keeps waiting past the call timeout when asked to wait longer', async () => {
+    const decoy = await fake(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      return { status: 200, body: '{"connections":1}' }
+    })
+    const router = createRouter(decoy.url, 's', 50)
+
+    await expect(router.connection('r', { timeout: 200 })).resolves.toMatchObject({ route: 'r' })
+  })
+
   test('gives up on a Decoy that never answers, naming the verb and url', async () => {
     const server = createServer(() => undefined)
     await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))

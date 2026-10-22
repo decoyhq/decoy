@@ -14,6 +14,7 @@ import {
 } from '@decoyhq/runner-core'
 import type { DecoyOptions } from './options'
 import { fetchWithoutCookies, routeToDecoy } from './routing'
+import { routeWebSocketsToDecoy } from './websocket'
 
 /** Option fixtures, for typing config: `defineConfig<DecoyTestOptions>({ use: { decoyOptions } })`. */
 export interface DecoyTestOptions {
@@ -36,7 +37,8 @@ export interface DecoyFixtures extends DecoyTestOptions {
  * ```
  *
  * When `decoyOptions.urls` is set, every test's browser context routes matching requests to Decoy
- * under the test's Session, whether or not the test asks for `decoy`. Fixtures never start Decoy;
+ * under the test's Session, whether or not the test asks for `decoy`; `decoyOptions.webSocketUrls`
+ * does the same for page WebSockets. Fixtures never start Decoy;
  * use `setup` as global setup or start it yourself.
  */
 export function createDecoyFixtures(): Fixtures<
@@ -48,10 +50,16 @@ export function createDecoyFixtures(): Fixtures<
   return {
     decoyOptions: [undefined, { option: true }],
     context: async ({ context, decoyOptions }, use, testInfo) => {
-      if (decoyOptions?.urls !== undefined) {
+      const { urls, webSocketUrls } = decoyOptions ?? {}
+      if (decoyOptions && (urls !== undefined || webSocketUrls !== undefined)) {
         const { url } = resolveServerOptions(decoyOptions)
-        const router = await decoySession(decoyOptions, testInfo)
-        await routeToDecoy(context, fetchWithoutCookies, url, decoyOptions.urls, router.sessionId)
+        const { sessionId } = await decoySession(decoyOptions, testInfo)
+        if (urls !== undefined) {
+          await routeToDecoy(context, fetchWithoutCookies, url, urls, sessionId)
+        }
+        if (webSocketUrls !== undefined) {
+          await routeWebSocketsToDecoy(context, url, webSocketUrls, sessionId)
+        }
       }
       await use(context)
       await endDecoySession(testInfo)

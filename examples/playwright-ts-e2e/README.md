@@ -15,7 +15,8 @@ What happens:
    (failing if the port is taken), then Decoy with `cargo run -p decoy -- serve --config
 mocks/decoy.yaml` (port 8080), or reuses one already running locally.
 3. Each test gets its own Decoy Session on the `happy-path` Collection. Browser requests matching
-   `**/api/**` go to Decoy; nothing reaches a real backend.
+   `**/api/**` and the `/live` page's WebSocket (`**/live`) go to Decoy; nothing reaches a real
+   backend.
 
 | Test                                             | Proves                                                                                                                                                                                                               |
 | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -26,3 +27,7 @@ mocks/decoy.yaml` (port 8080), or reuses one already running locally.
 | `passthrough.spec.ts` › Passthrough              | **Load profile** hits `/api/profile`; its Behavior is `kind: passthrough` (`mocks/routes/profile.yaml`), so Decoy forwards it to the local upstream and the page shows the upstream's answer.                        |
 | `isolation.spec.ts` › Sessions                   | One test switches its Session to `no-users`; the next test, in a fresh context with a different Session id, still sees `Ada Lovelace`. All spec files also run in parallel (`fullyParallel`) against the same Decoy. |
 | `templating.spec.ts` › templated fallback        | **Load second user** hits `/api/users/2`; no Case is specific to it, so the `any` Case's templated Behavior answers `User 2` from `${ pathParams.id }`.                                                              |
+| `websocket.spec.ts` › on: connect                | Opening `/live.html` opens a socket bridged to Decoy; the `friend-socket` Route's `on: connect` Case sends `welcome`, shown as `Connected`.                                                                          |
+| `websocket.spec.ts` › reply                      | **Ask status** sends `{ type: get-status }`; Decoy replies `Friend: online`.                                                                                                                                         |
+| `websocket.spec.ts` › useRoute                   | `decoy.useRoute('friend-socket:status:offline')` on the open socket changes the next reply to `Friend: offline`.                                                                                                     |
+| `websocket.spec.ts` › send                       | Two tests run in parallel; each calls `decoy.connection('friend-socket')` and `send`s its own notice, and each page shows only its own.                                                                              |

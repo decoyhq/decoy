@@ -19,6 +19,7 @@ export default defineConfig<DecoyTestOptions>({
       // DECOY_BINARY_PATH: a prebuilt `decoy` (as in CI); otherwise build and run it with cargo.
       command: `${process.env.DECOY_BINARY_PATH ? JSON.stringify(process.env.DECOY_BINARY_PATH) : 'cargo run --quiet -p decoy --'} serve --config mocks/decoy.yaml`,
       urls: '**/api/**',
+      webSocketUrls: '**/live', // the page's socket, bridged to Decoy under the test's Session
       collection: 'happy-path',
       // The first run compiles the decoy binary.
       timeout: 180_000,

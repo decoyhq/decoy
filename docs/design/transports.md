@@ -327,7 +327,8 @@ test('shows connecting until the friend service says ping', async ({ page, decoy
   await page.goto('/')
   await expect(page.getByText('Friend: connecting…')).toBeVisible()
 
-  await decoy.connection('friend-socket').send('ping') // only the friend socket gets it
+  const friend = await decoy.connection('friend-socket')
+  await friend.send('ping') // only the friend socket gets it
   await expect(page.getByText('Friend: online')).toBeVisible()
   await expect(page.getByText('Best friend: connecting…')).toBeVisible()
 })
@@ -546,7 +547,7 @@ s-1 socket: open → hello:ping → "ping" · { id: 1, type: get-status } → st
 s-2 socket: open → hello:ping → "ping" · { id: 1, type: get-status } → status:offline → offline
 ```
 
-`send` is scoped the same way: `decoy.connection('friend-socket').send(...)` in worker 2 reaches only
+`send` is scoped the same way: `(await decoy.connection('friend-socket')).send(...)` in worker 2 reaches only
 the s-2 socket.
 
 ## 11. Open questions

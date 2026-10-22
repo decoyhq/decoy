@@ -7,6 +7,11 @@ export interface DecoyOptions extends ServerOptions {
    * Matching requests always go to Decoy; everything else continues normally.
    */
   urls?: string | RegExp | ReadonlyArray<string | RegExp>
+  /**
+   * Page WebSocket URL patterns (Playwright `context.routeWebSocket` globs or RegExps) to bridge to
+   * Decoy. Matching sockets connect to Decoy only, never to the real server.
+   */
+  webSocketUrls?: string | RegExp | ReadonlyArray<string | RegExp>
   /** Collection each test's Session starts on, applied before any routed request. */
   collection?: string
 }

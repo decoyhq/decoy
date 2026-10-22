@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Decoy Playwright E2E: live</title>
+  </head>
+  <body>
+    <h1>Friend</h1>
+    <button id="ask-status" type="button">Ask status</button>
+    <p id="status" role="status">Connecting…</p>
+    <ul id="notices" aria-label="Notices"></ul>
+    <script type="module">
+      const status = document.querySelector('#status')
+      const notices = document.querySelector('#notices')
+      // A plain socket to the app's own origin; under test it is bridged to Decoy.
+      const socket = new WebSocket(`ws://${location.host}/live`)
+
+      socket.addEventListener('message', ({ data }) => {
+        const message = JSON.parse(data)
+        if (message.type === 'welcome') {
+          status.textContent = 'Connected'
+        } else if (message.type === 'status') {
+          status.textContent = `Friend: ${message.status}`
+        } else if (message.type === 'notice') {
+          notices.append(Object.assign(document.createElement('li'), { textContent: message.text }))
+        }
+      })
+      socket.addEventListener('close', () => {
+        status.textContent = 'Disconnected'
+      })
+      document.querySelector('#ask-status').addEventListener('click', () => {
+        socket.send(JSON.stringify({ type: 'get-status' }))
+      })
+    </script>
+  </body>
+</html>
