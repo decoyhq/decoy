@@ -60,8 +60,21 @@ impl RequestEnvelope {
         path: &str,
         path_params: &BTreeMap<String, String>,
     ) -> Value {
-        let query: serde_json::Map<String, Value> = self
-            .query
+        json!({
+            "method": method,
+            "url": self.url,
+            "path": path,
+            "pathParams": path_params,
+            "query": self.query_json(),
+            "headers": self.headers,
+            "cookies": self.cookies,
+            "body": self.body(),
+        })
+    }
+
+    /// `query` as predicates see it: a string, or an array when the key repeats.
+    pub(crate) fn query_json(&self) -> Value {
+        self.query
             .iter()
             .map(|(key, values)| {
                 let value = match values.as_slice() {
@@ -70,17 +83,8 @@ impl RequestEnvelope {
                 };
                 (key.clone(), value)
             })
-            .collect();
-        json!({
-            "method": method,
-            "url": self.url,
-            "path": path,
-            "pathParams": path_params,
-            "query": query,
-            "headers": self.headers,
-            "cookies": self.cookies,
-            "body": self.body(),
-        })
+            .collect::<serde_json::Map<_, _>>()
+            .into()
     }
 
     pub fn from_parts(

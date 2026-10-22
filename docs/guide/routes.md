@@ -10,7 +10,7 @@ interaction happens. Its **Cases** say _which request shape_ matched, and each C
 
 ```yaml
 id: users-by-id # stable id; no ':' allowed
-transport: http # the only transport today
+transport: http # or grpc (gRPC guide), ws (WebSocket guide)
 match:
   method: GET # GET POST PUT PATCH DELETE HEAD OPTIONS
   path: /api/users/{id} # {name} captures one whole path segment; /files/{name}.json fails startup

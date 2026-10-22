@@ -290,6 +290,12 @@ importers:
         specifier: 'catalog:'
         version: 24.19.2
 
+  examples/ws-node:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.19.2
+
   packages/cli:
     devDependencies:
       '@types/node':

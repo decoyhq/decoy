@@ -27,10 +27,15 @@ impl Catalog {
         collections: CollectionsFile,
         runtime: RuntimeConfig,
     ) -> Result<Self, CatalogError> {
-        for route in &routes {
+        for (index, route) in routes.iter().enumerate() {
             route.validate()?;
             crate::grpc::schema::check_route(route, &runtime.protos)
                 .map_err(|reason| CatalogError::GrpcRoute { reason })?;
+            if let Some(other) = crate::ws::schema::find_tie(&routes[..index], route) {
+                return Err(CatalogError::WsRoute {
+                    reason: crate::ws::schema::tie_error(route, other),
+                });
+            }
         }
         Self::from_checked(routes, collections, runtime)
     }
@@ -182,6 +187,9 @@ pub enum CatalogError {
     /// A gRPC Route that doesn't fit the loaded protos.
     #[error("{reason}")]
     GrpcRoute { reason: String },
+    /// WebSocket Routes that tie on an upgrade (Q12).
+    #[error("{reason}")]
+    WsRoute { reason: String },
     #[error(transparent)]
     Collection(#[from] CollectionError),
 }

@@ -79,6 +79,11 @@ pub fn validate_response(response: &ResponseBehavior, decoded: bool) -> Result<(
     if response.body.is_some() || !response.headers.is_empty() {
         return Err("gRPC Behaviors use `message` and `metadata`, not `body` and `headers`".into());
     }
+    if response.messages.is_some() || response.close.is_some() {
+        return Err(
+            "`messages` and `close` are for WebSocket Routes; gRPC streams use `stream`".into(),
+        );
+    }
     match &response.status {
         None => {}
         Some(Value::String(text)) if text.contains("${") => validate_string(text)?,

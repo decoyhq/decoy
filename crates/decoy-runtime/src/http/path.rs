@@ -21,7 +21,7 @@ pub(crate) fn template_params(pattern: &str) -> Result<Vec<&str>, String> {
     Ok(params)
 }
 
-pub(super) fn match_path(pattern: &str, actual: &str) -> Option<BTreeMap<String, String>> {
+pub(crate) fn match_path(pattern: &str, actual: &str) -> Option<BTreeMap<String, String>> {
     let pattern_parts = split_path(pattern);
     let actual_parts = split_path(actual);
 
@@ -48,7 +48,7 @@ pub(super) fn match_path(pattern: &str, actual: &str) -> Option<BTreeMap<String,
     Some(params)
 }
 
-fn split_path(path: &str) -> Vec<&str> {
+pub(crate) fn split_path(path: &str) -> Vec<&str> {
     path.trim_matches('/')
         .split('/')
         .filter(|part| !part.is_empty())

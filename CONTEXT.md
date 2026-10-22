@@ -31,7 +31,8 @@ precision is more important than beginner UX.
 
 **Behavior**:
 A named action/outcome inside a **Case**. A Behavior may be a static HTTP response, explicit
-Passthrough, and later a flow, WebSocket send/script, file response, or replay behavior. Behaviors
+Passthrough, a gRPC reply, a WebSocket reply (`message`/`messages`, optional `close`), and later a
+flow, file response, or replay behavior. Behaviors
 have a canonical `kind`; simple HTTP responses may infer `kind: response`.
 _Avoid_: "variant" (retired/provisional), "response" (a Behavior is addressable and may not be a
 plain response), "mock".

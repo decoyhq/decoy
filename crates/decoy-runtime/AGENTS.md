@@ -8,7 +8,7 @@ The layout below is the target; code still in flat files moves there in behaviou
 | layer            | path                                                                               | owns                                                                  |
 | ---------------- | ---------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | core             | `engine/`                                                                          | Catalog, Session, Selection, Controller, SessionView                  |
-| transport        | `http/`, `grpc/` (later `ws/`, `sse/`)                                             | resolve (pure), execute (I/O shell), wire codec                       |
+| transport        | `http/`, `grpc/`, `ws/` (later `sse/`)                                             | resolve (pure), execute (I/O shell), wire codec                       |
 | outbound adapter | `http/forward.rs`                                                                  | passthrough to a real upstream                                        |
 | inbound adapter  | `server/`, `control_api.rs`                                                        | axum ingress, lifecycle, reload, Control API dispatch                 |
 | load and model   | `schema`, `config`, `startup`, `collections`, `matching`, `expression`, `template` | decoy.yaml, Route files, Cases, JMESPath                              |

@@ -1,0 +1,11 @@
+id: best-friend-socket
+transport: ws
+match:
+  path: /subscribe
+  query: { service: my-best-friend-service }
+cases:
+  hello:
+    on: connect
+    behaviors:
+      ping: { message: ping }
+      silent: { messages: [] }

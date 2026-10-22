@@ -4,6 +4,7 @@ mod ingress;
 mod listen;
 mod reload;
 mod response;
+mod ws;
 
 use std::pin::Pin;
 use std::sync::Arc;
@@ -205,6 +206,8 @@ impl Server {
             while let Some(result) = servers.join_next().await {
                 result??;
             }
+            // Upgraded sockets run outside the servers; let them finish their close handshake.
+            connections.all_ended().await;
             Ok::<_, ServeError>(())
         })
         .await;

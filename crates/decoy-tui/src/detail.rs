@@ -27,7 +27,7 @@ pub fn lines(record: &RequestEvent, theme: &Theme) -> Vec<Line<'static>> {
     out.field("url", &record.url);
     out.field("session", &record.session);
     out.headers(record.headers.iter());
-    out.body(&record.body);
+    out.body(&record.body, &record.transport);
 
     out.blank();
     out.heading("Match");
@@ -76,7 +76,7 @@ pub fn lines(record: &RequestEvent, theme: &Theme) -> Vec<Line<'static>> {
             .iter()
             .map(|(name, value)| (name, value)),
     );
-    out.body(&record.response.body);
+    out.body(&record.response.body, &record.transport);
 
     out.blank();
     out.heading("Timing");
@@ -89,6 +89,7 @@ fn transport(transport: &Transport) -> &'static str {
     match transport {
         Transport::Http => "http",
         Transport::Grpc => "grpc",
+        Transport::Ws => "ws",
     }
 }
 
@@ -141,11 +142,12 @@ impl Out<'_> {
         }
     }
 
-    fn body(&mut self, body: &CapturedBody) {
-        self.text(if body.decoded {
-            "  body (protobuf as JSON)".to_owned()
-        } else {
-            "  body".to_owned()
+    fn body(&mut self, body: &CapturedBody, transport: &Transport) {
+        self.text(match (body.decoded, transport) {
+            (false, _) => "  body".to_owned(),
+            // An inbound JSON message, or the list of text frames a reply sent.
+            (true, Transport::Ws) => "  body (JSON)".to_owned(),
+            (true, _) => "  body (protobuf as JSON)".to_owned(),
         });
         for line in body_lines(body) {
             self.text(format!("    {line}"));
@@ -473,6 +475,18 @@ mod snapshots {
         record.body = CapturedBody::decoded(&json!({ "id": "a-1" }));
         record.response.status = 0;
         record.response.body = CapturedBody::decoded(&json!({ "id": "a-1", "state": "APPROVED" }));
+        insta::assert_snapshot!(text(&record));
+    }
+
+    #[test]
+    fn a_websocket_message_and_its_reply_frames() {
+        let mut record = base(46, Outcome::Hit(matched("friend-socket:status:online")));
+        record.transport = Transport::Ws;
+        record.method = "WS".into();
+        record.url = "/subscribe?service=friend".into();
+        record.body = CapturedBody::decoded(&json!({ "id": 7, "type": "get-status" }));
+        record.response.status = 101;
+        record.response.body = CapturedBody::decoded(&json!([r#"{"id":7,"status":"online"}"#]));
         insta::assert_snapshot!(text(&record));
     }
 

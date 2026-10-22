@@ -213,24 +213,24 @@ async fn try_send(
     let Some(route) = catalog.route(&body.route) else {
         return Err(ControlApiError::SendUnknownRoute { route: body.route });
     };
-    let Some(method) = send_method(catalog, route) else {
-        return Err(ControlApiError::SendNotLongLived { route: body.route });
-    };
     // Encoded here, against the current Catalog, so a bad message fails the call instead of the
     // client's stream, and streams opened before a reload write exactly these bytes.
-    let message = crate::grpc::encode_response(route, &method, body.message)
-        .map_err(ControlApiError::SendMessage)?;
+    let (output, message) = if let RouteMatch::Ws(_) = route.route_match {
+        let text = crate::ws::encode_text(&body.message);
+        (crate::ws::OUTPUT.to_owned(), text.into_bytes())
+    } else {
+        let Some(method) = send_method(catalog, route) else {
+            return Err(ControlApiError::SendNotLongLived { route: body.route });
+        };
+        let message = crate::grpc::encode_response(route, &method, body.message)
+            .map_err(ControlApiError::SendMessage)?;
+        (method.output().full_name().to_owned(), message)
+    };
     let timeout = body
         .timeout
         .map_or(DEFAULT_SEND_TIMEOUT, Duration::from_millis);
     connections
-        .send(
-            &session,
-            &body.route,
-            method.output().full_name(),
-            message,
-            timeout,
-        )
+        .send(&session, &body.route, &output, message, timeout)
         .await
         .map_err(|error| match error {
             SendError::Timeout => ControlApiError::SendTimeout {
@@ -242,8 +242,7 @@ async fn try_send(
         })
 }
 
-/// The method of a Route that holds long-lived connections: server-streaming gRPC so far;
-/// WebSocket and SSE come with #218.
+/// The method of a server-streaming gRPC Route; WebSocket Routes need none, SSE comes with #218.
 fn send_method(catalog: &Catalog, route: &Route) -> Option<prost_reflect::MethodDescriptor> {
     let RouteMatch::Grpc(address) = &route.route_match else {
         return None;

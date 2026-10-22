@@ -9,7 +9,8 @@
 7. [Playwright](playwright.md)
 8. [Testplane](testplane.md)
 9. [gRPC](grpc.md)
-10. [TLS](tls.md)
-11. [Terminal UI](tui.md)
+10. [WebSocket](websocket.md)
+11. [TLS](tls.md)
+12. [Terminal UI](tui.md)
 
 Terms follow the glossary in [`CONTEXT.md`](../../CONTEXT.md).

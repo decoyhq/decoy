@@ -40,8 +40,8 @@ curl -X POST localhost:8080/__decoy__/control/useRoute \
 
 ## send
 
-`POST /__decoy__/control/send` pushes a message to the live connections of a Route: today the open
-[server-streaming gRPC calls](grpc.md#server-streaming).
+`POST /__decoy__/control/send` pushes a message to the live connections of a Route: open
+[server-streaming gRPC calls](grpc.md#server-streaming) and [WebSocket](websocket.md) sockets.
 
 ```sh
 curl -X POST localhost:8080/__decoy__/control/send \
@@ -50,8 +50,9 @@ curl -X POST localhost:8080/__decoy__/control/send \
   -d '{"route":"approvals-watch","message":{"id":"a-1","state":"APPROVED"},"timeout":2000}'
 ```
 
-- `message` is the response message as protobuf JSON; it goes through the Route's Pipeline. One
-  that doesn't fit the method's output type gets `400` with the reason, and nothing is sent.
+- gRPC: `message` is the response message as protobuf JSON; it goes through the Route's Pipeline.
+  One that doesn't fit the method's output type gets `400` with the reason, and nothing is sent.
+- WebSocket: a string `message` goes out as-is, anything else as JSON text.
 - Only connections opened in the same Session (`x-mock-session`) get it.
 - With no live connection yet, `send` waits for one up to `timeout` milliseconds (default `5000`).
 - Each connection queues up to 64 unread messages. A connection whose queue is full skips the

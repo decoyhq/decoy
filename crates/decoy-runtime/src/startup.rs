@@ -123,6 +123,13 @@ pub fn load_catalog_from_files(
                 ),
             ));
         }
+        if let Some(other) = crate::ws::schema::find_tie(&routes, &route) {
+            return Err(StartupError::new(
+                StartupDiagnosticKind::Schema,
+                &route_path,
+                crate::ws::schema::tie_error(&route, other),
+            ));
+        }
         routes.push(route);
     }
 

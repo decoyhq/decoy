@@ -1,0 +1,14 @@
+- id: happy-path # both sockets say ping when they open
+  routes:
+    - friend-socket:hello:ping
+    - friend-socket:status:online
+    - friend-socket:subscribe:updates
+    - friend-socket:bye:close
+    - friend-socket:noise:quiet
+    - best-friend-socket:hello:ping
+
+- id: manual-start # sockets open and wait; the test sends ping
+  from: happy-path
+  routes:
+    - friend-socket:hello:silent
+    - best-friend-socket:hello:silent

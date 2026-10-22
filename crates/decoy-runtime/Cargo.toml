@@ -8,7 +8,7 @@ repository.workspace = true
 publish = false
 
 [dependencies]
-axum = { version = "0.8", features = ["http2"] }
+axum = { version = "0.8", features = ["http2", "ws"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 # `ring` is installed as the default provider in `http_forward`, so the binary carries one crypto library.
