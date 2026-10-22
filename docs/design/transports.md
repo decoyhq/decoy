@@ -444,8 +444,8 @@ content-type: application/json
   is the `data` and the body may add `event`, `id` and `retry`, as in a `messages` item.
 - **Response:** `200 { "delivered": <n> }`. `404` for an unknown Route, `409` for a Route that isn't
   ws/sse/streaming gRPC.
-- **No live connection:** the call waits for one up to `timeout` (milliseconds, default 5000), then
-  delivers. On timeout it fails with `408`: something is wrong with the test or app (**Q5**).
+- **No live connection:** the call waits for one up to `timeout` (milliseconds, default 5000,
+  capped at 5 minutes), then delivers. On timeout it fails with `408`: something is wrong with the test or app (**Q5**).
 - **Slow reader:** each connection queues up to 64 unread messages. One whose queue is full skips
   the message and doesn't count in `delivered`; with every one full, `send` waits as above.
 

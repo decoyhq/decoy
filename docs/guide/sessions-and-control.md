@@ -54,7 +54,8 @@ curl -X POST localhost:8080/__decoy__/control/send \
   One that doesn't fit the method's output type gets `400` with the reason, and nothing is sent.
 - WebSocket: a string `message` goes out as-is, anything else as JSON text.
 - Only connections opened in the same Session (`x-mock-session`) get it.
-- With no live connection yet, `send` waits for one up to `timeout` milliseconds (default `5000`).
+- With no live connection yet, `send` waits for one up to `timeout` milliseconds (default `5000`,
+  at most 5 minutes: a longer `timeout` is cut to that).
 - Each connection queues up to 64 unread messages. A connection whose queue is full skips the
   message and doesn't count in `delivered`; if every one is full, `send` waits as above.
 - After a [reload](config.md#reloading), `message` is encoded with the current output type, also for
@@ -89,7 +90,7 @@ curl -X POST localhost:8080/__decoy__/control/wait \
   can reach: a WebSocket socket always counts; a gRPC stream counts only while it stays open for
   `send` (its Case has no `status`) and was opened with the Route's current output type. A finite
   scripted stream (its Case ends with a `status`) is never registered, so `wait` answers `408`.
-- It waits up to `timeout` milliseconds (default `5000`).
+- It waits up to `timeout` milliseconds (default `5000`, at most 5 minutes).
 - `connected: true` is the only condition so far.
 
 | status | when                                                                      |

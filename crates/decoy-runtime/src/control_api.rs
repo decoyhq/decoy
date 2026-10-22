@@ -23,6 +23,9 @@ pub const SEND_PATH: &str = "/__decoy__/control/send";
 pub const WAIT_PATH: &str = "/__decoy__/control/wait";
 /// How long `send` and `wait` wait for a live connection when the body sets no `timeout` (Q5).
 pub const DEFAULT_LIVE_TIMEOUT: Duration = Duration::from_secs(5);
+/// The longest `send` and `wait` wait; a longer `timeout` is cut to it. A test stuck that long is
+/// broken anyway, and the cap keeps the deadline far inside what an `Instant` holds.
+pub const MAX_LIVE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControlApiRequest {
@@ -247,9 +250,7 @@ async fn try_send(
         Some(method) => crate::grpc::encode_response(route, method, body.message)
             .map_err(ControlApiError::SendMessage)?,
     };
-    let timeout = body
-        .timeout
-        .map_or(DEFAULT_LIVE_TIMEOUT, Duration::from_millis);
+    let timeout = live_timeout(body.timeout);
     connections
         .send(&session, &body.route, &output, message, timeout)
         .await
@@ -295,9 +296,7 @@ async fn try_wait(
         }
         Ok(&body.route)
     })?;
-    let timeout = body
-        .timeout
-        .map_or(DEFAULT_LIVE_TIMEOUT, Duration::from_millis);
+    let timeout = live_timeout(body.timeout);
     connections
         .wait_connected(&session, &body.route, &output, timeout)
         .await
@@ -370,6 +369,13 @@ fn send_method(catalog: &Catalog, route: &Route) -> Option<prost_reflect::Method
     find_method(&catalog.runtime().protos, &address.service, &address.method)
         .ok()
         .filter(|method| method.is_server_streaming())
+}
+
+/// The body's `timeout` in milliseconds, capped at [`MAX_LIVE_TIMEOUT`].
+fn live_timeout(ms: Option<u64>) -> Duration {
+    ms.map_or(DEFAULT_LIVE_TIMEOUT, |ms| {
+        Duration::from_millis(ms).min(MAX_LIVE_TIMEOUT)
+    })
 }
 
 pub fn try_handle_control_request(
@@ -478,6 +484,13 @@ pub fn session_id(headers: &BTreeMap<String, String>) -> String {
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
+
+    #[test]
+    fn live_timeouts_default_to_5s_and_cap_at_5min() {
+        assert_eq!(live_timeout(None), Duration::from_secs(5));
+        assert_eq!(live_timeout(Some(2000)), Duration::from_secs(2));
+        assert_eq!(live_timeout(Some(u64::MAX)), Duration::from_secs(300));
+    }
 
     use super::*;
     use crate::collections::CollectionsFile;
