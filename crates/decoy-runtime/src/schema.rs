@@ -834,6 +834,44 @@ cases:
         );
     }
 
+    /// Pins today's split: gRPC streams use `stream`. When `stream` becomes `messages` (Q11),
+    /// this test must change with it.
+    #[test]
+    fn grpc_and_http_behaviors_reject_websocket_fields() {
+        let error = |transport: &str, address: &str, behavior: &str| {
+            Route::from_yaml(&format!(
+                "id: r\ntransport: {transport}\nmatch: {address}\ncases:\n  any:\n    behaviors:\n      b: {behavior}\n"
+            ))
+            .unwrap_err()
+            .to_string()
+        };
+        let grpc = |behavior| {
+            error(
+                "grpc",
+                "{ service: approvals.v1.Approvals, method: WatchApprovals }",
+                behavior,
+            )
+        };
+        let http = |behavior| error("http", "{ method: GET, path: /r }", behavior);
+        for behavior in [
+            "{ messages: [{ message: { id: a-1 } }] }",
+            "{ close: { code: 4001 } }",
+        ] {
+            let error = grpc(behavior);
+            assert!(
+                error.contains(
+                    "`messages` and `close` are for WebSocket Routes; gRPC streams use `stream`"
+                ),
+                "{error}"
+            );
+            let error = http(behavior);
+            assert!(
+                error.contains("`messages` and `close` are for WebSocket Routes"),
+                "{error}"
+            );
+        }
+    }
+
     #[test]
     fn parses_a_stream_list_with_per_message_delays() {
         let route = Route::from_yaml(
