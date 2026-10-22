@@ -1,5 +1,6 @@
 import type { DecoyTestOptions } from '@decoyhq/playwright'
 import { defineConfig, devices } from '@playwright/test'
+import { availableParallelism } from 'node:os'
 
 export default defineConfig<DecoyTestOptions>({
   testDir: './tests',
@@ -7,7 +8,7 @@ export default defineConfig<DecoyTestOptions>({
   // Spec files run concurrently against one Decoy runtime; each test's Session keeps it isolated.
   fullyParallel: true,
   // At least 2, so the WebSocket isolation tests can run at once (they fail otherwise).
-  workers: process.env.CI ? 2 : undefined,
+  workers: process.env.CI ? 2 : Math.max(2, Math.floor(availableParallelism() / 2)),
   forbidOnly: !!process.env.CI,
   reporter: process.env.CI ? 'list' : 'line',
   webServer: {
