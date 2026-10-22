@@ -26,7 +26,8 @@ pub mod ws;
 pub use collections::{Activation, Collection, CollectionRouteRef, CollectionsFile};
 pub use control_api::{
     CONTROL_PREFIX, ControlApiRequest, ControlApiResponse, DEFAULT_SESSION, SEND_PATH,
-    SESSION_HEADER, handle_control_request, handle_send_request, try_handle_control_request,
+    SESSION_HEADER, WAIT_PATH, handle_control_request, handle_send_request, handle_wait_request,
+    try_handle_control_request,
 };
 pub use engine::{
     Candidate, Catalog, ControlError, Controller, MissDiagnostic, Rejection, RouteOverrideSnapshot,

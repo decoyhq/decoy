@@ -1,5 +1,5 @@
 //! Live long-lived connections (WebSocket, SSE, streaming gRPC), so the Control API `send` can
-//! push messages to them (`docs/design/transports.md` §9).
+//! push messages to them and `wait` can wait for one (`docs/design/transports.md` §9).
 //!
 //! A transport registers each connection with the Session it opened with (§10) and reads the
 //! messages pushed to it from the returned receiver. `send` encodes each message through the Route's
@@ -102,13 +102,42 @@ impl Connections {
         timeout: Duration,
     ) -> Result<usize, SendError> {
         let address = (session.to_owned(), route.to_owned());
+        self.wait_for(timeout, || self.deliver(&address, output, &message))
+            .await
+    }
+
+    /// Waits up to `timeout` until `session` has a live connection of `route`, whatever output
+    /// type it opened with. Returns how many it has.
+    pub async fn wait_connected(
+        &self,
+        session: &str,
+        route: &str,
+        timeout: Duration,
+    ) -> Result<usize, SendError> {
+        let address = (session.to_owned(), route.to_owned());
+        self.wait_for(timeout, || {
+            let live = self.inner.live.lock().expect("connections lock");
+            if live.closed {
+                return Err(SendError::Closed);
+            }
+            Ok(live.by_address.get(&address).map_or(0, Vec::len))
+        })
+        .await
+    }
+
+    /// Runs `check` until it counts at least one connection, waking on each registration.
+    async fn wait_for(
+        &self,
+        timeout: Duration,
+        check: impl Fn() -> Result<usize, SendError>,
+    ) -> Result<usize, SendError> {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             // Listen before checking, so a registration between the check and the wait still wakes us.
             let registered = self.inner.registered.notified();
-            let delivered = self.deliver(&address, output, &message)?;
-            if delivered > 0 {
-                return Ok(delivered);
+            let found = check()?;
+            if found > 0 {
+                return Ok(found);
             }
             // A full queue frees up without a registration, so look again soon.
             let retry = deadline.min(tokio::time::Instant::now() + FULL_QUEUE_RETRY);
@@ -348,6 +377,44 @@ mod tests {
             Err(SendError::Timeout)
         );
         assert!(old.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn wait_connected_resolves_once_that_session_opens_a_connection() {
+        let connections = Connections::default();
+        let (_old, _) = connections.register("a", "live", "live.Old");
+        assert_eq!(connections.wait_connected("a", "live", SHORT).await, Ok(1));
+
+        let waiting = tokio::spawn({
+            let connections = connections.clone();
+            async move {
+                connections
+                    .wait_connected("b", "live", Duration::from_secs(5))
+                    .await
+            }
+        });
+        tokio::time::sleep(SHORT).await;
+        let (_elsewhere, _) = connections.register("c", "live", "live.Tick");
+        let (_other_route, _) = connections.register("b", "other", "live.Tick");
+        tokio::time::sleep(SHORT).await;
+        assert!(!waiting.is_finished());
+        let (_b, _) = connections.register("b", "live", "live.Tick");
+
+        assert_eq!(waiting.await.unwrap(), Ok(1));
+    }
+
+    #[tokio::test]
+    async fn wait_connected_times_out_or_stops_on_shutdown() {
+        let connections = Connections::default();
+        assert_eq!(
+            connections.wait_connected("a", "live", SHORT).await,
+            Err(SendError::Timeout)
+        );
+        connections.close_all();
+        assert_eq!(
+            connections.wait_connected("a", "live", SHORT).await,
+            Err(SendError::Closed)
+        );
     }
 
     #[tokio::test]

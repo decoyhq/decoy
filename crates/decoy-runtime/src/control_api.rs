@@ -18,7 +18,9 @@ pub const CONTROL_PREFIX: &str = "/__decoy__";
 pub const HEALTH_PATH: &str = "/__decoy__/health";
 /// Pushes a message to a Route's live connections; see [`handle_send_request`].
 pub const SEND_PATH: &str = "/__decoy__/control/send";
-/// How long `send` waits for a live connection when the body sets no `timeout` (Q5).
+/// Waits for a Route's live connection in the caller's Session; see [`handle_wait_request`].
+pub const WAIT_PATH: &str = "/__decoy__/control/wait";
+/// How long `send` and `wait` wait for a live connection when the body sets no `timeout` (Q5).
 pub const DEFAULT_SEND_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +89,16 @@ struct SendBody {
     timeout: Option<u64>,
 }
 
+/// Only `connected: true` for now; the `message` and `settled` conditions (§9, Q19) come later.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WaitBody {
+    route: String,
+    connected: Option<bool>,
+    /// Milliseconds.
+    timeout: Option<u64>,
+}
+
 /// The body of `reset` and `endSession`: no fields, so a stray `session` is an error.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -95,6 +107,11 @@ struct EmptyBody {}
 #[derive(Debug, Serialize)]
 struct SendResponseBody {
     delivered: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct WaitResponseBody {
+    connections: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -130,6 +147,20 @@ pub enum ControlApiError {
     },
     #[error("decoy is shutting down")]
     SendClosed,
+    #[error("`wait` needs `connected: true`; other conditions are not supported yet")]
+    WaitCondition,
+    #[error(
+        "route `{route}` never has live connections; `wait` needs a ws, sse or streaming gRPC Route"
+    )]
+    WaitNotLongLived { route: String },
+    #[error(
+        "no live connection of route `{route}` opened in session `{session}` within {timeout_ms}ms"
+    )]
+    WaitTimeout {
+        route: String,
+        session: String,
+        timeout_ms: u128,
+    },
 }
 
 impl ControlApiError {
@@ -137,11 +168,11 @@ impl ControlApiError {
         match self {
             Self::UnknownEndpoint { .. } => 404,
             Self::NotJson => 415,
-            Self::InvalidJson(_) | Self::Control(_) => 400,
+            Self::InvalidJson(_) | Self::Control(_) | Self::WaitCondition => 400,
             Self::SendUnknownRoute { .. } => 404,
-            Self::SendNotLongLived { .. } => 409,
+            Self::SendNotLongLived { .. } | Self::WaitNotLongLived { .. } => 409,
             Self::SendMessage(_) => 400,
-            Self::SendTimeout { .. } => 408,
+            Self::SendTimeout { .. } | Self::WaitTimeout { .. } => 408,
             Self::SendClosed => 503,
         }
     }
@@ -234,6 +265,57 @@ async fn try_send(
         .await
         .map_err(|error| match error {
             SendError::Timeout => ControlApiError::SendTimeout {
+                route: body.route,
+                session,
+                timeout_ms: timeout.as_millis(),
+            },
+            SendError::Closed => ControlApiError::SendClosed,
+        })
+}
+
+/// `POST /__decoy__/control/wait` with `{ "route": "...", "connected": true, "timeout"?: <ms> }`:
+/// waits until the request's Session has a live connection of the Route, of any output type, and
+/// answers `{ "connections": <n> }`. Past `timeout` (default 5000) it fails with `408`. Unknown
+/// Route: `404`; a Route without long-lived connections: `409`; a missing or `false` `connected`:
+/// `400`. Like `send`, the server calls it without holding the Controller.
+pub async fn handle_wait_request(
+    catalog: &Catalog,
+    connections: &Connections,
+    request: ControlApiRequest,
+) -> ControlApiResponse {
+    match try_wait(catalog, connections, request).await {
+        Ok(connections) => ControlApiResponse::json(200, WaitResponseBody { connections }),
+        Err(error) => error.into(),
+    }
+}
+
+async fn try_wait(
+    catalog: &Catalog,
+    connections: &Connections,
+    request: ControlApiRequest,
+) -> Result<usize, ControlApiError> {
+    if !is_json(&request.headers) {
+        return Err(ControlApiError::NotJson);
+    }
+    let session = session_id(&request.headers);
+    let body: WaitBody = parse_body(request.body)?;
+    if body.connected != Some(true) {
+        return Err(ControlApiError::WaitCondition);
+    }
+    let Some(route) = catalog.route(&body.route) else {
+        return Err(ControlApiError::SendUnknownRoute { route: body.route });
+    };
+    if !matches!(route.route_match, RouteMatch::Ws(_)) && send_method(catalog, route).is_none() {
+        return Err(ControlApiError::WaitNotLongLived { route: body.route });
+    }
+    let timeout = body
+        .timeout
+        .map_or(DEFAULT_SEND_TIMEOUT, Duration::from_millis);
+    connections
+        .wait_connected(&session, &body.route, timeout)
+        .await
+        .map_err(|error| match error {
+            SendError::Timeout => ControlApiError::WaitTimeout {
                 route: body.route,
                 session,
                 timeout_ms: timeout.as_millis(),
@@ -664,5 +746,54 @@ cases:
             .headers
             .insert("content-type".to_owned(), "text/plain".to_owned());
         assert_eq!(send_response(plain).await.status, 415);
+    }
+
+    async fn wait_response(body: &str) -> ControlApiResponse {
+        let request = ControlApiRequest::post(WAIT_PATH, body);
+        handle_wait_request(&controller().catalog(), &Connections::default(), request).await
+    }
+
+    #[tokio::test]
+    async fn wait_rejects_unknown_routes_and_routes_without_live_connections() {
+        let unknown = wait_response(r#"{"route":"ghost","connected":true}"#).await;
+        assert_eq!(unknown.status, 404);
+        assert_eq!(unknown.body, r#"{"error":"unknown route `ghost`"}"#);
+
+        let http = wait_response(r#"{"route":"get-user","connected":true}"#).await;
+        assert_eq!(http.status, 409, "{}", http.body);
+        assert!(http.body.contains("`wait` needs a ws"), "{}", http.body);
+    }
+
+    #[tokio::test]
+    async fn wait_takes_only_connected_true() {
+        for body in [
+            r#"{"route":"get-user"}"#,
+            r#"{"route":"get-user","connected":false}"#,
+        ] {
+            let response = wait_response(body).await;
+            assert_eq!(response.status, 400, "{body}");
+            assert!(
+                response.body.contains("`connected: true`"),
+                "{}",
+                response.body
+            );
+        }
+        let message = wait_response(r#"{"route":"get-user","message":{}}"#).await;
+        assert_eq!(message.status, 400);
+        assert!(
+            message.body.contains("unknown field `message`"),
+            "{}",
+            message.body
+        );
+        assert_eq!(wait_response("{").await.status, 400);
+
+        let mut plain =
+            ControlApiRequest::post(WAIT_PATH, r#"{"route":"get-user","connected":true}"#);
+        plain
+            .headers
+            .insert("content-type".to_owned(), "text/plain".to_owned());
+        let response =
+            handle_wait_request(&controller().catalog(), &Connections::default(), plain).await;
+        assert_eq!(response.status, 415);
     }
 }

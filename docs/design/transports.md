@@ -2,7 +2,7 @@
 
 Status: **draft for review** (#216). Once agreed, this becomes the spec for gRPC (#217) and
 WebSocket/SSE (#218). Implemented: HTTP, gRPC unary and server streaming, and WebSocket text frames
-without pipelines (section 6; `every`, Control API `close` and `wait` not yet).
+without pipelines (section 6; `every`, Control API `close` and the `wait` conditions other than `connected: true` not yet).
 
 Read it as "what would I write in my mocks". Every open choice is marked **Q** with a recommendation
 at the end.
@@ -453,10 +453,12 @@ The other Control API verbs on live connections are scoped the same way (Route +
 - **`POST /__decoy__/control/close`** `{ route, code?, reason? }` closes the Session's connections on
   the Route, to test reconnect or error UI. `200 { "closed": <n> }` (**Q18**).
 - **`POST /__decoy__/control/wait`** waits inside Decoy and returns when the condition holds, or
-  `408` after `timeout` (follow-up slice) (**Q19**):
-  - `{ route, message: <partial match> }`: until the client has sent a matching message; returns the
+  `408` after `timeout` (default 5000) (**Q19**):
+  - `{ route, connected: true }` (built): until the Session has a live connection on the Route, of
+    any output type; returns `{ "connections": <n> }`. `404`/`409` as for `send`.
+  - `{ route, message: <partial match> }` (follow-up slice): until the client has sent a matching message; returns the
     decoded message. Matching uses Case `match` rules over what Decoy recorded for that Session.
-  - `{ route, settled: true }`: until no delayed or scheduled item is left for that Route.
+  - `{ route, settled: true }` (follow-up slice): until no delayed or scheduled item is left for that Route.
 
 ### Playwright
 

@@ -73,6 +73,34 @@ curl -X POST localhost:8080/__decoy__/control/send \
 Malformed JSON or an unknown body field returns `400` and a missing JSON content type `415`, as
 for the other verbs.
 
+## wait
+
+`POST /__decoy__/control/wait` with `connected: true` returns once the caller's Session has a live
+connection of the Route, so a test can `send` knowing the page's socket or stream is open.
+
+```sh
+curl -X POST localhost:8080/__decoy__/control/wait \
+  -H 'x-mock-session: test-42' \
+  -H 'content-type: application/json' \
+  -d '{"route":"friend-socket","connected":true,"timeout":2000}'
+```
+
+- Only connections opened in the same Session (`x-mock-session`) count, of any output type.
+- It waits up to `timeout` milliseconds (default `5000`).
+- `connected: true` is the only condition so far.
+
+| status | when                                                                  |
+| ------ | --------------------------------------------------------------------- |
+| `200`  | `{"connections":<n>}`: how many live connections the Route has        |
+| `400`  | `connected` missing or not `true`, or another condition (`message`)   |
+| `404`  | unknown Route                                                         |
+| `409`  | the Route has no long-lived connections (HTTP, unary gRPC)            |
+| `408`  | no live connection of the Route opened in this Session within timeout |
+| `503`  | Decoy is shutting down                                                |
+
+Malformed JSON or an unknown body field returns `400` and a missing JSON content type `415`, as
+for the other verbs.
+
 ## Health
 
 `GET /__decoy__/health` → `200 {"status":"ok"}` while Decoy is serving. It is a liveness check
