@@ -163,7 +163,7 @@ runs in order; outbound runs reversed. Declared per Route or as a config default
 _Avoid_: separate config fields per extension kind, implicit step ordering.
 
 **Pipeline step**:
-One named transform in a **Pipeline**, such as `grpc-frame`, `protobuf`, `msgpack`, or a plugin
+One named transform in a **Pipeline**: the built-in `grpc-frame` and `protobuf`, or a plugin
 step. Built-in and plugin steps share one contract.
 _Avoid_: "codec" or "codec stage" (retired), "message transform stage" (retired), "middleware".
 

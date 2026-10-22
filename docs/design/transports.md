@@ -44,7 +44,13 @@ test → Control API send                                            → outboun
 The outbound payload has the same two keys everywhere (HTTP keeps its own word, `body`):
 
 - `message`: one payload.
-- `messages`: a list of `{ message, delay? }` items, sent in order, each after its own `delay`.
+- `messages`: a list of `{ message, delay? }` items, sent in order. An item's `delay` counts from
+  the moment the item before it went out (the first item counts from the inbound message or the
+  open). `[A, {B, delay: 1s}, {C, delay: 1s}]` sends A at 0s, B at 1s, C at 2s.
+- A Behavior-level `delay` is allowed with `message` (and HTTP `body`) only. Next to `messages` it
+  will be a startup error ("move `delay` to the first item"), so there is one clock per list. That is
+  a breaking change still to land: today WebSocket Routes wait the Behavior `delay`, then send the
+  list.
 
 | transport | Route `match`       | unit a Case answers                               | one reply | several replies | extras                                 |
 | --------- | ------------------- | ------------------------------------------------- | --------- | --------------- | -------------------------------------- |
@@ -53,8 +59,9 @@ The outbound payload has the same two keys everywhere (HTTP keeps its own word, 
 | `ws`      | `path`, `query`     | each inbound message, or the open (`on: connect`) | `message` | `messages`      | `close`                                |
 | `sse`     | `path` (GET)        | the subscribing request                           | —         | `messages`      | per item `event`, `id`, `retry`; `end` |
 
-`stream`, `send` and `events` were earlier names for `messages` (**Q11**). gRPC Routes still take
-`stream` until that rename lands; the gRPC examples below use the target name.
+`stream`, `send` and `events` were earlier names for `messages`. gRPC `stream` will be removed, not
+aliased: a config that still uses it fails at startup with "`stream` was renamed to `messages`"
+(**Q11**). Until that lands, gRPC Routes still take `stream`; the examples below use the target name.
 
 ## 2. Config: protos and pipelines
 
@@ -69,24 +76,35 @@ protos:
   roots: [../proto] # import paths; every .proto under them is compiled at startup
   # descriptorSets: [build/api.binpb]   # alternative for hard-to-compile setups
 
+plugins: # each entry: one long-running process, started with Decoy (section 7)
+  env: # the key is the namespace in YAML: steps are `env/<step>`, functions `env.<fn>()`
+    command: node ./plugins/typed-envelope.ts # any command, relative to this file
+    # timeout: 5s   # per call (default 5s)
+
 pipelines: # named, reusable step lists (ADR 0002)
   approvals-ws:
-    - msgpack # bytes ⇄ { type, data }
-    - protobuf:
-        field: data # decode envelope.data …
-        typeFrom: type # … as the proto message named by envelope.type
+    - env/envelope
 ```
 
 Inbound data runs the steps top to bottom; outbound data runs them in reverse. A Route uses
 `pipeline: approvals-ws` or an inline list. Defaults are per transport: gRPC Routes get
 `[grpc-frame, protobuf]` (message types from `service`/`method`), HTTP keeps the JSON-by-content-type
 body, WebSocket and SSE get none. A Route's explicit `pipeline` **replaces** the default entirely, in
-the order written, e.g. `[msgpack, grpc-frame, protobuf]` for gRPC-framed protobuf inside msgpack
-(**Q2**). Outside a gRPC Route, `protobuf` names its message type (`message:` or `typeFrom:`).
+the order written (**Q2**).
 
-**What exists today.** Only gRPC Routes run pipelines, with `grpc-frame` and an option-less
-`protobuf` (typed by the method, last step). Other steps and named `pipelines:` are design only;
-`ws` Routes take no `pipeline` yet.
+**Built-in steps** are only `grpc-frame` and `protobuf`, the gRPC default, typed by the Route's
+`service`/`method`. Decoy doesn't ship `json`, `msgpack` or a declarative framing step: any other
+wire format (raw protobuf over WebSocket, msgpack envelopes, hand-rolled frames, compression) is a
+plugin step. Plugins reach Decoy's loaded protos through the SDK, so they never load `.proto` files
+themselves (**Q13**, ADR 0004).
+
+**Without a pipeline**, Cases see JSON or plain text only: a WebSocket text frame is JSON when it
+parses and a string otherwise; a binary frame is a MISS. With a pipeline, a frame a step `miss`es is
+a MISS too (nothing is sent, a miss is logged); a step that throws or times out is a plugin error
+(section 7).
+
+**What exists today.** Only gRPC Routes run pipelines, with `grpc-frame` and `protobuf`; `ws` Routes
+take no `pipeline` yet. Named `pipelines:` and plugins are design only.
 
 On a single port, one entry handler dispatches per request: `/__decoy__/*` → Control API,
 `content-type: application/grpc*` → gRPC, everything else → HTTP (so REST over HTTP/2 works).
@@ -352,11 +370,12 @@ test('friend goes offline', async ({ page, decoy }) => {
   has no `match` and its envelope has no `message`; templates still see the upgrade request
   (`${ query.service }`). At most one per Route. Its Behavior is chosen like any other, so
   Collections and `useRoute` turn it on, off or into a rejection (**Q10**).
-- **Outbound:** `message` or `messages`. A `message` that is an object or array is sent as JSON text
-  unless a pipeline encodes it.
-- **Scheduling:** each item goes out `delay` after the one before it; the first counts from the
-  inbound message (or the open). Behaviors don't queue behind each other: if the page sends B while A's Behavior still has a
-  delayed item, B's replies go out on their own timers and interleave with A's (**Q16**).
+- **Outbound:** `message` or `messages`. Without a pipeline, an object or array is sent as JSON text
+  and a string as text. With one, the last step decides the frame kind: it returns a string (text
+  frame) or bytes (binary frame), so one plugin can speak JSON control text next to binary data.
+- **Scheduling:** within one Behavior, items go out in order, each `delay` after the one before it
+  (section 1). Behaviors don't queue behind each other: if the page sends B while A's Behavior still
+  has a delayed item, B's replies go out on their own timers and interleave with A's (**Q16**).
 - **Repeating:** an item with `every: 30s` repeats until the connection closes; the first send is
   one interval in (add `delay` to shift it). Follow-up slice, not the core one (**Q17**).
 - **Closing:** the connection normally stays open for the whole test. `close: { code, reason }`
@@ -373,33 +392,161 @@ test('friend goes offline', async ({ page, decoy }) => {
   or the test calls `send`. An upgrade no `ws` Route matches (or one a repeated query key ties) is handled as an HTTP GET:
   an HTTP Route on that path answers it, otherwise the HTTP miss (501).
 
-## 7. WebSocket + msgpack envelope + protobuf payload
+## 7. WebSocket with binary formats: plugin steps
 
-Frames are msgpack maps `{ type: "approvals.v1.Approval", data: <protobuf bytes> }`. With the
-`approvals-ws` pipeline from section 2, Cases and Behaviors only ever see JSON:
+Decoy has no built-in step for binary WebSocket formats (section 2). A plugin step turns frames into
+JSON, so Cases and Behaviors only ever see JSON, and the same plugin encodes replies and test `send`s.
+
+### Example: msgpack envelopes with protobuf data
+
+The approvals socket sends binary frames that are msgpack maps
+`{ type: "approvals.v1.Approval", data: <protobuf bytes> }`: the frame names its own proto type.
+Text frames on the same socket carry plain JSON (`{ "action": "ping" }`).
+
+A plugin is usually a package someone publishes, configured by the user in a plugin file of
+their own. Options are typed arguments in code, not YAML:
+
+```ts
+// @acme/decoy-plugin-typed-envelope (the package, excerpt)
+import { decode, encode } from '@msgpack/msgpack'
+import { definePlugin, miss } from '@decoyhq/plugin'
+
+export function typedEnvelope({ typeField = 'type', dataField = 'data' } = {}) {
+  // bad options throw here, so the plugin exits before `ready` and Decoy fails startup
+  return definePlugin({
+    name: 'typed-envelope', // shown in logs and errors as `env: typed-envelope@<version>`
+    version: '1.0.0',
+    steps: {
+      envelope: {
+        async decode(bytes, ctx) {
+          // ctx.frame is 'text' | 'binary'
+          if (ctx.frame === 'text') {
+            const text = new TextDecoder().decode(bytes)
+            try {
+              return JSON.parse(text)
+            } catch {
+              return text // like a socket without a pipeline: JSON when it parses, else a string
+            }
+          }
+          const envelope = decode(bytes) as Record<string, unknown>
+          const type = envelope[typeField]
+          if (typeof type !== 'string' || !(await ctx.protobuf.has(type)))
+            miss(`unknown type ${type}`) // throws: Decoy logs a MISS for this frame
+          return { ...envelope, [dataField]: await ctx.protobuf.decode(type, envelope[dataField]) }
+        },
+        async encode(value, ctx) {
+          // returns a string (text frame) or bytes (binary frame)
+          // plain JSON control message (or a string)
+          if (typeof value !== 'object' || value === null || !(typeField in value))
+            return JSON.stringify(value)
+          const data = await ctx.protobuf.encode(value[typeField], value[dataField]) // Decoy's protos
+          return encode({ ...value, [dataField]: data })
+        },
+        async check(value, ctx) {
+          /* optional: validate an outbound literal at startup; throw with a field path */
+        },
+      },
+    },
+  })
+}
+```
+
+```ts
+// plugins/typed-envelope.ts (the user's file)
+import { typedEnvelope } from '@acme/decoy-plugin-typed-envelope'
+
+export default typedEnvelope({ typeField: 'type', dataField: 'data' }) // export only for unit tests
+```
 
 ```yaml
+# decoy.yaml (added to section 2's, which has the `protos` these types come from)
+plugins:
+  env:
+    command: node ./plugins/typed-envelope.ts # Node ≥ 22.18 runs .ts as is
+pipelines:
+  approvals-ws: [env/envelope]
+```
+
+```yaml
+# routes/approvals-live.yaml
 id: approvals-live
 transport: ws
 match: { path: /ws/approvals }
 pipeline: approvals-ws
 cases:
+  hello:
+    on: connect
+    behaviors:
+      ping: { message: { action: ping } } # no `type`: the plugin sends it as JSON text
   watch:
     match:
       message: { type: approvals.v1.WatchRequest, data: { ids: [a-1] } }
     behaviors:
       approved:
         messages:
-          - message:
-              type: approvals.v1.Approval
-              data: { id: a-1, state: APPROVED }
-            delay: 200ms
+          - message: { type: approvals.v1.Approval, data: { id: a-1, state: PENDING } }
+          - message: { type: approvals.v1.Approval, data: { id: a-1, state: APPROVED } }
+            delay: 1s
+      missing: # `nmae` here would fail startup through the plugin's `check`
+        message: { type: approvals.v1.Error, data: { code: 404, reason: 'no approval a-1' } }
 ```
 
-Inbound: msgpack decodes the frame to `{ type, data: <bytes> }`, then protobuf decodes `data` as
-`WatchRequest` (named by `type`). Outbound runs in reverse: protobuf encodes `data` as `Approval`,
-then msgpack encodes the map. If the wire format differs (an extra header, compression,
-encryption), a plugin step slots into the same list (ADR 0002).
+A test pushes in the same decoded shape:
+`send({ type: 'approvals.v1.Approval', data: { id: 'a-1', state: 'REJECTED' } })`.
+
+### Plugin contract
+
+- **Process:** one per `plugins:` entry, started with Decoy, spoken to over stdin/stdout
+  (length-prefixed msgpack). The wire details (handshake, timeouts, limits, stderr) live in
+  `docs/design/plugin-protocol.md`. Any language works; `@decoyhq/plugin` (TypeScript) wraps the
+  protocol. stdout belongs to the protocol: the SDK sends `console.log` and friends to stderr.
+  Decoy only runs `command`: resolving the plugin's own dependencies (a bundle, a venv) is up to
+  the user.
+- **`definePlugin`** returns the plugin object, and serves it when Decoy started the process
+  (Decoy sets `DECOY_PLUGIN=1`). So `node ./plugins/x.ts` is the whole command, a package can wrap
+  `definePlugin` in a factory that takes typed options, and a unit test can import the user's file
+  and call its steps without starting anything.
+- **Names:** the config key (`env`) is the namespace in YAML, so the same plugin package can run
+  twice under two keys, from two plugin files with different options. `definePlugin({ name,
+version })` is what logs and errors show.
+- **Handshake:** `hello` / `ready`, where the plugin lists its steps. A pipeline naming a step the
+  plugin didn't list, or the plugin exiting before `ready` (e.g. a factory rejecting its options;
+  Decoy shows its stderr), fails startup.
+- **Calls:** `decode` / `encode` per message, with `ctx.frame`, `ctx.connection`
+  (`{ id, route, session }`; undefined at startup) and `ctx.state` (per connection, dropped on
+  close). Decoy serializes calls per connection, so stateful encodes run in send order, until a call
+  times out (the next call then goes out while the late one may still run). `check` runs once per
+  outbound literal at startup, on the item as written: `${ }` leaves are skipped (host protobuf calls
+  ignore them during `check`) and the fields around them are checked, so a typo next to an echoed
+  `id` still fails startup.
+- **Reload:** a `--watch` reload runs no `check` and doesn't restart plugins; a change to
+  `plugins:` needs a restart.
+- **Host calls:** `ctx.protobuf.decode/encode/has` use the protos Decoy already compiled.
+- **Functions (design only):** a plugin may also export JMESPath functions, called in templates as
+  `env.<name>()`. Protocol v1 has no `call` op for them yet, so `ready.functions` is `[]`.
+- **SSE:** pipelines on SSE Routes aren't specified yet. SSE `data` is text, so an outermost step
+  returning bytes there has no frame to go in.
+- **Logs:** plugin stderr goes to Decoy's stderr, prefixed with the plugin's label, and to the event
+  stream (TUI). Playwright and Testplane already inherit Decoy's stderr, so the lines show up in the
+  test output.
+
+### When things fail
+
+| what                             | result                                                                                          |
+| -------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `decode` calls `miss(reason)`    | MISS for that frame, reason logged, socket stays open                                           |
+| `decode` / `encode` throws       | **plugin error** (below); the frame isn't delivered, socket stays open                          |
+| a call takes longer than timeout | plugin error with `timeout after 5s`                                                            |
+| a frame over 16 MiB              | plugin error for that frame; the plugin never sees it                                           |
+| a Behavior template fails        | the same error event, without a plugin; socket stays open                                       |
+| Control `send` fails to encode   | `400` with the error body, so the test fails on the `send` line (§9)                            |
+| the plugin process exits         | Decoy logs the exit code and the stderr tail, then exits non-zero. No restart for now (**Q22**) |
+
+A plugin error is one event, written to stderr and the TUI, carrying everything needed to fix it
+without a debugger: plugin and step, `route:case:behavior` (or `control send`), connection id and
+Session, the value that failed (rendered JSON outbound, a hex preview of the bytes inbound), the
+error message with its field path (`payload.nmae: no field in users.v1.User`), and the plugin's
+stack when it sent one (**Q23**).
 
 ## 8. Server-Sent Events
 
@@ -443,18 +590,24 @@ content-type: application/json
 - **Who receives it:** every live connection of that Route **in that Session**, and nobody else.
   It skips Cases: the message goes straight out, through the Route's pipeline. For SSE, `message`
   is the `data` and the body may add `event`, `id` and `retry`, as in a `messages` item.
-- **Response:** `200 { "delivered": <n> }`. `404` for an unknown Route, `409` for a Route that isn't
+- **Response:** `200 { "delivered": <n> }`, the connections that queued the message. `404` for an unknown Route, `409` for a Route that isn't
   ws/sse/streaming gRPC.
 - **No live connection:** the call waits for one up to `timeout` (milliseconds, default 5000,
   capped at 5 minutes), then delivers. On timeout it fails with `408`: something is wrong with the
   test or app (**Q5**).
 - **Slow reader:** each connection queues up to 64 unread messages. One whose queue is full skips
   the message and doesn't count in `delivered`; with every one full, `send` waits as above.
+- **Encode failure:** Decoy first encodes the message once with no connection (fresh state). If
+  that fails, `send` answers `400` with the plugin error body (section 7) and nothing is sent. Each
+  connection then encodes it again with its own state; one whose encode still fails logs a plugin
+  error and skips the message. It still counts in `delivered`: `send` answers once the message is
+  queued, before the connection encodes it.
 
 The other Control API verbs on live connections are scoped the same way (Route + Session):
 
-- **`POST /__decoy__/control/close`** `{ route, code?, reason? }` closes the Session's connections on
-  the Route, to test reconnect or error UI. `200 { "closed": <n> }` (**Q18**).
+- **`POST /__decoy__/control/close`** `{ route, code?, reason? }` (follow-up slice) closes the
+  Session's connections on the Route, to test reconnect or error UI. `200 { "closed": <n> }`
+  (**Q18**).
 - **`POST /__decoy__/control/wait`** waits inside Decoy and returns when the condition holds, or
   `408` after `timeout` (default 5000) (**Q19**):
   - `{ route, connected: true }` (built): until the Session has a live connection on the Route that
@@ -470,32 +623,20 @@ The other Control API verbs on live connections are scoped the same way (Route +
 ### Playwright
 
 ```ts
-test('shows the approval as soon as the server pushes it', async ({ page, decoy }) => {
-  await page.goto('/approvals/a-1')
-  const live = await decoy.connection('approvals-live') // waits for the page's socket in this Session
-  await live.send({ type: 'approvals.v1.Approval', data: { id: 'a-1', state: 'APPROVED' } })
-  await expect(page.getByRole('status')).toHaveText('Approved')
+test('shows the update as soon as the server pushes it', async ({ page, decoy }) => {
+  await page.goto('/')
+  const friend = await decoy.connection('friend-socket') // waits for the page's socket in this Session
+  await friend.send({ type: 'update', topic: 'news', count: 5 })
+  await expect(page.getByText('news: 5')).toBeVisible()
 })
 ```
 
 - `decoy.connection(route, { timeout })` resolves once this test's Session has a live connection
-  on the Route. `.send(message)`, `.close({ code, reason })`,
-  `.waitForMessage(match, { timeout })` and `.settled()` call the Control API.
+  on the Route. `.send(message)` and `.close({ code, reason })` call the Control API.
 - **Reconnects:** a client's new socket is a new connection. Its `on: connect` Case runs with the
   Selection active at that moment, and a new `decoy.connection(route)` resolves to it (**Q20**).
 
 ```ts
-test('page answers the server ping and then subscribes', async ({ page, decoy }) => {
-  await decoy.useCollection('manual-start') // on: connect Behaviors send nothing
-  await page.goto('/')
-  const friend = await decoy.connection('friend-socket')
-  await friend.send('ping')
-  const status = await friend.waitForMessage({ type: 'get-status' }) // what the page sent
-  expect(status.id).toBeDefined()
-  await friend.settled() // every scheduled reply has gone out
-  await expect(page.getByText('Friend: online')).toBeVisible()
-})
-
 test('page reconnects after the server drops it', async ({ page, decoy }) => {
   await page.goto('/')
   const friend = await decoy.connection('friend-socket')
@@ -552,22 +693,28 @@ the s-2 socket.
 
 ## 11. Open questions
 
-| #   | question                                                          | recommendation                                                                                                                                          |
-| --- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Q1  | One port for HTTP/WS/SSE/gRPC, or a separate `grpcPort`?          | **Decided:** one port by default (per-request dispatch on `content-type`); extra listeners via config, e.g. `listeners: { grpc: 50051 }` (was `ports`). |
-| Q2  | Implicit `[grpc-frame, protobuf]` pipeline for gRPC Routes?       | **Decided:** per-transport defaults (gRPC → `[grpc-frame, protobuf]`); an explicit `pipeline` replaces the default entirely, in written order.          |
-| Q3  | Validate gRPC message literals against the proto at startup?      | **Decided:** yes, wherever a `protobuf` step runs: response literals and literal `match` fields; `${ }` is checked at render time.                      |
-| Q4  | Unmatched WS message: silent + recorded, or close the socket?     | **Decided:** skip it: send nothing, log a miss, keep the connection open.                                                                               |
-| Q5  | `send` with no live connection: wait or fail fast?                | **Decided:** wait for a connection up to `timeout` (default 5 s); fail with `408` on timeout.                                                           |
-| Q6  | WebSocket routing in Playwright: bridge via `routeWebSocket`?     | **Decided:** yes; the fixture adds the Session header, same as `context.route` for HTTP.                                                                |
-| Q7  | SSE in Playwright needs app and Decoy on the same protocol. OK?   | **Decided:** TLS listeners with a provided cert or a generated self-signed one (#241); also needed for gRPC over TLS.                                   |
-| Q8  | `__decoy_session` query fallback for browsers outside Playwright? | **Deferred** until non-Playwright runners (Cypress, Selenium) are in scope.                                                                             |
-| Q9  | Glossary: "Request envelope" / "Message envelope".                | **Decided:** adopt both in `CONTEXT.md`; rename `RequestContext` → `RequestEnvelope` (#240).                                                            |
-| Q10 | Server-first WS messages without a test?                          | **Decided:** an `on: connect` Case: no `match`, at most one per Route, Behavior chosen by Selection. WebSocket only for now.                            |
-| Q11 | One name for outbound payloads across transports?                 | **Decided:** `message` (one) and `messages` (list of `{ message, delay }`); HTTP keeps `body`. Replaces `stream` (gRPC), `send` (WS), `events` (SSE).   |
-| Q12 | Two WS sockets on one path, told apart by query?                  | **Decided:** `query` in a `ws` Route's `match`; more `query` keys wins, an equal tie fails at load.                                                     |
-| Q16 | A message arrives while another Behavior has delayed items?       | **Decided:** interleave; each Behavior's items run on their own timers. Order holds only within one Behavior.                                           |
-| Q17 | Repeating messages (heartbeat)?                                   | **Decided:** `every` on a `messages` item, until close. Follow-up slice.                                                                                |
-| Q18 | Closing a socket from config or from a test?                      | **Decided:** Behavior `close` after its messages; Control API `close` verb. Both cancel pending items. No HTTP-status rejection of upgrades for now.    |
-| Q19 | Waiting on what the client sent, or until Decoy is done?          | **Decided:** Control API `wait` (`message` match or `settled`), matched inside Decoy; Playwright `waitForMessage` / `settled`. Follow-up slice.         |
-| Q20 | A client reconnects: same or new connection?                      | **Decided:** new connection; `on: connect` runs again with the current Selection.                                                                       |
+| #   | question                                                          | recommendation                                                                                                                                                                                   |
+| --- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Q1  | One port for HTTP/WS/SSE/gRPC, or a separate `grpcPort`?          | **Decided:** one port by default (per-request dispatch on `content-type`); extra listeners via config, e.g. `listeners: { grpc: 50051 }` (was `ports`).                                          |
+| Q2  | Implicit `[grpc-frame, protobuf]` pipeline for gRPC Routes?       | **Decided:** per-transport defaults (gRPC → `[grpc-frame, protobuf]`); an explicit `pipeline` replaces the default entirely, in written order.                                                   |
+| Q3  | Validate gRPC message literals against the proto at startup?      | **Decided:** yes, wherever a `protobuf` step runs: response literals and literal `match` fields; `${ }` is checked at render time.                                                               |
+| Q4  | Unmatched WS message: silent + recorded, or close the socket?     | **Decided:** skip it: send nothing, log a miss, keep the connection open.                                                                                                                        |
+| Q5  | `send` with no live connection: wait or fail fast?                | **Decided:** wait for a connection up to `timeout` (default 5 s); fail with `408` on timeout.                                                                                                    |
+| Q6  | WebSocket routing in Playwright: bridge via `routeWebSocket`?     | **Decided:** yes; the fixture adds the Session header, same as `context.route` for HTTP.                                                                                                         |
+| Q7  | SSE in Playwright needs app and Decoy on the same protocol. OK?   | **Decided:** TLS listeners with a provided cert or a generated self-signed one (#241); also needed for gRPC over TLS.                                                                            |
+| Q8  | `__decoy_session` query fallback for browsers outside Playwright? | **Deferred** until non-Playwright runners (Cypress, Selenium) are in scope.                                                                                                                      |
+| Q9  | Glossary: "Request envelope" / "Message envelope".                | **Decided:** adopt both in `CONTEXT.md`; rename `RequestContext` → `RequestEnvelope` (#240).                                                                                                     |
+| Q10 | Server-first WS messages without a test?                          | **Decided:** an `on: connect` Case: no `match`, at most one per Route, Behavior chosen by Selection. WebSocket only for now.                                                                     |
+| Q11 | One name for outbound payloads across transports?                 | **Decided:** `message` / `messages` (each item `delay` after the previous one); HTTP keeps `body`. gRPC `stream` is removed, no alias.                                                           |
+| Q12 | Two WS sockets on one path, told apart by query?                  | **Decided:** `query` in a `ws` Route's `match`; more `query` keys wins, an equal tie fails at load.                                                                                              |
+| Q13 | Which pipeline steps ship with Decoy?                             | **Decided:** only `grpc-frame` and `protobuf` (gRPC default). Every other format is a plugin step using Decoy's protos via the SDK (ADR 0004).                                                   |
+| Q14 | Frames that carry no type marker at all?                          | **Decided:** the plugin's job; Decoy never guesses a proto type.                                                                                                                                 |
+| Q15 | Plain JSON and binary on one socket?                              | **Decided:** the plugin sees `ctx.frame` inbound and picks the kind outbound (string → text, bytes → binary). No `frame` key in config or `send`.                                                |
+| Q16 | A message arrives while another Behavior has delayed items?       | **Decided:** interleave; each Behavior's items run on their own timers, in order, each `delay` after the previous one.                                                                           |
+| Q17 | Repeating messages (heartbeat)?                                   | **Decided:** `every` on a `messages` item, until close. Follow-up slice.                                                                                                                         |
+| Q18 | Closing a socket from config or from a test?                      | **Decided:** Behavior `close` after its messages; Control API `close` verb. Both cancel pending items. No HTTP-status rejection of upgrades for now.                                             |
+| Q19 | Waiting on what the client sent, or until Decoy is done?          | **Deferred:** `waitForMessage` / `settled` have open questions (consume rules, history bound, `every`). Not in the first slices.                                                                 |
+| Q20 | A client reconnects: same or new connection?                      | **Decided:** new connection; `on: connect` runs again with the current Selection.                                                                                                                |
+| Q21 | Plugin per-call timeout?                                          | **Decided:** 5s default, `timeout:` per plugin. A timeout is a plugin error, not a MISS.                                                                                                         |
+| Q22 | The plugin process exits?                                         | **Decided:** Decoy logs exit code and stderr tail, then exits non-zero. No restart for now; `restart:` could be added later without breaking anything.                                           |
+| Q23 | Encode or plugin failure on a live connection?                    | **Decided:** one error event (stderr + TUI) with plugin, step, Behavior address, Session, value and field path; socket stays open; `send` answers `400` if its dry-run encode fails (section 9). |
