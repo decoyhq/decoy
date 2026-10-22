@@ -67,7 +67,7 @@ base yourself: `base.extend<DecoyFixtures>(createDecoyFixtures())`.
   same path and query, with `x-mock-session` set on the upgrade. Frames pass both ways and a close
   on either side closes the other. The real server is never contacted; if Decoy is unreachable the
   page socket is closed.
-- `decoy.connection(routeId, { timeout })` waits until this test's Session has a live connection on
+- `decoy.connection(route, { timeout })` waits until this test's Session has a live connection on
   the Route; its `.send(message)` pushes to that Session's connections only. Call `connection`
   again after a reconnect.
 - Only the fixture's `context` (and its `page`) is routed. A context you create yourself with

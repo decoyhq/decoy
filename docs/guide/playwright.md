@@ -83,7 +83,7 @@ exited after 8s, SIGKILL (Windows: `taskkill /T /F`). Projects that share a `url
   is unreachable the request is aborted, never sent to the real network.
 - The `decoy` fixture: `sessionId`, `useCollection(id)`, `useRoute(address)` with a Behavior address
   `route:case:behavior` (or `useRoute(route, case, behavior)`), `reset()`, `endSession()`, and
-  `connection(routeId)` (see [WebSockets](#websockets)). Each call
+  `connection(route)` (see [WebSockets](#websockets)). Each call
   hits the Control API immediately and rejects with Decoy's error. When the test ends, the fixtures
   call `endSession()` for you, so a long-lived Decoy doesn't keep one Session per test.
 
@@ -102,7 +102,8 @@ decoyOptions: {
 - Each matching page socket is bridged to Decoy: the fixture opens its own socket to Decoy at the
   same path and query (`ws://`, or `wss://` for an `https` `url`) with `x-mock-session` set to the
   test's Session. Text and binary frames pass both ways; when either side closes, the other is
-  closed too, with the same code and reason where the protocol allows it.
+  closed too, with the same code and reason where the protocol allows it. When the
+  test ends, the fixture closes its sockets to Decoy that are still open.
 - The real server is never contacted. If Decoy can't be reached, the page socket is closed.
 - A socket keeps the Session it opened with; see [WebSocket](websocket.md) for Routes and Behaviors.
 
@@ -117,7 +118,7 @@ test('shows a notice the server pushes', async ({ page, decoy }) => {
 })
 ```
 
-- `decoy.connection(routeId, { timeout })` resolves once this test's Session has a live connection
+- `decoy.connection(route, { timeout })` resolves once this test's Session has a live connection
   on the Route (Control API `wait`). It rejects on timeout (Decoy's default when `timeout` is
   unset), for an unknown Route, or for a Route whose transport has no connections (HTTP, unary gRPC).
 - `.send(message)` pushes `message` to every live connection of the Route in this Session, skipping

@@ -1,7 +1,6 @@
 import type { Request, Route } from '@playwright/test'
-import type { DecoyOptions } from './options'
-
 import { SESSION_HEADER } from '@decoyhq/runner-core'
+import { patternList, type UrlPatterns } from './options'
 
 /** The response shape forwarding needs; Playwright's `APIResponse` satisfies it. */
 export interface DecoyResponse {
@@ -64,11 +63,10 @@ export async function routeToDecoy(
   context: RoutableContext,
   fetch: DecoyFetch,
   decoyUrl: string,
-  urls: NonNullable<DecoyOptions['urls']>,
+  urls: UrlPatterns,
   sessionId: string,
 ): Promise<void> {
-  const patterns = typeof urls === 'string' || urls instanceof RegExp ? [urls] : urls
-  for (const pattern of patterns) {
+  for (const pattern of patternList(urls)) {
     await context.route(pattern, (route) => forwardToDecoy(route, decoyUrl, sessionId, fetch))
   }
 }

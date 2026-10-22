@@ -478,11 +478,11 @@ test('shows the approval as soon as the server pushes it', async ({ page, decoy 
 })
 ```
 
-- `decoy.connection(routeId, { timeout })` resolves once this test's Session has a live connection
+- `decoy.connection(route, { timeout })` resolves once this test's Session has a live connection
   on the Route. `.send(message)`, `.close({ code, reason })`,
   `.waitForMessage(match, { timeout })` and `.settled()` call the Control API.
 - **Reconnects:** a client's new socket is a new connection. Its `on: connect` Case runs with the
-  Selection active at that moment, and a new `decoy.connection(routeId)` resolves to it (**Q20**).
+  Selection active at that moment, and a new `decoy.connection(route)` resolves to it (**Q20**).
 
 ```ts
 test('page answers the server ping and then subscribes', async ({ page, decoy }) => {

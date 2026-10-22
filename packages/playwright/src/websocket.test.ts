@@ -1,3 +1,4 @@
+import type { WebSocketRoute } from '@playwright/test'
 import { describe, expect, test } from '@rstest/core'
 import {
   bridgeToDecoy,
@@ -77,6 +78,15 @@ describe('bridgeToDecoy', () => {
     ])
   })
 
+  test('keeps the base path of the Decoy URL, even for a path starting with //', () => {
+    const { open, opened } = fakeDecoySocket()
+
+    bridgeToDecoy(fakePageSocket('ws://localhost:3000/live?a=1').socket, 'http://h/base', 's', open)
+    bridgeToDecoy(fakePageSocket('ws://localhost:3000//live').socket, 'http://h/base', 's', open)
+
+    expect(opened.map(({ url }) => url)).toEqual(['ws://h/base/live?a=1', 'ws://h/base//live'])
+  })
+
   test('pipes text and binary both ways, holding page messages until Decoy is open', () => {
     const { socket, page } = fakePageSocket('ws://localhost:3000/ws')
     const { open, opened, decoy } = fakeDecoySocket()
@@ -145,6 +155,35 @@ describe('routeWebSocketsToDecoy', () => {
     await routeWebSocketsToDecoy(context, 'http://127.0.0.1:8080', ['/a/', /\/live$/], 's')
 
     expect(patterns).toEqual(['**/ws', '/a/', /\/live$/])
+  })
+
+  test('closeAll closes the Decoy sockets still open, skipping ones already closed', async () => {
+    let handler: (socket: RoutableWebSocket) => unknown = () => undefined
+    const context = {
+      routeWebSocket: (_url: string | RegExp, routed: (socket: WebSocketRoute) => unknown) => {
+        handler = routed as typeof handler
+        return Promise.resolve()
+      },
+    }
+    const stillOpen = fakeDecoySocket()
+    const closedEarly = fakeDecoySocket()
+    const queue = [stillOpen, closedEarly]
+    const open: OpenDecoySocket = (url, init) => (queue.shift() ?? stillOpen).open(url, init)
+    const closeAll = await routeWebSocketsToDecoy(
+      context,
+      'http://127.0.0.1:8080',
+      '**/ws',
+      's',
+      open,
+    )
+    handler(fakePageSocket('ws://localhost:3000/ws').socket)
+    handler(fakePageSocket('ws://localhost:3000/ws').socket)
+    closedEarly.decoy.onclose?.({ code: 1000, reason: '' })
+
+    closeAll()
+
+    expect(stillOpen.decoy.closed).toEqual({ code: undefined, reason: undefined })
+    expect(closedEarly.decoy.closed).toBeUndefined()
   })
 })
 

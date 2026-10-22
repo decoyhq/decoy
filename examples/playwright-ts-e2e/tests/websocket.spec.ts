@@ -34,20 +34,23 @@ test('a reconnected page gets what the test sends next', async ({ page, decoy })
 })
 
 test.describe('useRoute and send reach only their own test', () => {
-  // Both tests hold their socket open at the same time, each in its own Session.
-  // shortcut: isolation is only exercised when Playwright runs both at once (>= 2 workers).
+  // Both tests hold their socket open at the same time, each in its own Session: they meet at a
+  // rendezvous on the app server, which fails both if they don't run at once.
   test.describe.configure({ mode: 'parallel' })
 
   for (const [name, status] of [
     ['first', 'online'],
     ['second', 'offline'],
   ] as const) {
-    test(`${name} test`, async ({ page, decoy }) => {
+    test(`${name} test`, async ({ page, decoy, request }, testInfo) => {
       await page.goto('/live.html')
       const live = await decoy.connection('friend-socket', { timeout: 5000 })
       if (status === 'offline') {
         await decoy.useRoute('friend-socket:status:offline')
       }
+      // Not a Decoy-routed URL: `request` skips the context's routing.
+      const meeting = `isolation-${testInfo.repeatEachIndex}-${testInfo.retry}`
+      await expect(await request.get(`/__rendezvous/${meeting}?parties=2`)).toBeOK()
       await live.send({ type: 'notice', text: `for the ${name} test` })
 
       const notices = page.getByRole('list', { name: 'Notices' }).getByRole('listitem')
@@ -55,7 +58,7 @@ test.describe('useRoute and send reach only their own test', () => {
       // Keep the socket open while the other test sends: its notice must never show up here.
       await page.waitForTimeout(1000)
       await expect(notices).toHaveText([`for the ${name} test`])
-      // Run together, the other test's override is in by now; only this test's own one applies.
+      // The other test's override was in before the rendezvous; only this test's own one applies.
       await page.getByRole('button', { name: 'Ask status' }).click()
       await expect(page.getByRole('status')).toHaveText(`Friend: ${status}`)
     })

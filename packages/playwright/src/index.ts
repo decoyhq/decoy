@@ -3,7 +3,7 @@ import { createDecoyFixtures, type DecoyFixtures } from './fixtures'
 
 export type { DecoyConnection, DecoyRouter } from '@decoyhq/runner-core'
 export { createDecoyFixtures, type DecoyFixtures, type DecoyTestOptions } from './fixtures'
-export type { DecoyOptions } from './options'
+export type { DecoyOptions, UrlPatterns } from './options'
 export { type SetupConfig, setup, type Teardown } from './setup'
 export { expect } from '@playwright/test'
 

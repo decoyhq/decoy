@@ -6,6 +6,8 @@ export default defineConfig<DecoyTestOptions>({
   globalSetup: './global-setup.ts',
   // Spec files run concurrently against one Decoy runtime; each test's Session keeps it isolated.
   fullyParallel: true,
+  // At least 2, so the WebSocket isolation tests can run at once (they fail otherwise).
+  workers: process.env.CI ? 2 : undefined,
   forbidOnly: !!process.env.CI,
   reporter: process.env.CI ? 'list' : 'line',
   webServer: {

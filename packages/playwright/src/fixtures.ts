@@ -51,6 +51,7 @@ export function createDecoyFixtures(): Fixtures<
     decoyOptions: [undefined, { option: true }],
     context: async ({ context, decoyOptions }, use, testInfo) => {
       const { urls, webSocketUrls } = decoyOptions ?? {}
+      let closeSockets: (() => void) | undefined
       if (decoyOptions && (urls !== undefined || webSocketUrls !== undefined)) {
         const { url } = resolveServerOptions(decoyOptions)
         const { sessionId } = await decoySession(decoyOptions, testInfo)
@@ -58,10 +59,11 @@ export function createDecoyFixtures(): Fixtures<
           await routeToDecoy(context, fetchWithoutCookies, url, urls, sessionId)
         }
         if (webSocketUrls !== undefined) {
-          await routeWebSocketsToDecoy(context, url, webSocketUrls, sessionId)
+          closeSockets = await routeWebSocketsToDecoy(context, url, webSocketUrls, sessionId)
         }
       }
       await use(context)
+      closeSockets?.()
       await endDecoySession(testInfo)
     },
     decoy: ({ decoyOptions }, use, testInfo) => provideDecoy(decoyOptions, use, testInfo),

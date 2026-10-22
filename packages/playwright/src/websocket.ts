@@ -1,7 +1,6 @@
 import type { WebSocketRoute } from '@playwright/test'
-import type { DecoyOptions } from './options'
-
 import { SESSION_HEADER } from '@decoyhq/runner-core'
+import { patternList, type UrlPatterns } from './options'
 
 /** The page side of a routed socket; Playwright's `WebSocketRoute` satisfies it. */
 export type RoutableWebSocket = Pick<
@@ -31,63 +30,79 @@ export type OpenDecoySocket = (
 // Node's WebSocket (undici) takes `headers` in its init, unlike the browser's.
 const openWebSocket: OpenDecoySocket = (url, init) => new WebSocket(url, init)
 
-/** Install browser-context routing that bridges every `webSocketUrls` socket to Decoy. */
+/**
+ * Install browser-context routing that bridges every `webSocketUrls` socket to Decoy. Returns
+ * `closeAll`, which closes the Decoy sockets still open, so none outlives the test even if a page
+ * socket's close never reaches the bridge.
+ */
 export async function routeWebSocketsToDecoy(
   context: WebSocketRoutableContext,
   decoyUrl: string,
-  urls: NonNullable<DecoyOptions['webSocketUrls']>,
+  urls: UrlPatterns,
   sessionId: string,
-): Promise<void> {
-  const patterns = typeof urls === 'string' || urls instanceof RegExp ? [urls] : urls
-  for (const pattern of patterns) {
+  open: OpenDecoySocket = openWebSocket,
+): Promise<() => void> {
+  const live = new Set<DecoySocket>()
+  for (const pattern of patternList(urls)) {
     await context.routeWebSocket(pattern, (socket) => {
-      bridgeToDecoy(socket, decoyUrl, sessionId)
+      bridgeToDecoy(socket, decoyUrl, sessionId, open, live)
     })
+  }
+  return () => {
+    for (const decoySocket of live) {
+      decoySocket.close()
+    }
+    live.clear()
   }
 }
 
 /**
  * Bridge one page socket to Decoy: a socket of our own to the same path and query on Decoy, carrying
  * the Session, with frames piped both ways and each side closed when the other closes. The page
- * socket never reaches the real server; if Decoy can't be reached it is closed.
+ * socket never reaches the real server; if Decoy can't be reached it is closed. The Decoy socket
+ * is in `live` until it closes.
  */
 export function bridgeToDecoy(
-  page: RoutableWebSocket,
+  pageSocket: RoutableWebSocket,
   decoyUrl: string,
   sessionId: string,
   open: OpenDecoySocket = openWebSocket,
+  live = new Set<DecoySocket>(),
 ): void {
-  const original = new URL(page.url())
-  const url = new URL(`${original.pathname}${original.search}`, decoyUrl)
+  const original = new URL(pageSocket.url())
+  // A string join, like HTTP routing: it keeps a base path in `decoyUrl`.
+  const url = new URL(`${decoyUrl}${original.pathname}${original.search}`)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
-  const decoy = open(url.href, { headers: { [SESSION_HEADER]: sessionId } })
-  decoy.binaryType = 'arraybuffer'
+  const decoySocket = open(url.href, { headers: { [SESSION_HEADER]: sessionId } })
+  decoySocket.binaryType = 'arraybuffer'
+  live.add(decoySocket)
 
   const pending: Array<string | Buffer> = []
-  decoy.onopen = () => {
+  decoySocket.onopen = () => {
     for (const message of pending.splice(0)) {
-      decoy.send(message)
+      decoySocket.send(message)
     }
   }
-  page.onMessage((message) => {
-    if (decoy.readyState === WebSocket.CONNECTING) {
+  pageSocket.onMessage((message) => {
+    if (decoySocket.readyState === WebSocket.CONNECTING) {
       pending.push(message)
-    } else if (decoy.readyState === WebSocket.OPEN) {
-      decoy.send(message)
+    } else if (decoySocket.readyState === WebSocket.OPEN) {
+      decoySocket.send(message)
     }
   })
-  decoy.onmessage = ({ data }: MessageEvent) => {
-    page.send(typeof data === 'string' ? data : Buffer.from(data as ArrayBuffer))
+  decoySocket.onmessage = ({ data }: MessageEvent) => {
+    pageSocket.send(typeof data === 'string' ? data : Buffer.from(data as ArrayBuffer))
   }
 
-  decoy.onclose = ({ code, reason }: CloseEvent) => {
-    void page.close(canSend(code) ? { code, reason } : {})
+  decoySocket.onclose = ({ code, reason }: CloseEvent) => {
+    live.delete(decoySocket)
+    void pageSocket.close(canSend(code) ? { code, reason } : {})
   }
-  page.onClose((code, reason) => {
+  pageSocket.onClose((code, reason) => {
     if (code !== undefined && canSend(code)) {
-      decoy.close(code, reason)
+      decoySocket.close(code, reason)
     } else {
-      decoy.close()
+      decoySocket.close()
     }
   })
 }
