@@ -63,6 +63,7 @@ test('switching the Collection changes what the page shows', async ({ page, deco
 | `reuseExistingServer` | `true` locally, `false` in CI | reuse a Decoy already answering health             |
 | `timeout`             | `60000`                       | ms `setup` waits for health                        |
 | `urls`                | none                          | glob/RegExp (or list) of browser requests to route |
+| `webSocketUrls`       | none                          | glob/RegExp (or list) of page WebSockets to bridge |
 | `collection`          | Decoy's default               | Collection each test's Session starts on           |
 
 Decoy is off for projects without `decoyOptions`. `setup` starts one Decoy per distinct `url`:
@@ -81,9 +82,49 @@ exited after 8s, SIGKILL (Windows: `taskkill /T /F`). Projects that share a `url
   and `x-mock-session` set. Decoy's answer, including a 501 miss, reaches the page as-is. If Decoy
   is unreachable the request is aborted, never sent to the real network.
 - The `decoy` fixture: `sessionId`, `useCollection(id)`, `useRoute(address)` with a Behavior address
-  `route:case:behavior` (or `useRoute(route, case, behavior)`), `reset()`, `endSession()`. Each call
+  `route:case:behavior` (or `useRoute(route, case, behavior)`), `reset()`, `endSession()`, and
+  `connection(route)` (see [WebSockets](#websockets)). Each call
   hits the Control API immediately and rejects with Decoy's error. When the test ends, the fixtures
   call `endSession()` for you, so a long-lived Decoy doesn't keep one Session per test.
+
+## WebSockets
+
+Set `webSocketUrls` to route the page's own sockets to Decoy (Playwright 1.48 or later). The page
+needs no changes:
+
+```ts
+decoyOptions: {
+  urls: '**/api/**',
+  webSocketUrls: '**/live', // matched against the socket URL, e.g. ws://127.0.0.1:4173/live
+}
+```
+
+- Each matching page socket is bridged to Decoy: the fixture opens its own socket to Decoy at the
+  same path and query (`ws://`, or `wss://` for an `https` `url`) with `x-mock-session` set to the
+  test's Session. Text and binary frames pass both ways; when either side closes, the other is
+  closed too, with the same code and reason where the protocol allows it. When the
+  test ends, the fixture closes its sockets to Decoy that are still open.
+- The real server is never contacted. If Decoy can't be reached, the page socket is closed.
+- A socket keeps the Session it opened with; see [WebSocket](websocket.md) for Routes and Behaviors.
+
+To push a message from the test, wait for the page's socket and send to it:
+
+```ts
+test('shows a notice the server pushes', async ({ page, decoy }) => {
+  await page.goto('/live.html')
+  const live = await decoy.connection('friend-socket', { timeout: 5000 })
+  await live.send({ type: 'notice', text: 'hello' })
+  await expect(page.getByRole('listitem')).toHaveText('hello')
+})
+```
+
+- `decoy.connection(route, { timeout })` resolves once this test's Session has a live connection
+  on the Route (Control API `wait`). It rejects on timeout (Decoy's default when `timeout` is
+  unset), for an unknown Route, or for a Route whose transport has no connections (HTTP, unary gRPC).
+- `.send(message)` pushes `message` to every live connection of the Route in this Session, skipping
+  Cases (Control API [`send`](sessions-and-control.md#send)). Other tests' sockets never get it.
+- It resolves while _any_ of the Session's sockets on the Route is live, including one that is
+  closing. After a reload, wait for a page signal that the new socket is up before you `send`.
 
 The runnable version of all this is
 [`examples/playwright-ts-e2e`](../../examples/playwright-ts-e2e).

@@ -13,6 +13,19 @@ export interface DecoyRouter {
   reset(): Promise<void>
   /** End this Session in Decoy (gives up after 2s). The fixtures call it when the test ends. */
   endSession(): Promise<void>
+  /**
+   * Wait until this Session has a live connection on the Route (ws or streaming gRPC; Decoy waits up
+   * to `timeout` ms, its default when unset). Any live connection counts, even one still closing:
+   * after a reconnect, wait for the page to show the new socket is up before sending.
+   */
+  connection(route: string, options?: { timeout?: number }): Promise<DecoyConnection>
+}
+
+/** This Session's live connections on one Route. */
+export interface DecoyConnection {
+  readonly route: string
+  /** Push `message` to every live connection of the Route in this Session, skipping Cases. */
+  send(message: unknown): Promise<void>
 }
 
 /**
@@ -57,6 +70,15 @@ export function createRouter(url: string, sessionId: string, timeoutMs = 10_000)
     reset: () => control('reset'),
     // Runs in test teardown: an unreachable Decoy must not turn a passed test into a timeout.
     endSession: () => control('endSession', undefined, AbortSignal.timeout(2000)),
+    connection: async (route, { timeout } = {}) => {
+      // Decoy holds the call for up to `timeout`; give up only after that plus the usual margin.
+      await control(
+        'wait',
+        { route, connected: true, timeout },
+        AbortSignal.timeout((timeout ?? 0) + timeoutMs),
+      )
+      return { route, send: (message) => control('send', { route, message }) }
+    },
   }
 }
 

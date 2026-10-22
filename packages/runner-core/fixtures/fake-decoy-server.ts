@@ -8,10 +8,12 @@ export interface ControlCall {
 
 /**
  * In-process stand-in for native Decoy in package tests: answers health, records Control API calls,
- * and replies to each call with `reply` (default 200).
+ * and replies to each call with `reply` (default 200; async to simulate a slow Decoy).
  */
 export async function startFakeDecoy(
-  reply: (call: ControlCall) => { status: number; body: string } = () => ({
+  reply: (
+    call: ControlCall,
+  ) => { status: number; body: string } | Promise<{ status: number; body: string }> = () => ({
     status: 200,
     body: '{}',
   }),
@@ -34,8 +36,9 @@ export async function startFakeDecoy(
         body,
       }
       calls.push(call)
-      const { status, body: replyBody } = reply(call)
-      res.writeHead(status, { 'content-type': 'application/json' }).end(replyBody)
+      void Promise.resolve(reply(call)).then(({ status, body: replyBody }) => {
+        res.writeHead(status, { 'content-type': 'application/json' }).end(replyBody)
+      })
     })
   })
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))

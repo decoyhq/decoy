@@ -92,8 +92,8 @@ dropped.
 
 A socket keeps the Session it opened with (`x-mock-session` on the upgrade). `useCollection` and
 `useRoute` apply to its next message. An `on: connect` change applies to the Session's next socket.
-Browsers can't set headers on `new WebSocket()`, so browser tests need a bridge that adds the header;
-that's not built yet.
+Browsers can't set headers on `new WebSocket()`; under Playwright, the fixture's bridge adds it (see
+[Playwright WebSockets](playwright.md#websockets)).
 
 ## Pushing from a test
 

@@ -88,6 +88,41 @@ describe('context fixture', () => {
   })
 })
 
+describe('context fixture with webSocketUrls', () => {
+  test('bridges page sockets under the test Session, with or without `urls`', async () => {
+    const decoy = await startFakeDecoy()
+    const patterns: unknown[] = []
+    const context = {
+      route: () => Promise.reject(new Error('no HTTP routing without `urls`')),
+      routeWebSocket: (pattern: unknown) => {
+        patterns.push(pattern)
+        return Promise.resolve()
+      },
+    }
+    const info = { titlePath: ['sockets'] }
+    const { context: contextFixture } = createDecoyFixtures() as unknown as {
+      context: (
+        args: { context: typeof context; decoyOptions: object },
+        use: (value: unknown) => Promise<void>,
+        testInfo: typeof info,
+      ) => Promise<void>
+    }
+    try {
+      await contextFixture(
+        { context, decoyOptions: { url: decoy.url, webSocketUrls: '**/live' } },
+        () => Promise.resolve(),
+        info,
+      )
+    } finally {
+      await decoy.close()
+    }
+    expect(patterns).toEqual(['**/live'])
+    expect(decoy.calls).toEqual([
+      { path: '/__decoy__/control/endSession', session: sessionIdFor(info), body: '' },
+    ])
+  })
+})
+
 describe('decoySession', () => {
   test('applies the configured Collection once, before the Router is handed out', async () => {
     const decoy = await startFakeDecoy()

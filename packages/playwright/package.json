@@ -32,7 +32,7 @@
     "check:package": "publint --strict && attw --pack . --profile node16"
   },
   "peerDependencies": {
-    "@playwright/test": ">=1.40 <2"
+    "@playwright/test": ">=1.48 <2"
   },
   "devDependencies": {
     "@decoyhq/runner-core": "workspace:*",

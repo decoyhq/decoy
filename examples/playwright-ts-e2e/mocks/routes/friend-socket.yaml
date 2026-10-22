@@ -1,0 +1,14 @@
+id: friend-socket
+transport: ws
+match:
+  path: /live
+cases:
+  hello:
+    on: connect # runs once, when the page's socket opens
+    behaviors:
+      welcome: { message: { type: welcome } }
+  status:
+    match: { message: { type: get-status } }
+    behaviors:
+      online: { message: { type: status, status: online } }
+      offline: { message: { type: status, status: offline } }

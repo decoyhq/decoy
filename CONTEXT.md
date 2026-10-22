@@ -137,15 +137,23 @@ One-shot/temp behavior is roadmap.
 _Avoid_: "admin", "manager".
 
 **Control API**:
-The cross-process mirror of the **Controller** plus catalog/read-model inspection. Resolution,
-recording, WebSocket, and plugin capabilities are roadmap/experimental until intentionally frozen.
+The cross-process mirror of the **Controller** plus catalog/read-model inspection, and `wait` (for a
+live **Connection**) and `send` (to it). Resolution, recording, other Connection controls (close,
+wait for a message), and plugin capabilities are roadmap/experimental until intentionally frozen.
 _Avoid_: letting UI-only endpoints become the public adapter contract accidentally.
 
 **Router**:
-A first-class **Session** handle that exposes Controller verbs plus session identity/header helpers.
+A first-class **Session** handle that exposes Controller verbs, `connection(route)` to wait for a
+**Connection**, and session identity/header helpers.
 Different integrations may implement it in-process, through a sidecar runtime, or over HTTP, but
 must preserve the same semantic contract.
 _Avoid_: "client" when referring to the per-Session handle.
+
+**Connection**:
+A **Session**'s live connections (WebSocket, streaming gRPC) on one **Route**, as returned by the
+Router's `connection(route)` once one is live. `send` pushes a message to all of them, skipping
+Cases. A reconnect is a new connection.
+_Avoid_: "socket" for the Session-level handle (a socket is one client connection), "channel".
 
 ### Extension concepts
 
