@@ -15,7 +15,7 @@ use futures_util::{SinkExt as _, StreamExt as _};
 use tokio::sync::{RwLock, mpsc};
 use tokio::task::JoinSet;
 
-use crate::connections::Connections;
+use crate::connections::{Connections, Registration};
 use crate::engine::Controller;
 use crate::schema::WsClose;
 use crate::ws::{Inbound, WsConnection, WsReply};
@@ -51,9 +51,12 @@ pub(super) async fn accept(
         Ok(upgrade) => upgrade,
         Err(rejection) => return rejection.into_response(),
     };
+    // Registered before the handshake task starts, so a drain that begins in between still
+    // waits for this socket.
+    let registration = connections.register(&session, &connection.route, crate::ws::OUTPUT);
     let events = crate::events::current();
     upgrade.on_upgrade(move |socket| async move {
-        let open = run(socket, controller, connections, session, connection);
+        let open = run(socket, controller, session, connection, registration);
         match events {
             Some(events) => crate::events::logging_to(events, open).await,
             None => open.await,
@@ -81,13 +84,11 @@ type Stream = SplitStream<WebSocket>;
 async fn run(
     socket: WebSocket,
     controller: Arc<RwLock<Controller>>,
-    connections: Connections,
     session: String,
     connection: WsConnection,
+    (_registration, mut pushed): (Registration, mpsc::Receiver<Vec<u8>>),
 ) {
     let (mut sink, mut stream) = socket.split();
-    let (_registration, mut pushed) =
-        connections.register(&session, &connection.route, crate::ws::OUTPUT);
     let (outbox, mut outgoing) = mpsc::channel(OUTBOX);
     // Dropped when the connection ends, which cancels every pending reply.
     let mut replies = JoinSet::new();
