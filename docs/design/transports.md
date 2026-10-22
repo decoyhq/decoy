@@ -2,7 +2,8 @@
 
 Status: **draft for review** (#216). Once agreed, this becomes the spec for gRPC (#217) and
 WebSocket/SSE (#218). Implemented: HTTP, gRPC unary and server streaming, and WebSocket text frames
-without pipelines (section 6; `every`, Control API `close` and `wait` not yet).
+without pipelines (section 6; `every`, Control API `close` and the `wait` conditions other than
+`connected: true` not yet).
 
 Read it as "what would I write in my mocks". Every open choice is marked **Q** with a recommendation
 at the end.
@@ -443,8 +444,9 @@ content-type: application/json
   is the `data` and the body may add `event`, `id` and `retry`, as in a `messages` item.
 - **Response:** `200 { "delivered": <n> }`. `404` for an unknown Route, `409` for a Route that isn't
   ws/sse/streaming gRPC.
-- **No live connection:** the call waits for one up to `timeout` (milliseconds, default 5000), then
-  delivers. On timeout it fails with `408`: something is wrong with the test or app (**Q5**).
+- **No live connection:** the call waits for one up to `timeout` (milliseconds, default 5000,
+  capped at 5 minutes), then delivers. On timeout it fails with `408`: something is wrong with the
+  test or app (**Q5**).
 - **Slow reader:** each connection queues up to 64 unread messages. One whose queue is full skips
   the message and doesn't count in `delivered`; with every one full, `send` waits as above.
 
@@ -453,10 +455,16 @@ The other Control API verbs on live connections are scoped the same way (Route +
 - **`POST /__decoy__/control/close`** `{ route, code?, reason? }` closes the Session's connections on
   the Route, to test reconnect or error UI. `200 { "closed": <n> }` (**Q18**).
 - **`POST /__decoy__/control/wait`** waits inside Decoy and returns when the condition holds, or
-  `408` after `timeout` (follow-up slice) (**Q19**):
-  - `{ route, message: <partial match> }`: until the client has sent a matching message; returns the
-    decoded message. Matching uses Case `match` rules over what Decoy recorded for that Session.
-  - `{ route, settled: true }`: until no delayed or scheduled item is left for that Route.
+  `408` after `timeout` (default 5000) (**Q19**):
+  - `{ route, connected: true }` (built): until the Session has a live connection on the Route that
+    `send` would reach now (opened with the current output type); returns `{ "connections": <n> }`.
+    `404`/`409` as for `send`. WebSocket sockets always count; a gRPC stream whose Case ends with a
+    `status` is never registered, so `wait` answers `408` for it.
+  - `{ route, message: <partial match> }` (follow-up slice): until the client has sent a matching
+    message; returns the decoded message. Matching uses Case `match` rules over what Decoy recorded
+    for that Session.
+  - `{ route, settled: true }` (follow-up slice): until no delayed or scheduled item is left for
+    that Route.
 
 ### Playwright
 

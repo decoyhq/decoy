@@ -1,5 +1,6 @@
 //! `decoy serve` answering WebSocket clients on the HTTP port: Routes by path and query,
-//! `on: connect` Cases, message Cases, timed `messages`, `close`, Sessions and Control API `send`.
+//! `on: connect` Cases, message Cases, timed `messages`, `close`, Sessions and Control API `send`
+//! and `wait`.
 
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -179,6 +180,31 @@ async fn send_to_a_socket_route_waits_for_a_connection_then_times_out() {
         )
         .await;
     assert_eq!(status, 408, "{body}");
+}
+
+#[tokio::test]
+async fn wait_resolves_once_that_sessions_socket_opens_else_times_out() {
+    let server = Server::start().await;
+    let _elsewhere = server
+        .connect("/subscribe?service=friend", Some("other"))
+        .await;
+    let (status, body) = server
+        .wait(
+            r#"{"route":"friend-socket","connected":true,"timeout":100}"#,
+            "w1",
+        )
+        .await;
+    assert_eq!(status, 408, "{body}");
+
+    let waiting = server.wait(r#"{"route":"friend-socket","connected":true}"#, "w1");
+    let connecting = async {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        server
+            .connect("/subscribe?service=friend", Some("w1"))
+            .await
+    };
+    let ((status, body), _socket) = tokio::join!(waiting, connecting);
+    assert_eq!((status, body), (200, json!({ "connections": 1 })));
 }
 
 #[tokio::test]
@@ -401,6 +427,11 @@ impl Server {
 
     async fn send(&self, body: &str, session: &str) -> (u16, Value) {
         let response = self.post("send", body, session).await;
+        (response.status().as_u16(), response.json().await.unwrap())
+    }
+
+    async fn wait(&self, body: &str, session: &str) -> (u16, Value) {
+        let response = self.post("wait", body, session).await;
         (response.status().as_u16(), response.json().await.unwrap())
     }
 }

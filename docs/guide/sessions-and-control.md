@@ -54,7 +54,8 @@ curl -X POST localhost:8080/__decoy__/control/send \
   One that doesn't fit the method's output type gets `400` with the reason, and nothing is sent.
 - WebSocket: a string `message` goes out as-is, anything else as JSON text.
 - Only connections opened in the same Session (`x-mock-session`) get it.
-- With no live connection yet, `send` waits for one up to `timeout` milliseconds (default `5000`).
+- With no live connection yet, `send` waits for one up to `timeout` milliseconds (default `5000`,
+  at most 5 minutes: a longer `timeout` is cut to that).
 - Each connection queues up to 64 unread messages. A connection whose queue is full skips the
   message and doesn't count in `delivered`; if every one is full, `send` waits as above.
 - After a [reload](config.md#reloading), `message` is encoded with the current output type, also for
@@ -69,6 +70,37 @@ curl -X POST localhost:8080/__decoy__/control/send \
 | `409`  | the Route has no long-lived connections (HTTP, unary gRPC)                                             |
 | `408`  | no live connection of the Route in this Session took it within timeout (none, all full, or older type) |
 | `503`  | Decoy is shutting down                                                                                 |
+
+Malformed JSON or an unknown body field returns `400` and a missing JSON content type `415`, as
+for the other verbs.
+
+## wait
+
+`POST /__decoy__/control/wait` with `connected: true` returns once the caller's Session has a live
+connection of the Route, so a test can `send` knowing the page's socket or stream is open.
+
+```sh
+curl -X POST localhost:8080/__decoy__/control/wait \
+  -H 'x-mock-session: test-42' \
+  -H 'content-type: application/json' \
+  -d '{"route":"friend-socket","connected":true,"timeout":2000}'
+```
+
+- Only connections opened in the same Session (`x-mock-session`) count, and only those `send`
+  can reach: a WebSocket socket always counts; a gRPC stream counts only while it stays open for
+  `send` (its Case has no `status`) and was opened with the Route's current output type. A finite
+  scripted stream (its Case ends with a `status`) is never registered, so `wait` answers `408`.
+- It waits up to `timeout` milliseconds (default `5000`, at most 5 minutes).
+- `connected: true` is the only condition so far.
+
+| status | when                                                                      |
+| ------ | ------------------------------------------------------------------------- |
+| `200`  | `{"connections":<n>}`: how many such connections are open in this Session |
+| `400`  | `connected` missing or not `true`, or another condition (`message`)       |
+| `404`  | unknown Route                                                             |
+| `409`  | the Route has no long-lived connections (HTTP, unary gRPC)                |
+| `408`  | no live connection of the Route opened in this Session within timeout     |
+| `503`  | Decoy is shutting down                                                    |
 
 Malformed JSON or an unknown body field returns `400` and a missing JSON content type `415`, as
 for the other verbs.

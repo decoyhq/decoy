@@ -8,8 +8,8 @@ use super::response::{
 };
 use crate::connections::Connections;
 use crate::control_api::{
-    ControlApiRequest, HEALTH_PATH, SEND_PATH, handle_control_request, handle_send_request,
-    is_control_path, session_id,
+    ControlApiRequest, HEALTH_PATH, SEND_PATH, WAIT_PATH, handle_control_request,
+    handle_send_request, handle_wait_request, is_control_path, session_id,
 };
 use crate::engine::Controller;
 use crate::grpc::{GrpcReply, GrpcRequest, GrpcResponse, RESOURCE_EXHAUSTED, UNIMPLEMENTED};
@@ -136,6 +136,10 @@ async fn respond(
             // `send` may wait for a connection; it must not hold the Controller meanwhile.
             let catalog = controller.read().await.catalog();
             return control_response(handle_send_request(&catalog, &connections, request).await);
+        }
+        if uri.path() == WAIT_PATH && request_method == axum::http::Method::POST {
+            let catalog = controller.read().await.catalog();
+            return control_response(handle_wait_request(&catalog, &connections, request).await);
         }
         let response = handle_control_request(&mut *controller.write().await, request);
         return control_response(response);

@@ -130,7 +130,8 @@ cases:
 - Without `status`, the call stays open after the list. Each Control API
   [`send`](sessions-and-control.md#send) to the Route from the call's Session arrives as another
   response message, until the client cancels. A `send` that comes while the list is still playing
-  arrives after it. `{}` opens the stream with nothing scripted.
+  arrives after it. `{}` opens the stream with nothing scripted. Control API
+  [`wait`](sessions-and-control.md#wait) with `connected: true` resolves once such a stream is open.
 - `message` outside the list is only the text of an error `status`, and `metadata` needs a
   `status` to be sent with. `stream` on a unary method fails at startup.
 - `delay` on the Behavior itself waits before the first message.

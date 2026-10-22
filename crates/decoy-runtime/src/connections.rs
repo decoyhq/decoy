@@ -1,5 +1,5 @@
 //! Live long-lived connections (WebSocket, SSE, streaming gRPC), so the Control API `send` can
-//! push messages to them (`docs/design/transports.md` §9).
+//! push messages to them and `wait` can wait for one (`docs/design/transports.md` §9).
 //!
 //! A transport registers each connection with the Session it opened with (§10) and reads the
 //! messages pushed to it from the returned receiver. `send` encodes each message through the Route's
@@ -19,7 +19,7 @@ pub struct Connections {
 #[derive(Debug, Default)]
 struct Inner {
     live: Mutex<Live>,
-    /// Wakes `send` calls waiting for a connection.
+    /// Wakes `send` and `wait` calls waiting for a connection.
     registered: Notify,
     /// Wakes [`Connections::all_ended`] as connections end.
     ended: Notify,
@@ -45,7 +45,7 @@ type Sender = mpsc::Sender<Vec<u8>>;
 /// Messages a connection may have queued and unread; past it, `send` skips that connection.
 const SEND_QUEUE: usize = 64;
 
-/// How often a waiting `send` looks again for a connection with room.
+/// How often a waiting `send` or `wait` looks again, for changes no registration signals.
 const FULL_QUEUE_RETRY: Duration = Duration::from_millis(10);
 
 /// Keeps a connection registered; dropping it unregisters the connection.
@@ -100,21 +100,58 @@ impl Connections {
         output: &str,
         message: Vec<u8>,
         timeout: Duration,
-    ) -> Result<usize, SendError> {
+    ) -> Result<usize, LiveError> {
         let address = (session.to_owned(), route.to_owned());
+        self.wait_for(timeout, || self.deliver(&address, output, &message))
+            .await
+    }
+
+    /// Waits up to `timeout` until `session` has a live connection of `route` that [`Self::send`]
+    /// with `output` would reach, so one opened before a reload changed the type does not count.
+    /// Returns how many it has.
+    pub async fn wait_connected(
+        &self,
+        session: &str,
+        route: &str,
+        output: &str,
+        timeout: Duration,
+    ) -> Result<usize, LiveError> {
+        let address = (session.to_owned(), route.to_owned());
+        self.wait_for(timeout, || {
+            let live = self.inner.live.lock().expect("connections lock");
+            if live.closed {
+                return Err(LiveError::Closed);
+            }
+            Ok(live.by_address.get(&address).map_or(0, |senders| {
+                senders
+                    .iter()
+                    .filter(|(_, opened, _)| opened == output)
+                    .count()
+            }))
+        })
+        .await
+    }
+
+    /// Runs `check` until it counts at least one connection, waking on each registration.
+    async fn wait_for(
+        &self,
+        timeout: Duration,
+        check: impl Fn() -> Result<usize, LiveError>,
+    ) -> Result<usize, LiveError> {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
             // Listen before checking, so a registration between the check and the wait still wakes us.
             let registered = self.inner.registered.notified();
-            let delivered = self.deliver(&address, output, &message)?;
-            if delivered > 0 {
-                return Ok(delivered);
+            let found = check()?;
+            if found > 0 {
+                return Ok(found);
             }
-            // A full queue frees up without a registration, so look again soon.
+            // Not every change wakes us: a full queue drains and a counted connection can leave
+            // without a registration, so look again soon.
             let retry = deadline.min(tokio::time::Instant::now() + FULL_QUEUE_RETRY);
             let _ = tokio::time::timeout_at(retry, registered).await;
             if tokio::time::Instant::now() >= deadline {
-                return Err(SendError::Timeout);
+                return Err(LiveError::Timeout);
             }
         }
     }
@@ -142,10 +179,10 @@ impl Connections {
         }
     }
 
-    fn deliver(&self, address: &Address, output: &str, message: &[u8]) -> Result<usize, SendError> {
+    fn deliver(&self, address: &Address, output: &str, message: &[u8]) -> Result<usize, LiveError> {
         let live = self.inner.live.lock().expect("connections lock");
         if live.closed {
-            return Err(SendError::Closed);
+            return Err(LiveError::Closed);
         }
         Ok(live.by_address.get(address).map_or(0, |senders| {
             senders
@@ -174,9 +211,10 @@ impl Drop for Registration {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum SendError {
-    /// No live connection with room in its queue appeared before the `send` timeout.
-    #[error("no live connection took the message before the timeout")]
+pub enum LiveError {
+    /// No connection to count appeared before the timeout: for `send`, one with room in its
+    /// queue.
+    #[error("no live connection appeared before the timeout")]
     Timeout,
     /// Decoy is shutting down; no connection will come.
     #[error("decoy is shutting down")]
@@ -202,7 +240,7 @@ mod tests {
         connections.close_all();
 
         let sent = tokio::time::timeout(Duration::from_secs(1), sending).await;
-        assert_eq!(sent.unwrap().unwrap(), Err(SendError::Closed));
+        assert_eq!(sent.unwrap().unwrap(), Err(LiveError::Closed));
     }
 
     const SHORT: Duration = Duration::from_millis(20);
@@ -246,7 +284,7 @@ mod tests {
             connections
                 .send("a", "live", "live.Tick", vec![2], SHORT)
                 .await,
-            Err(SendError::Timeout)
+            Err(LiveError::Timeout)
         );
     }
 
@@ -307,7 +345,7 @@ mod tests {
             assert_eq!(send(vec![1]).await, Ok(1));
         }
 
-        assert_eq!(send(vec![2]).await, Err(SendError::Timeout));
+        assert_eq!(send(vec![2]).await, Err(LiveError::Timeout));
         slow.recv().await.unwrap();
         assert_eq!(send(vec![3]).await, Ok(1));
     }
@@ -345,9 +383,69 @@ mod tests {
             connections
                 .send("a", "live", "live.New", vec![1], SHORT)
                 .await,
-            Err(SendError::Timeout)
+            Err(LiveError::Timeout)
         );
         assert!(old.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn wait_connected_resolves_once_that_session_opens_a_connection() {
+        let connections = Connections::default();
+        let (_a, _) = connections.register("a", "live", "live.Tick");
+        assert_eq!(
+            connections
+                .wait_connected("a", "live", "live.Tick", SHORT)
+                .await,
+            Ok(1)
+        );
+
+        let waiting = tokio::spawn({
+            let connections = connections.clone();
+            async move {
+                connections
+                    .wait_connected("b", "live", "live.Tick", Duration::from_secs(5))
+                    .await
+            }
+        });
+        tokio::time::sleep(SHORT).await;
+        let (_elsewhere, _) = connections.register("c", "live", "live.Tick");
+        let (_other_route, _) = connections.register("b", "other", "live.Tick");
+        tokio::time::sleep(SHORT).await;
+        assert!(!waiting.is_finished());
+        let (_b, _) = connections.register("b", "live", "live.Tick");
+
+        assert_eq!(waiting.await.unwrap(), Ok(1));
+    }
+
+    #[tokio::test]
+    async fn wait_connected_skips_connections_opened_with_another_output_type() {
+        let connections = Connections::default();
+        let (_old, _) = connections.register("a", "live", "live.Old");
+
+        assert_eq!(
+            connections
+                .wait_connected("a", "live", "live.New", SHORT)
+                .await,
+            Err(LiveError::Timeout)
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_connected_times_out_or_stops_on_shutdown() {
+        let connections = Connections::default();
+        assert_eq!(
+            connections
+                .wait_connected("a", "live", "live.Tick", SHORT)
+                .await,
+            Err(LiveError::Timeout)
+        );
+        connections.close_all();
+        assert_eq!(
+            connections
+                .wait_connected("a", "live", "live.Tick", SHORT)
+                .await,
+            Err(LiveError::Closed)
+        );
     }
 
     #[tokio::test]
@@ -359,7 +457,7 @@ mod tests {
             connections
                 .send("a", "live", "live.Tick", vec![1], SHORT)
                 .await,
-            Err(SendError::Timeout)
+            Err(LiveError::Timeout)
         );
     }
 }
