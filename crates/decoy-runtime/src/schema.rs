@@ -10,6 +10,7 @@ use thiserror::Error;
 pub enum Transport {
     Http,
     Grpc,
+    Ws,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -62,6 +63,7 @@ impl TryFrom<RawRoute> for Route {
         let route_match = match raw.transport {
             Transport::Http => RouteMatch::Http(serde_json::from_value(raw.route_match)?),
             Transport::Grpc => RouteMatch::Grpc(serde_json::from_value(raw.route_match)?),
+            Transport::Ws => RouteMatch::Ws(serde_json::from_value(raw.route_match)?),
         };
         Ok(Self {
             id: raw.id,
@@ -91,10 +93,14 @@ impl Route {
     pub fn validate(&self) -> Result<(), ValidationError> {
         validate_id("route", &self.id)?;
 
-        if self.transport == Transport::Http && self.pipeline.is_some() {
+        if self.pipeline.is_some() && self.transport != Transport::Grpc {
+            let transport = match self.transport {
+                Transport::Ws => "WebSocket",
+                _ => "HTTP",
+            };
             return Err(ValidationError::InvalidPipeline {
                 route: self.id.clone(),
-                reason: "HTTP Routes do not take a `pipeline` yet".to_owned(),
+                reason: format!("{transport} Routes do not take a `pipeline` yet"),
             });
         }
 
@@ -111,18 +117,28 @@ impl Route {
             target.validate()?;
         }
 
-        let path_params = match &self.route_match {
-            RouteMatch::Http(http) => Some((
-                http.path.as_str(),
-                crate::http::path::template_params(&http.path).map_err(|reason| {
-                    ValidationError::InvalidPath {
+        let path = match &self.route_match {
+            RouteMatch::Http(http) => Some(http.path.as_str()),
+            RouteMatch::Ws(ws) => {
+                if self.passthrough.is_some() {
+                    return Err(ValidationError::InvalidPassthrough {
                         route: self.id.clone(),
-                        reason,
-                    }
-                })?,
-            )),
+                    });
+                }
+                Some(ws.path.as_str())
+            }
             RouteMatch::Grpc(_) => None,
         };
+        let path_params = path
+            .map(|path| {
+                crate::http::path::template_params(path)
+                    .map(|params| (path, params))
+                    .map_err(|reason| ValidationError::InvalidPath {
+                        route: self.id.clone(),
+                        reason,
+                    })
+            })
+            .transpose()?;
 
         if self.cases.is_empty() {
             return Err(ValidationError::EmptyCases {
@@ -130,8 +146,32 @@ impl Route {
             });
         }
 
+        let mut on_connect = None;
         for (case_id, case) in &self.cases {
             validate_id("case", case_id)?;
+
+            if case.on.is_some() {
+                let reason = if self.transport != Transport::Ws {
+                    Some("`on: connect` is for WebSocket Routes")
+                } else if !case.case_match.is_null() {
+                    Some("an `on: connect` Case takes no `match`")
+                } else if let Some(first) = on_connect.replace(case_id) {
+                    return Err(ValidationError::InvalidMatch {
+                        route: self.id.clone(),
+                        case: case_id.clone(),
+                        reason: format!("`{first}` is already this Route's `on: connect` Case"),
+                    });
+                } else {
+                    None
+                };
+                if let Some(reason) = reason {
+                    return Err(ValidationError::InvalidMatch {
+                        route: self.id.clone(),
+                        case: case_id.clone(),
+                        reason: reason.to_owned(),
+                    });
+                }
+            }
 
             if case.behaviors.is_empty() {
                 return Err(ValidationError::EmptyBehaviors {
@@ -149,6 +189,9 @@ impl Route {
                     (Transport::Grpc, Behavior::Response(response)) => {
                         crate::grpc::schema::validate_response(response, self.decodes_protobuf())
                     }
+                    (Transport::Ws, Behavior::Response(response)) => {
+                        crate::ws::schema::validate_response(response)
+                    }
                     (Transport::Http, Behavior::Passthrough(passthrough)) => passthrough
                         .target
                         .as_ref()
@@ -156,6 +199,9 @@ impl Route {
                         .map_err(|error| error.to_string()),
                     (Transport::Grpc, Behavior::Passthrough(_)) => {
                         Err("gRPC Routes do not support passthrough".to_owned())
+                    }
+                    (Transport::Ws, Behavior::Passthrough(_)) => {
+                        Err("WebSocket Routes do not support passthrough".to_owned())
                     }
                 };
                 checked.map_err(|reason| ValidationError::InvalidBehavior {
@@ -194,6 +240,7 @@ impl Route {
 pub enum RouteMatch {
     Http(HttpRouteMatch),
     Grpc(GrpcRouteMatch),
+    Ws(WsRouteMatch),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -209,6 +256,17 @@ pub struct HttpRouteMatch {
 pub struct GrpcRouteMatch {
     pub service: String,
     pub method: String,
+}
+
+/// A WebSocket upgrade address: the path (with `{param}`s, as for HTTP) and query params the
+/// upgrade must carry; other params are ignored. More `query` keys win when several Routes match.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WsRouteMatch {
+    pub path: String,
+    /// Value `*` accepts any value.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub query: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -241,10 +299,19 @@ impl HttpMethod {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Case {
+    /// WebSocket: `connect` runs the Case once when the socket opens, instead of per message.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub on: Option<CaseTrigger>,
     #[serde(default, rename = "match")]
     pub case_match: Value,
     #[serde(default)]
     pub behaviors: BTreeMap<String, Behavior>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CaseTrigger {
+    Connect,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -297,8 +364,31 @@ pub struct ResponseBehavior {
     /// or without one stays open for Control API `send`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream: Option<Vec<StreamItem>>,
+    /// WebSocket: messages sent in order, each `delay` after the one before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messages: Option<Vec<StreamItem>>,
+    /// WebSocket: close the connection after the messages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub close: Option<WsClose>,
     #[serde(skip)]
     pub delay: Option<Duration>,
+}
+
+/// A WebSocket close frame.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WsClose {
+    /// 1000, or an application code 3000–4999.
+    #[serde(default = "WsClose::normal")]
+    pub code: u16,
+    #[serde(default)]
+    pub reason: String,
+}
+
+impl WsClose {
+    fn normal() -> u16 {
+        1000
+    }
 }
 
 /// One message of a server-streaming answer, sent `delay` after the one before it.
@@ -382,6 +472,10 @@ struct RawBehavior {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     stream: Option<Vec<StreamItem>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    messages: Option<Vec<StreamItem>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    close: Option<WsClose>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     target: Option<PassthroughTarget>,
     /// Integer milliseconds or a duration string such as `500ms` or `2s`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -403,6 +497,8 @@ impl TryFrom<RawBehavior> for Behavior {
                 ("message", raw.message.is_some()),
                 ("metadata", !raw.metadata.is_empty()),
                 ("stream", raw.stream.is_some()),
+                ("messages", raw.messages.is_some()),
+                ("close", raw.close.is_some()),
             ]
             .into_iter()
             .find_map(|(field, set)| set.then_some(field)),
@@ -422,6 +518,8 @@ impl TryFrom<RawBehavior> for Behavior {
                 message: raw.message,
                 metadata: raw.metadata,
                 stream: raw.stream,
+                messages: raw.messages,
+                close: raw.close,
                 delay,
             })),
             BehaviorKind::Passthrough => Ok(Self::Passthrough(PassthroughBehavior {
@@ -457,6 +555,8 @@ impl From<Behavior> for RawBehavior {
                 message: response.message,
                 metadata: response.metadata,
                 stream: response.stream,
+                messages: response.messages,
+                close: response.close,
                 target: None,
                 delay,
             },
@@ -468,6 +568,8 @@ impl From<Behavior> for RawBehavior {
                 message: None,
                 metadata: BTreeMap::new(),
                 stream: None,
+                messages: None,
+                close: None,
                 target: passthrough.target,
                 delay,
             },
@@ -500,6 +602,8 @@ pub enum ValidationError {
         kind: &'static str,
         field: &'static str,
     },
+    #[error("route `{route}`: WebSocket Routes do not support passthrough")]
+    InvalidPassthrough { route: String },
     #[error("passthrough target `{0}` must be an http or https URL")]
     InvalidTarget(String),
     #[error("behavior `{address}` is invalid: {reason}")]

@@ -1,0 +1,314 @@
+//! `decoy serve` answering WebSocket clients on the HTTP port: Routes by path and query,
+//! `on: connect` Cases, message Cases, timed `messages`, `close`, Sessions and Control API `send`.
+
+use std::fs;
+use std::io::{BufRead, BufReader};
+use std::process::{Child, Command, Stdio};
+use std::time::Duration;
+
+use futures_util::{SinkExt as _, StreamExt as _};
+use serde_json::{Value, json};
+use tempfile::TempDir;
+use tokio::net::TcpStream;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest as _;
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use tokio_tungstenite::tungstenite::{Error as WsError, Message};
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
+
+const FRIEND: &str = r#"
+id: friend-socket
+transport: ws
+match:
+  path: /subscribe
+  query: { service: friend }
+cases:
+  hello:
+    on: connect
+    behaviors:
+      ping: { message: ping }
+      silent: { messages: [] }
+      unauthorized:
+        message: { type: error, reason: unauthorized }
+        close: { code: 4001, reason: unauthorized }
+  status:
+    match: { message: { type: get-status } }
+    behaviors:
+      online: { message: { id: '${ message.id }', status: online } }
+      offline: { message: { id: '${ message.id }', status: offline } }
+  subscribe:
+    match: { message: { type: subscribe } }
+    behaviors:
+      updates:
+        messages:
+          - { message: { type: subscribed, topic: '${ message.topic }' } }
+          - { message: { type: update, topic: '${ message.topic }', count: 1 }, delay: 200ms }
+"#;
+
+const BEST_FRIEND: &str = r#"
+id: best-friend-socket
+transport: ws
+match:
+  path: /subscribe
+  query: { service: best-friend }
+cases:
+  hello:
+    on: connect
+    behaviors:
+      ping: { message: 'ping ${ query.client }' }
+"#;
+
+const COLLECTIONS: &str = r#"
+- id: happy-path
+  routes:
+    - friend-socket:hello:ping
+    - friend-socket:status:online
+    - friend-socket:subscribe:updates
+    - best-friend-socket:hello:ping
+- id: manual-start
+  from: happy-path
+  routes:
+    - friend-socket:hello:silent
+"#;
+
+const QUIET: Duration = Duration::from_millis(300);
+
+#[tokio::test]
+async fn answers_the_open_and_each_message_and_skips_unmatched_ones() {
+    let server = Server::start().await;
+    let mut friend = server
+        .connect("/subscribe?client=web&service=friend", None)
+        .await;
+    assert_eq!(friend.text().await, "ping");
+
+    friend.send(json!({ "id": 7, "type": "get-status" })).await;
+    assert_eq!(friend.json().await, json!({ "id": 7, "status": "online" }));
+
+    // No Case: nothing comes back and the socket stays open.
+    friend.send(json!({ "type": "nope" })).await;
+    friend.silent().await;
+
+    friend
+        .send(json!({ "type": "subscribe", "topic": "news" }))
+        .await;
+    assert_eq!(
+        friend.json().await,
+        json!({ "type": "subscribed", "topic": "news" })
+    );
+    assert_eq!(
+        friend.json().await,
+        json!({ "type": "update", "topic": "news", "count": 1 })
+    );
+
+    let mut best = server
+        .connect("/subscribe?service=best-friend&client=web", None)
+        .await;
+    assert_eq!(best.text().await, "ping web");
+
+    let rejected = server.try_connect("/subscribe?service=unknown", None).await;
+    let Err(WsError::Http(response)) = rejected else {
+        panic!("expected the HTTP miss, got {rejected:?}")
+    };
+    assert_eq!(response.status(), 501);
+}
+
+#[tokio::test]
+async fn sessions_pick_behaviors_and_send_reaches_only_their_sockets() {
+    let server = Server::start().await;
+    server
+        .control("useCollection", r#"{"collection":"manual-start"}"#, "s1")
+        .await;
+    let mut quiet = server
+        .connect("/subscribe?service=friend", Some("s1"))
+        .await;
+    let mut default = server.connect("/subscribe?service=friend", None).await;
+    assert_eq!(default.text().await, "ping");
+    quiet.silent().await;
+
+    let (status, body) = server
+        .send(r#"{"route":"friend-socket","message":"ping"}"#, "s1")
+        .await;
+    assert_eq!((status, body), (200, json!({ "delivered": 1 })));
+    assert_eq!(quiet.text().await, "ping");
+    default.silent().await;
+
+    // A Selection change applies to the open socket's next message.
+    server
+        .control(
+            "useRoute",
+            r#"{"route":"friend-socket","case":"status","behavior":"offline"}"#,
+            "s1",
+        )
+        .await;
+    quiet.send(json!({ "id": 1, "type": "get-status" })).await;
+    assert_eq!(quiet.json().await, json!({ "id": 1, "status": "offline" }));
+    default.send(json!({ "id": 1, "type": "get-status" })).await;
+    assert_eq!(default.json().await, json!({ "id": 1, "status": "online" }));
+}
+
+#[tokio::test]
+async fn a_behavior_closes_the_socket_after_its_messages() {
+    let server = Server::start().await;
+    server
+        .control(
+            "useRoute",
+            r#"{"route":"friend-socket","case":"hello","behavior":"unauthorized"}"#,
+            "s2",
+        )
+        .await;
+    let mut socket = server
+        .connect("/subscribe?service=friend", Some("s2"))
+        .await;
+    assert_eq!(
+        socket.json().await,
+        json!({ "type": "error", "reason": "unauthorized" })
+    );
+    let Some(Ok(Message::Close(Some(frame)))) = socket.0.next().await else {
+        panic!("expected a close frame")
+    };
+    assert_eq!(frame.code, CloseCode::from(4001));
+    assert_eq!(frame.reason.as_str(), "unauthorized");
+}
+
+#[tokio::test]
+async fn send_to_a_socket_route_waits_for_a_connection_then_times_out() {
+    let server = Server::start().await;
+    let (status, body) = server
+        .send(
+            r#"{"route":"friend-socket","message":{"a":1},"timeout":100}"#,
+            "nobody",
+        )
+        .await;
+    assert_eq!(status, 408, "{body}");
+}
+
+#[derive(Debug)]
+struct Socket(WebSocketStream<MaybeTlsStream<TcpStream>>);
+
+impl Socket {
+    async fn send(&mut self, message: Value) {
+        self.0
+            .send(Message::Text(message.to_string().into()))
+            .await
+            .unwrap();
+    }
+
+    async fn text(&mut self) -> String {
+        let next = tokio::time::timeout(Duration::from_secs(5), self.0.next()).await;
+        match next.expect("no message within 5s") {
+            Some(Ok(Message::Text(text))) => text.as_str().to_owned(),
+            other => panic!("expected a text frame, got {other:?}"),
+        }
+    }
+
+    async fn json(&mut self) -> Value {
+        serde_json::from_str(&self.text().await).unwrap()
+    }
+
+    /// Nothing arrives for a while, and the socket is still open.
+    async fn silent(&mut self) {
+        if let Ok(next) = tokio::time::timeout(QUIET, self.0.next()).await {
+            panic!("expected silence, got {next:?}");
+        }
+    }
+}
+
+struct Server {
+    _temp: TempDir,
+    child: Child,
+    port: u16,
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Server {
+    async fn start() -> Self {
+        let temp = TempDir::new().unwrap();
+        fs::create_dir_all(temp.path().join("routes")).unwrap();
+        fs::write(temp.path().join("routes/friend.yaml"), FRIEND).unwrap();
+        fs::write(temp.path().join("routes/best-friend.yaml"), BEST_FRIEND).unwrap();
+        fs::write(temp.path().join("collections.yaml"), COLLECTIONS).unwrap();
+        fs::write(
+            temp.path().join("decoy.yaml"),
+            "routes: routes\ncollections: collections.yaml\nport: 0\n",
+        )
+        .unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_decoy"))
+            .args(["serve", "--config", "decoy.yaml"])
+            .current_dir(temp.path())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        // Port 0 lets decoy pick the port; read it from `listening on`, then keep echoing stderr
+        // so the pipe never fills.
+        let (port_tx, port_rx) = std::sync::mpsc::channel();
+        let stderr = BufReader::new(child.stderr.take().unwrap());
+        std::thread::spawn(move || {
+            for line in stderr.lines().map_while(Result::ok) {
+                if let Some(addr) = line.strip_prefix("decoy serve listening on ") {
+                    let port = addr.rsplit(':').next().unwrap().parse::<u16>().unwrap();
+                    let _ = port_tx.send(port);
+                }
+                eprintln!("{line}");
+            }
+        });
+        let port = port_rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("decoy did not report its port");
+        Self {
+            _temp: temp,
+            child,
+            port,
+        }
+    }
+
+    async fn try_connect(
+        &self,
+        path_and_query: &str,
+        session: Option<&str>,
+    ) -> Result<Socket, WsError> {
+        let mut request = format!("ws://127.0.0.1:{}{path_and_query}", self.port)
+            .into_client_request()
+            .unwrap();
+        if let Some(session) = session {
+            request
+                .headers_mut()
+                .insert("x-mock-session", session.parse().unwrap());
+        }
+        let (socket, _) = tokio_tungstenite::connect_async(request).await?;
+        Ok(Socket(socket))
+    }
+
+    async fn connect(&self, path_and_query: &str, session: Option<&str>) -> Socket {
+        self.try_connect(path_and_query, session).await.unwrap()
+    }
+
+    async fn post(&self, verb: &str, body: &str, session: &str) -> reqwest::Response {
+        reqwest::Client::new()
+            .post(format!(
+                "http://127.0.0.1:{}/__decoy__/control/{verb}",
+                self.port
+            ))
+            .header("content-type", "application/json")
+            .header("x-mock-session", session)
+            .body(body.to_owned())
+            .send()
+            .await
+            .unwrap()
+    }
+
+    async fn control(&self, verb: &str, body: &str, session: &str) {
+        let response = self.post(verb, body, session).await;
+        assert_eq!(response.status(), 200, "{}", response.text().await.unwrap());
+    }
+
+    async fn send(&self, body: &str, session: &str) -> (u16, Value) {
+        let response = self.post("send", body, session).await;
+        (response.status().as_u16(), response.json().await.unwrap())
+    }
+}

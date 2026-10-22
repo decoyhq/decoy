@@ -21,6 +21,7 @@ pub mod startup;
 pub mod template;
 pub mod tls;
 pub mod watch;
+pub mod ws;
 
 pub use collections::{Activation, Collection, CollectionRouteRef, CollectionsFile};
 pub use control_api::{
@@ -39,7 +40,7 @@ pub use http::{
 pub use request::RequestEnvelope;
 pub use schema::{
     Behavior, BehaviorKind, Case, GrpcRouteMatch, HttpMethod, HttpRouteMatch, Route, RouteMatch,
-    Transport, ValidationError,
+    Transport, ValidationError, WsRouteMatch,
 };
 pub use server::{BoundListener, Reloaded, Reloader, ServeError, Server, serve};
 pub use startup::{

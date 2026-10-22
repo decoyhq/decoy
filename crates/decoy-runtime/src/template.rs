@@ -37,6 +37,9 @@ pub fn validate_response(response: &ResponseBehavior) -> Result<(), String> {
     if response.stream.is_some() {
         return Err("`stream` is for server-streaming gRPC Routes".to_owned());
     }
+    if response.messages.is_some() || response.close.is_some() {
+        return Err("`messages` and `close` are for WebSocket Routes".to_owned());
+    }
     match &response.status {
         None => {}
         Some(Value::Number(number)) => {
@@ -127,6 +130,8 @@ pub fn render_response(
         message: response.message.clone(),
         metadata: response.metadata.clone(),
         stream: response.stream.clone(),
+        messages: response.messages.clone(),
+        close: response.close.clone(),
         delay: response.delay,
     })
 }
@@ -151,23 +156,45 @@ pub fn render_grpc_response(
             .iter()
             .map(|(name, value)| Ok((name.clone(), render_text(value, request)?)))
             .collect::<Result<_, ExprError>>()?,
-        stream: response
-            .stream
-            .as_ref()
-            .map(|items| {
-                items
-                    .iter()
-                    .map(|item| {
-                        Ok(StreamItem {
-                            message: render_value(&item.message, request)?,
-                            delay: item.delay,
-                        })
-                    })
-                    .collect::<Result<_, ExprError>>()
-            })
-            .transpose()?,
+        stream: render_items(&response.stream, request)?,
         ..response.clone()
     })
+}
+
+/// Render a WebSocket Behavior: `message` and each `messages` item.
+pub fn render_ws_response(
+    response: &ResponseBehavior,
+    request: Request,
+) -> Result<ResponseBehavior, TemplateError> {
+    Ok(ResponseBehavior {
+        message: response
+            .message
+            .as_ref()
+            .map(|value| render_value(value, request))
+            .transpose()?,
+        messages: render_items(&response.messages, request)?,
+        ..response.clone()
+    })
+}
+
+fn render_items(
+    items: &Option<Vec<StreamItem>>,
+    request: Request,
+) -> Result<Option<Vec<StreamItem>>, ExprError> {
+    items
+        .as_ref()
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| {
+                    Ok(StreamItem {
+                        message: render_value(&item.message, request)?,
+                        delay: item.delay,
+                    })
+                })
+                .collect()
+        })
+        .transpose()
 }
 
 fn status_code(code: Option<u64>) -> Option<u16> {
@@ -239,6 +266,8 @@ mod tests {
             message: None,
             metadata: BTreeMap::new(),
             stream: None,
+            messages: None,
+            close: None,
             delay: None,
         }
     }

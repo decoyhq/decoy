@@ -51,6 +51,20 @@ async fn respond(
 
     let headers = request_headers(request.headers());
     let session = session_id(&headers);
+    // An upgrade no `ws` Route matches goes on as HTTP, so it gets the HTTP miss.
+    if super::ws::is_upgrade(&request) && !is_control_path(uri.path()) {
+        let path_and_query = uri
+            .path_and_query()
+            .map_or(uri.path(), |path| path.as_str());
+        let connection = controller
+            .read()
+            .await
+            .catalog()
+            .ws_upgrade(path_and_query, &headers);
+        if let Some(connection) = connection {
+            return super::ws::accept(controller, connections, session, connection, request).await;
+        }
+    }
     let request_method = request.method().clone();
     let secure = request.extensions().get::<Secure>().is_some();
     let metadata = RequestMetadata {

@@ -9,7 +9,7 @@ use super::schema::find_method;
 use super::{GrpcRequest, GrpcResponse, INVALID_ARGUMENT};
 use crate::collections::Activation;
 use crate::engine::{Candidate, Catalog, MissDiagnostic, Rejection, reject};
-use crate::matching::{grpc_case_matches, grpc_case_mismatch};
+use crate::matching::{envelope_case_matches, envelope_case_mismatch};
 use crate::schema::{Behavior, PipelineStep, ResponseBehavior, Route, RouteMatch};
 
 /// Which active route entry answers a unary call, and why the others did not.
@@ -127,13 +127,13 @@ impl Catalog {
                 continue;
             };
             if explain {
-                if let Some(failure) = grpc_case_mismatch(&case.case_match, envelope, jmes) {
+                if let Some(failure) = envelope_case_mismatch(&case.case_match, envelope, jmes) {
                     reject(&mut candidates, activation, || {
                         Rejection::Condition(failure)
                     });
                     continue;
                 }
-            } else if !grpc_case_matches(&case.case_match, envelope, jmes) {
+            } else if !envelope_case_matches(&case.case_match, envelope, jmes) {
                 continue;
             }
             let Some(Behavior::Response(response)) = case.behaviors.get(&activation.behavior)

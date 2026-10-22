@@ -1,0 +1,26 @@
+id: friend-socket
+transport: ws
+match:
+  path: /subscribe
+  query: { service: my-friend-webservice } # other params (client=browser) are ignored
+cases:
+  hello:
+    on: connect # runs once, when the socket opens
+    behaviors:
+      ping: { message: ping }
+      silent: { messages: [] }
+      unauthorized:
+        message: { type: error, reason: unauthorized }
+        close: { code: 4001, reason: unauthorized }
+  status:
+    match: { message: { type: get-status } } # runs on each matching message
+    behaviors:
+      online: { message: { id: '${ message.id }', status: online } }
+      offline: { message: { id: '${ message.id }', status: offline } }
+  subscribe:
+    match: { message: { type: subscribe } }
+    behaviors:
+      updates:
+        messages:
+          - { message: { id: '${ message.id }', type: subscribed, topic: '${ message.topic }' } }
+          - { message: { type: update, topic: '${ message.topic }', count: 1 }, delay: 200ms }

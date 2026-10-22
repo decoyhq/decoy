@@ -1,7 +1,8 @@
 # Transports: worked examples
 
 Status: **draft for review** (#216). Once agreed, this becomes the spec for gRPC (#217) and
-WebSocket/SSE (#218). Nothing here is implemented except HTTP.
+WebSocket/SSE (#218). Implemented: HTTP, gRPC unary and server streaming, and WebSocket text frames
+without pipelines (section 6; `every`, Control API `close` and `wait` not yet).
 
 Read it as "what would I write in my mocks". Every open choice is marked **Q** with a recommendation
 at the end.
@@ -348,8 +349,8 @@ test('friend goes offline', async ({ page, decoy }) => {
   Collections and `useRoute` turn it on, off or into a rejection (**Q10**).
 - **Outbound:** `message` or `messages`. A `message` that is an object or array is sent as JSON text
   unless a pipeline encodes it.
-- **Scheduling:** each item goes out after its own `delay`, counted from the inbound message (or the
-  open). Behaviors don't queue behind each other: if the page sends B while A's Behavior still has a
+- **Scheduling:** each item goes out `delay` after the one before it; the first counts from the
+  inbound message (or the open). Behaviors don't queue behind each other: if the page sends B while A's Behavior still has a
   delayed item, B's replies go out on their own timers and interleave with A's (**Q16**).
 - **Repeating:** an item with `every: 30s` repeats until the connection closes; the first send is
   one interval in (add `delay` to shift it). Follow-up slice, not the core one (**Q17**).

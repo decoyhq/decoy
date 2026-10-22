@@ -1,0 +1,3 @@
+routes: routes
+collections: collections.yaml
+port: 8094 # WebSocket upgrades and the Control API share this port

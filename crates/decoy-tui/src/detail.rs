@@ -89,6 +89,7 @@ fn transport(transport: &Transport) -> &'static str {
     match transport {
         Transport::Http => "http",
         Transport::Grpc => "grpc",
+        Transport::Ws => "ws",
     }
 }
 

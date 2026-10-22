@@ -21,6 +21,8 @@ struct Inner {
     live: Mutex<Live>,
     /// Wakes `send` calls waiting for a connection.
     registered: Notify,
+    /// Wakes [`Connections::all_ended`] as connections end.
+    ended: Notify,
 }
 
 #[derive(Debug, Default)]
@@ -28,6 +30,8 @@ struct Live {
     /// Set by [`Connections::close_all`]: later registrations are closed at once.
     closed: bool,
     next_id: u64,
+    /// Registrations not yet dropped, including those `close_all` already ended.
+    open: usize,
     /// Each connection with the full name of the output type it opened with.
     by_address: HashMap<Address, Vec<(u64, String, Sender)>>,
 }
@@ -67,6 +71,7 @@ impl Connections {
         let mut live = self.inner.live.lock().expect("connections lock");
         let id = live.next_id;
         live.next_id += 1;
+        live.open += 1;
         if !live.closed {
             live.by_address.entry(address.clone()).or_default().push((
                 id,
@@ -125,6 +130,18 @@ impl Connections {
         self.inner.registered.notify_waiters();
     }
 
+    /// Resolves once every registered connection has ended, so shutdown can wait for sockets
+    /// to finish their close handshake after [`Self::close_all`].
+    pub async fn all_ended(&self) {
+        loop {
+            let ended = self.inner.ended.notified();
+            if self.inner.live.lock().expect("connections lock").open == 0 {
+                return;
+            }
+            ended.await;
+        }
+    }
+
     fn deliver(&self, address: &Address, output: &str, message: &[u8]) -> Result<usize, SendError> {
         let live = self.inner.live.lock().expect("connections lock");
         if live.closed {
@@ -144,12 +161,15 @@ impl Connections {
 impl Drop for Registration {
     fn drop(&mut self) {
         let mut live = self.inner.live.lock().expect("connections lock");
+        live.open -= 1;
         if let Some(senders) = live.by_address.get_mut(&self.address) {
             senders.retain(|(id, _, _)| *id != self.id);
             if senders.is_empty() {
                 live.by_address.remove(&self.address);
             }
         }
+        drop(live);
+        self.inner.ended.notify_waiters();
     }
 }
 
@@ -228,6 +248,25 @@ mod tests {
                 .await,
             Err(SendError::Timeout)
         );
+    }
+
+    #[tokio::test]
+    async fn all_ended_waits_for_every_registration_to_drop() {
+        let connections = Connections::default();
+        let (open, _receiver) = connections.register("a", "live", "live.Tick");
+        connections.close_all();
+        let waiting = tokio::spawn({
+            let connections = connections.clone();
+            async move { connections.all_ended().await }
+        });
+        tokio::time::sleep(SHORT).await;
+        assert!(!waiting.is_finished());
+
+        drop(open);
+        tokio::time::timeout(Duration::from_secs(1), waiting)
+            .await
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]
