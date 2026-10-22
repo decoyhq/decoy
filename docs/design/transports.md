@@ -52,7 +52,8 @@ The outbound payload has the same two keys everywhere (HTTP keeps its own word, 
 | `ws`      | `path`, `query`     | each inbound message, or the open (`on: connect`) | `message` | `messages`      | `close`                                |
 | `sse`     | `path` (GET)        | the subscribing request                           | —         | `messages`      | per item `event`, `id`, `retry`; `end` |
 
-`stream`, `send` and `events` were earlier names for `messages` (**Q11**).
+`stream`, `send` and `events` were earlier names for `messages` (**Q11**). gRPC Routes still take
+`stream` until that rename lands; the gRPC examples below use the target name.
 
 ## 2. Config: protos and pipelines
 
@@ -190,6 +191,8 @@ cases:
           - { message: { id: a-1, state: APPROVED }, delay: 500ms }
         status: OK # ends the call; `status: ABORTED` ends it with an error
 ```
+
+Today this list is `stream:`; `messages:` is the name after the Q11 rename.
 
 With `status`, the call ends after the list. Without it, the call stays open after the list and
 each Control API `send` (§9) to the Route from the call's Session is another response message,

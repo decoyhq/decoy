@@ -67,7 +67,8 @@ void test('useRoute changes the next message on an open socket', async () => {
   assert.deepEqual(await friend.nextJson(), { id: 1, status: 'offline' })
 })
 
-void test('a Behavior can close the socket after its message', async () => {
+// A bound, so a socket that never closes fails the test instead of hanging the run.
+void test('a Behavior can close the socket after its message', { timeout: 5000 }, async () => {
   await control('denied', 'useRoute', {
     route: 'friend-socket',
     case: 'hello',
