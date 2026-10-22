@@ -48,6 +48,9 @@ const SEND_QUEUE: usize = 64;
 /// How often a waiting `send` or `wait` looks again, for changes no registration signals.
 const FULL_QUEUE_RETRY: Duration = Duration::from_millis(10);
 
+/// Stands in for a timeout too long for an `Instant`; about 30 years, inside every platform's range.
+const FOREVER: Duration = Duration::from_secs(30 * 365 * 24 * 60 * 60);
+
 /// Keeps a connection registered; dropping it unregisters the connection.
 #[derive(Debug)]
 pub struct Registration {
@@ -138,7 +141,9 @@ impl Connections {
         timeout: Duration,
         check: impl Fn() -> Result<usize, LiveError>,
     ) -> Result<usize, LiveError> {
-        let deadline = tokio::time::Instant::now() + timeout;
+        let now = tokio::time::Instant::now();
+        // A timeout past what an Instant holds (`u64::MAX` ms overflows on macOS) waits for good.
+        let deadline = now.checked_add(timeout).unwrap_or(now + FOREVER);
         loop {
             // Listen before checking, so a registration between the check and the wait still wakes us.
             let registered = self.inner.registered.notified();
@@ -446,6 +451,17 @@ mod tests {
                 .await,
             Err(LiveError::Closed)
         );
+    }
+
+    #[tokio::test]
+    async fn a_timeout_too_long_for_an_instant_still_waits() {
+        let connections = Connections::default();
+        let (_open, _) = connections.register("a", "live", "live.Tick");
+
+        let found = connections
+            .wait_connected("a", "live", "live.Tick", Duration::MAX)
+            .await;
+        assert_eq!(found, Ok(1));
     }
 
     #[tokio::test]
