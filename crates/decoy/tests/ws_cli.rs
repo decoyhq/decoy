@@ -181,6 +181,63 @@ async fn send_to_a_socket_route_waits_for_a_connection_then_times_out() {
     assert_eq!(status, 408, "{body}");
 }
 
+#[tokio::test]
+async fn back_to_back_messages_are_answered_in_order() {
+    let server = Server::start().await;
+    // Several sockets bursting at once, so replies run on many Decoy threads.
+    let bursts = (0..20).map(|_| async {
+        let mut friend = server.connect("/subscribe?service=friend", None).await;
+        assert_eq!(friend.text().await, "ping");
+        for id in 0..50 {
+            let frame = json!({ "id": id, "type": "get-status" }).to_string();
+            friend.0.feed(Message::Text(frame.into())).await.unwrap();
+        }
+        friend.0.flush().await.unwrap();
+        let mut ids = Vec::new();
+        for _ in 0..50 {
+            ids.push(friend.json().await["id"].as_u64().unwrap());
+        }
+        assert_eq!(ids, (0..50).collect::<Vec<_>>());
+    });
+    futures_util::future::join_all(bursts).await;
+}
+
+// Linux only: 400 sockets pass macOS's default limit of 256 open files.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn shutdown_closes_every_open_socket_with_going_away() {
+    let mut server = Server::start().await;
+    let mut sockets = Vec::new();
+    // Enough sockets that some are still closing when Decoy would otherwise exit.
+    for _ in 0..400 {
+        let mut socket = server.connect("/subscribe?service=friend", None).await;
+        assert_eq!(socket.text().await, "ping");
+        sockets.push(socket);
+    }
+
+    let status = Command::new("kill")
+        .args(["-INT", &server.child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    for socket in &mut sockets {
+        assert_eq!(socket.close_code().await, CloseCode::Away);
+    }
+    let _ = server.child.wait();
+}
+
+#[test]
+fn ws_routes_that_could_match_one_upgrade_fail_startup() {
+    let twin = FRIEND.replace("id: friend-socket", "id: friend-twin");
+    let stderr = Server::fails_to_start(&[("friend.yaml", FRIEND), ("twin.yaml", &twin)]);
+    assert!(
+        stderr.contains(
+            "WebSocket Routes `friend-socket` and `friend-twin` can both match the same upgrade"
+        ),
+        "{stderr}"
+    );
+}
+
 #[derive(Debug)]
 struct Socket(WebSocketStream<MaybeTlsStream<TcpStream>>);
 
@@ -202,6 +259,23 @@ impl Socket {
 
     async fn json(&mut self) -> Value {
         serde_json::from_str(&self.text().await).unwrap()
+    }
+
+    /// The code of the close frame that ends the socket, skipping frames before it.
+    async fn close_code(&mut self) -> CloseCode {
+        let closed = async {
+            while let Some(next) = self.0.next().await {
+                match next {
+                    Ok(Message::Close(Some(frame))) => return frame.code,
+                    Ok(_) => {}
+                    Err(error) => panic!("socket ended without a close frame: {error}"),
+                }
+            }
+            panic!("socket ended without a close frame")
+        };
+        tokio::time::timeout(Duration::from_secs(5), closed)
+            .await
+            .expect("no close frame within 5s")
     }
 
     /// Nothing arrives for a while, and the socket is still open.
@@ -226,24 +300,42 @@ impl Drop for Server {
 }
 
 impl Server {
-    async fn start() -> Self {
+    fn mocks(routes: &[(&str, &str)]) -> TempDir {
         let temp = TempDir::new().unwrap();
         fs::create_dir_all(temp.path().join("routes")).unwrap();
-        fs::write(temp.path().join("routes/friend.yaml"), FRIEND).unwrap();
-        fs::write(temp.path().join("routes/best-friend.yaml"), BEST_FRIEND).unwrap();
+        for (file, route) in routes {
+            fs::write(temp.path().join("routes").join(file), route).unwrap();
+        }
         fs::write(temp.path().join("collections.yaml"), COLLECTIONS).unwrap();
         fs::write(
             temp.path().join("decoy.yaml"),
             "routes: routes\ncollections: collections.yaml\nport: 0\n",
         )
         .unwrap();
-        let mut child = Command::new(env!("CARGO_BIN_EXE_decoy"))
+        temp
+    }
+
+    fn serve(temp: &TempDir) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_decoy"));
+        command
             .args(["serve", "--config", "decoy.yaml"])
             .current_dir(temp.path())
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
+            .stderr(Stdio::piped());
+        command
+    }
+
+    /// Runs `decoy serve` on `routes`, expecting it to fail at startup; returns its stderr.
+    fn fails_to_start(routes: &[(&str, &str)]) -> String {
+        let temp = Self::mocks(routes);
+        let output = Self::serve(&temp).output().unwrap();
+        assert!(!output.status.success(), "decoy started");
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    }
+
+    async fn start() -> Self {
+        let temp = Self::mocks(&[("friend.yaml", FRIEND), ("best-friend.yaml", BEST_FRIEND)]);
+        let mut child = Self::serve(&temp).spawn().unwrap();
         // Port 0 lets decoy pick the port; read it from `listening on`, then keep echoing stderr
         // so the pipe never fills.
         let (port_tx, port_rx) = std::sync::mpsc::channel();

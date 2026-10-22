@@ -81,6 +81,19 @@ void test('a Behavior can close the socket after its message', { timeout: 5000 }
   assert.equal(closed.reason, 'unauthorized')
 })
 
+// Decoy waits for the client's close reply: dropping the socket with frames still unread would
+// reset it, and the page would see 1006 instead of the code.
+void test('a close keeps its code while the page is still sending', { timeout: 5000 }, async () => {
+  const friend = await open('my-friend-webservice')
+  await friend.next() // ping
+  friend.send({ type: 'bye' })
+  for (let n = 0; n < 2000; n++) {
+    friend.send({ type: 'noise', n })
+  }
+  const closed = await friend.closed
+  assert.equal(closed.code, 4002)
+})
+
 void test('an upgrade no ws Route matches gets the HTTP miss', async () => {
   const url = `${DECOY_URL.replace('http', 'ws')}/subscribe?service=unknown`
   const ws = new WebSocket(url)

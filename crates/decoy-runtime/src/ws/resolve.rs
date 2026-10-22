@@ -3,11 +3,11 @@ use std::cell::OnceCell;
 use jmespath::Rcvar;
 use serde_json::Value;
 
-use super::{ANY, Trigger, WsConnection, upgrade_envelope};
+use super::{MESSAGE_MISS, Trigger, WsConnection, upgrade_envelope};
 use crate::collections::Activation;
 use crate::engine::{Candidate, Catalog, MissDiagnostic, Rejection, reject};
 use crate::http::path::match_path;
-use crate::matching::{envelope_case_matches, envelope_case_mismatch};
+use crate::matching::{ANY, envelope_case_matches, envelope_case_mismatch};
 use crate::request::RequestEnvelope;
 use crate::schema::{Behavior, CaseTrigger, ResponseBehavior, RouteMatch};
 
@@ -28,7 +28,7 @@ pub enum WsResolution<'a> {
 impl Catalog {
     /// The `ws` Route for an upgrade to `path_and_query`: its path matches and the upgrade has
     /// every `query` param it lists. Among several, the one listing more `query` keys wins;
-    /// startup rejects ties (Q12).
+    /// startup rejects ties (Q12), and a tie only a repeated query key creates gets `None`.
     pub fn ws_upgrade(
         &self,
         path_and_query: &str,
@@ -39,7 +39,7 @@ impl Catalog {
         let path = path_and_query
             .split_once('?')
             .map_or(path_and_query, |(path, _)| path);
-        let (route, path_params) = self
+        let candidates: Vec<_> = self
             .routes()
             .filter_map(|route| {
                 let RouteMatch::Ws(address) = &route.route_match else {
@@ -53,10 +53,17 @@ impl Catalog {
                 if !has_query {
                     return None;
                 }
-                Some((route, address, match_path(&address.path, path)?))
+                Some((route, address.query.len(), match_path(&address.path, path)?))
             })
-            .max_by_key(|(_, address, _)| address.query.len())
-            .map(|(route, _, params)| (route, params))?;
+            .collect();
+        let best = candidates.iter().map(|(_, keys, _)| *keys).max()?;
+        let mut winners = candidates.into_iter().filter(|(_, keys, _)| *keys == best);
+        let (route, _, path_params) = winners.next()?;
+        // A repeated query key (`?service=a&service=b`) can still tie Routes startup let through;
+        // refuse rather than pick one by id.
+        if winners.next().is_some() {
+            return None;
+        }
         Some(WsConnection {
             route: route.id.clone(),
             url: path_and_query.to_owned(),
@@ -140,7 +147,7 @@ impl Catalog {
         }
         let reason = match trigger {
             Trigger::Connect => "no active `on: connect` Case",
-            Trigger::Message => "no active route case matched message",
+            Trigger::Message => MESSAGE_MISS,
         };
         miss(reason.to_owned(), candidates.unwrap_or_default())
     }
@@ -177,12 +184,16 @@ cases:
 "#,
         )
         .unwrap();
+        let best = Route::from_yaml(
+            "id: best\ntransport: ws\nmatch: { path: /subscribe, query: { service: best } }\ncases:\n  any:\n    behaviors:\n      quiet: { messages: [] }\n",
+        )
+        .unwrap();
         let plain = Route::from_yaml(
             "id: plain\ntransport: ws\nmatch: { path: '/rooms/{room}' }\ncases:\n  any:\n    behaviors:\n      quiet: { messages: [] }\n",
         )
         .unwrap();
         Catalog::new(
-            vec![friend, plain],
+            vec![friend, best, plain],
             CollectionsFile::from_yaml(&format!("- id: default\n  routes: [{collection}]\n"))
                 .unwrap(),
             crate::http::RuntimeConfig::default(),
@@ -205,9 +216,15 @@ cases:
         assert_eq!(friend.envelope["cookies"], json!({ "id": "7" }));
         assert!(
             catalog
-                .ws_upgrade("/subscribe?service=best", &headers)
+                .ws_upgrade("/subscribe?service=nobody", &headers)
                 .is_none()
         );
+        for both in [
+            "/subscribe?service=friend&service=best",
+            "/subscribe?service=best&service=friend",
+        ] {
+            assert!(catalog.ws_upgrade(both, &headers).is_none(), "{both}");
+        }
 
         let room = catalog.ws_upgrade("/rooms/a%20b", &headers).unwrap();
         assert_eq!(room.route, "plain");

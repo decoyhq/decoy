@@ -310,7 +310,7 @@ page opens /subscribe?…service=my-friend-webservice   → Route friend-socket 
 page opens /subscribe?…service=my-best-friend-service → Route best-friend-socket → hello:ping   → "ping"
 page sends { id: 7, type: get-status }               → friend-socket status:online → { id: 7, status: online }
 page sends { type: nope }                            → no Case: nothing sent, miss logged, socket stays open
-page opens /subscribe?service=unknown                → no Route: upgrade rejected with the HTTP miss
+page opens /subscribe?service=unknown                → no ws Route: handled as an HTTP GET (501 miss)
 ```
 
 Tests change which Behaviors run, or push messages themselves (section 9):
@@ -368,7 +368,8 @@ test('friend goes offline', async ({ page, decoy }) => {
   (**Q4**).
 - **Connecting:** an upgrade matching a `ws` Route is always accepted. Without an `on: connect`
   Case (or with one whose Behavior sends nothing), the server says nothing until a message arrives
-  or the test calls `send`. An upgrade no `ws` Route matches is rejected with the HTTP miss.
+  or the test calls `send`. An upgrade no `ws` Route matches (or one a repeated query key ties) is handled as an HTTP GET:
+  an HTTP Route on that path answers it, otherwise the HTTP miss (501).
 
 ## 7. WebSocket + msgpack envelope + protobuf payload
 

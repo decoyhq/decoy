@@ -152,23 +152,19 @@ impl Route {
 
             if case.on.is_some() {
                 let reason = if self.transport != Transport::Ws {
-                    Some("`on: connect` is for WebSocket Routes")
+                    Some("it is for WebSocket Routes".to_owned())
                 } else if !case.case_match.is_null() {
-                    Some("an `on: connect` Case takes no `match`")
-                } else if let Some(first) = on_connect.replace(case_id) {
-                    return Err(ValidationError::InvalidMatch {
-                        route: self.id.clone(),
-                        case: case_id.clone(),
-                        reason: format!("`{first}` is already this Route's `on: connect` Case"),
-                    });
+                    Some("an `on: connect` Case takes no `match`".to_owned())
                 } else {
-                    None
+                    on_connect.replace(case_id).map(|first| {
+                        format!("`{first}` is already this Route's `on: connect` Case")
+                    })
                 };
                 if let Some(reason) = reason {
-                    return Err(ValidationError::InvalidMatch {
+                    return Err(ValidationError::InvalidTrigger {
                         route: self.id.clone(),
                         case: case_id.clone(),
-                        reason: reason.to_owned(),
+                        reason,
                     });
                 }
             }
@@ -608,6 +604,12 @@ pub enum ValidationError {
     InvalidTarget(String),
     #[error("behavior `{address}` is invalid: {reason}")]
     InvalidBehavior { address: String, reason: String },
+    #[error("case `{route}:{case}` has an invalid `on`: {reason}")]
+    InvalidTrigger {
+        route: String,
+        case: String,
+        reason: String,
+    },
     #[error("case `{route}:{case}` has an invalid match: {reason}")]
     InvalidMatch {
         route: String,

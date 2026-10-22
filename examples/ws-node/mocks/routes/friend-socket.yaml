@@ -17,6 +17,14 @@ cases:
     behaviors:
       online: { message: { id: '${ message.id }', status: online } }
       offline: { message: { id: '${ message.id }', status: offline } }
+  bye:
+    match: { message: { type: bye } }
+    behaviors:
+      close: { close: { code: 4002, reason: bye } }
+  noise: # chatter the page sends that needs no answer
+    match: { message: { type: noise } }
+    behaviors:
+      quiet: { messages: [] }
   subscribe:
     match: { message: { type: subscribe } }
     behaviors:

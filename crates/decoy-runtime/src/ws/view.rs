@@ -84,7 +84,7 @@ impl SessionView {
                 );
             }
             (None, _) if missed && trigger == Trigger::Message => {
-                miss_warning(connection, "no active route case matched message");
+                miss_warning(connection, super::MESSAGE_MISS);
             }
             _ => {}
         }

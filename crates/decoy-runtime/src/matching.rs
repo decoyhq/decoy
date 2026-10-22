@@ -29,7 +29,7 @@ const GRPC_FIELDS: [&str; 2] = ["message", "metadata"];
 const WS_FIELDS: [&str; 5] = ["pathParams", "query", "headers", "cookies", "message"];
 
 /// Pattern value meaning "present, with any value" in the string-valued fields.
-const ANY: &str = "*";
+pub(crate) const ANY: &str = "*";
 
 /// Reject `match` shapes the matcher would silently misread.
 pub fn validate_case_match(transport: &Transport, case_match: &Value) -> Result<(), String> {

@@ -1,6 +1,7 @@
 //! Load-time checks for WebSocket Routes (`docs/design/transports.md` §6).
 
 use crate::http::path::split_path;
+use crate::matching::ANY;
 use crate::schema::{ResponseBehavior, Route, RouteMatch};
 use crate::template::validate_value;
 
@@ -50,9 +51,10 @@ pub fn find_tie<'a>(earlier: &'a [Route], route: &Route) -> Option<&'a Route> {
         paths_overlap(&other.path, &address.path)
             && other.query.len() == address.query.len()
             && other.query.iter().all(|(key, value)| {
-                address.query.get(key).is_none_or(|mine| {
-                    mine == value || mine == crate::ws::ANY || value == crate::ws::ANY
-                })
+                address
+                    .query
+                    .get(key)
+                    .is_none_or(|mine| mine == value || mine == ANY || value == ANY)
             })
     })
 }
@@ -157,7 +159,7 @@ mod tests {
         assert!(
             route("http", hello)
                 .unwrap_err()
-                .contains("for WebSocket Routes")
+                .contains("invalid `on`: it is for WebSocket Routes")
         );
         let with_match = "  hello:\n    on: connect\n    match: { message: x }\n    behaviors:\n      ping: { message: ping }\n";
         assert!(

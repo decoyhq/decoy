@@ -44,7 +44,9 @@ cases:
 - **Picking the Route:** the path matches as for HTTP (`{param}` captures a segment) and every
   listed `query` param must be present with that value (`'*'` means any value). If several Routes
   match, the one listing more `query` keys wins. Two Routes that could tie fail at startup. An
-  upgrade no `ws` Route matches gets the HTTP miss (`501`).
+  upgrade no `ws` Route matches is handled as an HTTP GET: an HTTP Route on that path answers it,
+  otherwise the HTTP miss (`501`). So does a repeated query key (`?service=a&service=b`) that would
+  match two Routes equally.
 - **`on: connect`:** at most one Case per Route. It takes no `match` and runs when the socket opens.
   Its templates see the upgrade request (`${ query.service }`). Without one, the server says
   nothing until a message arrives or the test calls `send`.

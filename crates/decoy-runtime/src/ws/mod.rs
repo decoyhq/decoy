@@ -21,8 +21,8 @@ pub use view::Inbound;
 /// are text, whatever the Route.
 pub const OUTPUT: &str = "ws:text";
 
-/// `query` pattern value accepting any value, as in Case matching.
-pub const ANY: &str = "*";
+/// Why a message got no reply.
+pub(crate) const MESSAGE_MISS: &str = "no active route case matched message";
 
 /// What runs a Case: the socket opening, or one inbound message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

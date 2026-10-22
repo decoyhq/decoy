@@ -3,6 +3,8 @@
     - friend-socket:hello:ping
     - friend-socket:status:online
     - friend-socket:subscribe:updates
+    - friend-socket:bye:close
+    - friend-socket:noise:quiet
     - best-friend-socket:hello:ping
 
 - id: manual-start # sockets open and wait; the test sends ping
