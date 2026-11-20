@@ -1,0 +1,82 @@
+{
+  "soak": {
+    "environment": {
+      "node": "v24.22.1",
+      "platform": "darwin",
+      "arch": "arm64",
+      "cores": 12,
+      "profile": "soak",
+      "rounds": 3,
+      "healthMs": 123
+    },
+    "measurements": [
+      {
+        "mode": "text",
+        "clients": 64,
+        "requests": 1080576,
+        "p50ms": "0.47",
+        "p95ms": "0.99",
+        "p99ms": "1.66",
+        "requestsPerSecond": 111422
+      },
+      {
+        "mode": "sdk",
+        "clients": 64,
+        "requests": 1080576,
+        "p50ms": "1.17",
+        "p95ms": "1.78",
+        "p99ms": "2.61",
+        "requestsPerSecond": 52017
+      },
+      {
+        "mode": "sdk-host",
+        "clients": 64,
+        "requests": 1080576,
+        "p50ms": "2.46",
+        "p95ms": "3.13",
+        "p99ms": "5.01",
+        "requestsPerSecond": 24971
+      }
+    ]
+  },
+  "commands": {
+    "environment": {
+      "node": "v24.22.1",
+      "platform": "darwin",
+      "arch": "arm64",
+      "cores": 12,
+      "profile": "commands",
+      "rounds": 1,
+      "healthMs": 124
+    },
+    "measurements": [
+      {
+        "mode": "command",
+        "clients": 8,
+        "requests": 1024,
+        "p50ms": "170.18",
+        "p95ms": "237.39",
+        "p99ms": "322.20",
+        "requestsPerSecond": 44
+      },
+      {
+        "mode": "split",
+        "clients": 8,
+        "requests": 1024,
+        "p50ms": "345.49",
+        "p95ms": "405.48",
+        "p99ms": "466.61",
+        "requestsPerSecond": 23
+      },
+      {
+        "mode": "native",
+        "clients": 8,
+        "requests": 1024,
+        "p50ms": "13.43",
+        "p95ms": "16.42",
+        "p99ms": "28.94",
+        "requestsPerSecond": 572
+      }
+    ]
+  }
+}

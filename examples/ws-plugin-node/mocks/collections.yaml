@@ -4,6 +4,18 @@
     - approvals-live:watch:approved
     - rpc:hello:welcome
     - rpc:get-user:ann
+    - transformer-sdk:watch:reply
+    - transformer-sdk:lookup:reply
+    - transformer-sdk-host:watch:reply
+    - transformer-sdk-host:lookup:reply
+    - transformer-command:watch:reply
+    - transformer-command:lookup:reply
+    - transformer-split:watch:reply
+    - transformer-split:lookup:reply
+    - transformer-native:watch:reply
+    - transformer-native:lookup:reply
+    - transformer-text:watch:reply
+    - transformer-text:lookup:reply
 
 - id: manual-start
   from: happy-path

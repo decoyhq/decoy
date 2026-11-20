@@ -1,0 +1,12 @@
+id: transformer-text
+transport: ws
+match: { path: /ws/transformer/text }
+cases:
+  watch:
+    match: { message: { ids: [a-1] } }
+    behaviors:
+      reply: { message: { id: a-1, state: APPROVED } }
+  lookup:
+    match: { message: { id: a-1 } }
+    behaviors:
+      reply: { message: { id: a-1, state: PENDING } }

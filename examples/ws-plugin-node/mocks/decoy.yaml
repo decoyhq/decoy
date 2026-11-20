@@ -6,6 +6,9 @@ protos:
   roots: [../proto] # plugins reach these through ctx.protobuf; they load no .proto files
 
 plugins:
+  transformer:
+    command: node ../transformer-prototype/bridge.mjs ../transformer-prototype/schema-map.json approval
+    timeout: 5s
   # Each entry is one process, started with Decoy. Its key namespaces its steps: `env/envelope`.
   env:
     command: node ../plugins/typed-envelope.ts # the file calls definePlugin, which serves

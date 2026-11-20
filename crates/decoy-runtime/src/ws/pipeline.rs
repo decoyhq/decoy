@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::plugins::value::{to_json, to_msgpack};
 use crate::plugins::{Call, CallConnection, CallError, Frame, Op, Plugin, Plugins};
-use crate::schema::Route;
+use crate::schema::{Route, WsTransformer};
 
 /// A frame to send.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,11 +21,17 @@ pub enum Encoded {
 #[derive(Debug, Clone)]
 pub struct WsPipeline {
     steps: Vec<(Arc<Plugin>, String)>,
+    transformer: Option<WsTransformer>,
 }
 
 /// Why a frame didn't decode or a message didn't encode.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PipelineError {
+    #[error("transformer {direction}: {reason}")]
+    Transformer {
+        direction: &'static str,
+        reason: String,
+    },
     /// A step called `miss`: the frame matches nothing.
     #[error("plugin `{plugin}` step `{step}`: {reason}")]
     Miss {
@@ -58,12 +64,21 @@ impl PipelineError {
 impl WsPipeline {
     /// The Route's Pipeline; `None` for a Route without one. Startup checked every step exists.
     pub fn of(route: &Route, plugins: &Plugins) -> Option<Self> {
+        if let Some(transformer) = &route.transformer {
+            return Some(Self {
+                steps: vec![],
+                transformer: Some(transformer.clone()),
+            });
+        }
         route.pipeline.as_ref()?;
         let steps = route
             .plugin_steps()
             .filter_map(|(key, step)| Some((plugins.get(key)?.clone(), step.to_owned())))
             .collect();
-        Some(Self { steps })
+        Some(Self {
+            steps,
+            transformer: None,
+        })
     }
 
     pub fn plugins(&self) -> impl Iterator<Item = &Arc<Plugin>> {
@@ -73,6 +88,10 @@ impl WsPipeline {
     /// Startup `check` of one outbound literal, as written (`${ }` templates included), by the
     /// step nearest the Cases.
     pub async fn check(&self, message: &Value) -> Result<(), PipelineError> {
+        // Прототип не исполняет внешнюю команду при загрузке литералов.
+        if self.transformer.is_some() {
+            return Ok(());
+        }
         let (plugin, step) = self.steps.last().expect("a pipeline has steps");
         call(plugin, step, Op::Check, to_msgpack(message), None, None).await?;
         Ok(())
@@ -85,6 +104,13 @@ impl WsPipeline {
         payload: &[u8],
         connection: &CallConnection,
     ) -> Result<Value, PipelineError> {
+        if let Some(transformer) = &self.transformer {
+            let bytes = transform("inbound", &transformer.inbound, payload.to_vec()).await?;
+            return serde_json::from_slice(&bytes).map_err(|error| PipelineError::Transformer {
+                direction: "inbound",
+                reason: error.to_string(),
+            });
+        }
         let mut value = Msgpack::Binary(payload.to_vec());
         for (plugin, step) in &self.steps {
             value = call(
@@ -108,6 +134,15 @@ impl WsPipeline {
         message: &Value,
         connection: Option<&CallConnection>,
     ) -> Result<Encoded, PipelineError> {
+        if let Some(transformer) = &self.transformer {
+            let bytes = transform(
+                "outbound",
+                &transformer.outbound,
+                message.to_string().into_bytes(),
+            )
+            .await?;
+            return Ok(Encoded::Binary(bytes));
+        }
         let mut value = to_msgpack(message);
         for (plugin, step) in self.steps.iter().rev() {
             value = call(plugin, step, Op::Encode, value, None, connection).await?;
@@ -232,4 +267,56 @@ async fn check_each(catalog: &crate::engine::Catalog, plugins: &Plugins) -> Resu
         }
     }
     Ok(())
+}
+
+/// Передаёт stdout каждой команды следующей в указанном порядке.
+async fn transform(
+    direction: &'static str,
+    commands: &[Vec<String>],
+    mut input: Vec<u8>,
+) -> Result<Vec<u8>, PipelineError> {
+    for argv in commands {
+        let [program, args @ ..] = argv.as_slice() else {
+            unreachable!("route validation requires a command");
+        };
+        input = run_command(program, args, input).await.map_err(|reason| {
+            PipelineError::Transformer {
+                direction,
+                reason: format!("{program}: {reason}"),
+            }
+        })?;
+    }
+    Ok(input)
+}
+
+/// Запускает команду без shell и одновременно подаёт stdin и читает stdout.
+async fn run_command(program: &str, args: &[String], input: Vec<u8>) -> Result<Vec<u8>, String> {
+    use std::process::Stdio;
+    use tokio::io::AsyncWriteExt;
+
+    let mut child = tokio::process::Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    let mut stdin = child.stdin.take().expect("stdin is piped");
+    let write = async move { stdin.write_all(&input).await };
+    let (written, output) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::join!(write, child.wait_with_output())
+    })
+    .await
+    .map_err(|_| "command timed out".to_owned())?;
+    let output = output.map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "{}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    written.map_err(|error| error.to_string())?;
+    Ok(output.stdout)
 }

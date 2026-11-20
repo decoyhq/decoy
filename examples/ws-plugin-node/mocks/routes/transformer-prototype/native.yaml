@@ -1,0 +1,29 @@
+id: transformer-native
+transport: ws
+match: { path: /ws/transformer/native }
+transformer:
+  inbound:
+    - [
+        ../../target/debug/examples/ws_transformer,
+        inbound,
+        transformer-prototype/schema-map.json,
+        proto,
+        approval,
+      ]
+  outbound:
+    - [
+        ../../target/debug/examples/ws_transformer,
+        outbound,
+        transformer-prototype/schema-map.json,
+        proto,
+        approval,
+      ]
+cases:
+  watch:
+    match: { message: { ids: [a-1] } }
+    behaviors:
+      reply: { message: { id: a-1, state: APPROVED } }
+  lookup:
+    match: { message: { id: a-1 } }
+    behaviors:
+      reply: { message: { id: a-1, state: PENDING } }

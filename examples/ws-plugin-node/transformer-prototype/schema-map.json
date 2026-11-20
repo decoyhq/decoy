@@ -1,0 +1,5 @@
+{
+  "watch": "approvals.v1.WatchRequest",
+  "lookup": "users.v1.GetUserRequest",
+  "approval": "approvals.v1.Approval"
+}

@@ -31,6 +31,16 @@ pub struct Route {
     /// `pipeline: <name>` as written, until startup replaces it with that `pipelines:` entry.
     #[serde(skip)]
     pub pipeline_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transformer: Option<WsTransformer>,
+}
+
+/// Временная конфигурация команд для бинарного WebSocket.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WsTransformer {
+    pub inbound: Vec<Vec<String>>,
+    pub outbound: Vec<Vec<String>>,
 }
 
 /// A Pipeline step: one of the built-ins (gRPC only, ADR 0004), or `<key>/<step>` of a plugin.
@@ -106,6 +116,7 @@ struct RawRoute {
     passthrough: Option<PassthroughTarget>,
     #[serde(default)]
     pipeline: Option<PipelineSpec>,
+    transformer: Option<WsTransformer>,
 }
 
 impl TryFrom<RawRoute> for Route {
@@ -123,6 +134,7 @@ impl TryFrom<RawRoute> for Route {
             route_match,
             cases: raw.cases,
             passthrough: raw.passthrough,
+            transformer: raw.transformer,
             pipeline_name: match &raw.pipeline {
                 Some(PipelineSpec::Named(name)) => Some(name.clone()),
                 _ => None,
@@ -151,6 +163,22 @@ impl Route {
     fn validate_pipeline(&self) -> Result<(), String> {
         if let Some(name) = &self.pipeline_name {
             return Err(format!("no `pipelines:` entry `{name}` in the config file"));
+        }
+        if let Some(transformer) = &self.transformer {
+            if self.transport != Transport::Ws || self.pipeline.is_some() {
+                return Err(
+                    "transformer requires a WebSocket Route without a plugin pipeline".to_owned(),
+                );
+            }
+            for commands in [&transformer.inbound, &transformer.outbound] {
+                if commands.is_empty()
+                    || commands
+                        .iter()
+                        .any(|argv| argv.first().is_none_or(String::is_empty))
+                {
+                    return Err("transformer directions require nonempty argv lists".to_owned());
+                }
+            }
         }
         let Some(steps) = &self.pipeline else {
             return Ok(());

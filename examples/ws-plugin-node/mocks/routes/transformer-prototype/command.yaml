@@ -1,0 +1,29 @@
+id: transformer-command
+transport: ws
+match: { path: /ws/transformer/command }
+transformer:
+  inbound:
+    - [
+        node,
+        transformer-prototype/command.mjs,
+        inbound,
+        transformer-prototype/schema-map.json,
+        approval,
+      ]
+  outbound:
+    - [
+        node,
+        transformer-prototype/command.mjs,
+        outbound,
+        transformer-prototype/schema-map.json,
+        approval,
+      ]
+cases:
+  watch:
+    match: { message: { ids: [a-1] } }
+    behaviors:
+      reply: { message: { id: a-1, state: APPROVED } }
+  lookup:
+    match: { message: { id: a-1 } }
+    behaviors:
+      reply: { message: { id: a-1, state: PENDING } }
