@@ -1,0 +1,7 @@
+- id: happy-path
+  routes:
+    - approval-command:watch:approved
+    - approval-command:lookup:pending
+    - approval-chain:watch:approved
+    - approval-chain:lookup:pending
+    - user-native:lookup:found

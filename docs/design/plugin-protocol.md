@@ -2,7 +2,7 @@
 
 Status: **spec** for the plugin host in `decoy-runtime` and the `@decoyhq/plugin` SDK. What plugins
 are for and how users configure them: `docs/design/transports.md` §7 and ADR 0004. This note is for
-someone writing an SDK in another language.
+someone writing an SDK in another language. The wire contract is sufficient to implement a worker without importing a Decoy SDK.
 
 ## Process
 
@@ -59,8 +59,7 @@ pipeline names a step it didn't list. v1 has no op that calls functions; `functi
   concurrently. Decoy sends a connection's next call only after the previous one answered or timed
   out, so a step that keeps state per connection sees its messages in order unless one timed out.
   After a timeout the late call may still run, even after the connection's `close`.
-- `connection` is `{ id, route, session }`, absent for `check`. `frame` is `"text"` or `"binary"` on
-  `decode`, absent otherwise.
+- `connection` is `{ id, route, session }` when the call belongs to a socket. It is absent during startup checks and Control API preflight encoding. `frame` is `"text"` or `"binary"` on `decode`, absent otherwise.
 - `decode`: inbound. The first step gets the frame's payload as `bin` (text frames as their UTF-8
   bytes); each later step gets the value the previous one returned.
 - `encode`: outbound, steps in reverse. The step nearest the Cases gets the rendered message; each
@@ -85,3 +84,20 @@ A plugin sends `host` to use what Decoy loaded; Decoy answers with `hostResult` 
 
 During startup checks (before Decoy serves; a reload runs none), `protobuf.encode` only validates: string leaves holding `${` are
 skipped, field names and the other leaves are still checked, and the value is an empty `bin`.
+
+## Interoperability example
+
+Each line below represents one length-prefixed MessagePack record. The arrows show which process writes it.
+
+```text
+Decoy  → worker  {kind: hello, protocol: 1, decoy: "0.4.0"}
+worker → Decoy   {kind: ready, protocol: 1, name: "example", version: "0.1.0", steps: ["message"], functions: []}
+Decoy  → worker  {kind: call, id: 1, op: decode, step: "message", input: <bin>, frame: binary}
+worker → Decoy   {kind: host, id: 1, op: protobuf.decode, args: ["example.v1.Watch", <bin>]}
+Decoy  → worker  {kind: hostResult, id: 1, ok: true, value: {id: "a-1"}}
+worker → Decoy   {kind: result, id: 1, ok: true, value: {id: "a-1"}}
+```
+
+The `call`/`result` and `host`/`hostResult` ID spaces are independent. A worker must keep reading stdin while a call awaits a host result. Replies can arrive out of order, so correlate them by message kind and ID. The prefix counts bytes in the MessagePack body and excludes the four-byte prefix itself. The reader must handle a record split across reads and several records delivered in one read.
+
+The [SDK-free worker example](../../examples/ws-plugin-node/transformer-usage/raw-worker.mjs) demonstrates the handshake, startup checking, and protobuf host calls against Decoy. Its [socket demo](../../examples/ws-plugin-node/transformer-usage/README.md#persistent-worker-without-the-sdk) verifies two input schemas in one connection.

@@ -1,0 +1,43 @@
+id: approval-chain
+transport: ws
+match: { path: /ws/approval-chain }
+transformer:
+  inbound:
+    - [
+        node,
+        transformer-prototype/command.mjs,
+        strip-grpc,
+        transformer-usage/schema-map.json,
+        approval,
+      ]
+    - [
+        node,
+        transformer-prototype/command.mjs,
+        read-proto,
+        transformer-usage/schema-map.json,
+        approval,
+      ]
+  outbound:
+    - [
+        node,
+        transformer-prototype/command.mjs,
+        write-proto,
+        transformer-usage/schema-map.json,
+        approval,
+      ]
+    - [
+        node,
+        transformer-prototype/command.mjs,
+        add-grpc,
+        transformer-usage/schema-map.json,
+        approval,
+      ]
+cases:
+  watch:
+    match: { message: { ids: [a-1] } }
+    behaviors:
+      approved: { message: { id: a-1, state: APPROVED } }
+  lookup:
+    match: { message: { id: a-1 } }
+    behaviors:
+      pending: { message: { id: a-1, state: PENDING } }

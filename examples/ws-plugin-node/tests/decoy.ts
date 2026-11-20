@@ -22,14 +22,14 @@ export function decodeProto(type: string, bytes: Uint8Array): unknown {
 }
 
 /** Starts `decoy serve` for this example (or reuses one already serving); returns a stop function. */
-export async function startDecoy(): Promise<() => void> {
+export async function startDecoy(config = 'mocks/decoy.yaml'): Promise<() => void> {
   if (await healthy()) {
     return () => undefined
   }
 
   // DECOY_BINARY_PATH: a prebuilt `decoy` (as in CI); otherwise build and run it with cargo.
   const bin = process.env.DECOY_BINARY_PATH
-  const serve = ['serve', '--config', 'mocks/decoy.yaml']
+  const serve = ['serve', '--config', config]
   const [command, ...args] = bin
     ? [bin, ...serve]
     : ['cargo', 'run', '--quiet', '-p', 'decoy', '--', ...serve]

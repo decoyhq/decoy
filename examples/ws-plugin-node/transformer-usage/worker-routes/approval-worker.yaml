@@ -1,0 +1,13 @@
+id: approval-worker
+transport: ws
+match: { path: /ws/approval-worker }
+pipeline: [raw/message]
+cases:
+  watch:
+    match: { message: { ids: [a-1] } }
+    behaviors:
+      approved: { message: { id: a-1, state: APPROVED } }
+  lookup:
+    match: { message: { id: a-1 } }
+    behaviors:
+      pending: { message: { id: a-1, state: PENDING } }

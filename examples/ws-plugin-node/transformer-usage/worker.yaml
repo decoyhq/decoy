@@ -1,0 +1,10 @@
+routes: worker-routes
+collections: worker-collections.yaml
+port: 8095
+
+protos:
+  roots: [../proto]
+
+plugins:
+  raw:
+    command: node ./raw-worker.mjs ./schema-map.json approval

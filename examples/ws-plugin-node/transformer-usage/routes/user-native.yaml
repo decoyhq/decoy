@@ -1,0 +1,25 @@
+id: user-native
+transport: ws
+match: { path: /ws/user-native }
+transformer:
+  inbound:
+    - [
+        ../../target/debug/examples/ws_transformer,
+        inbound,
+        transformer-usage/schema-map.json,
+        proto,
+        user,
+      ]
+  outbound:
+    - [
+        ../../target/debug/examples/ws_transformer,
+        outbound,
+        transformer-usage/schema-map.json,
+        proto,
+        user,
+      ]
+cases:
+  lookup:
+    match: { message: { id: a-1 } }
+    behaviors:
+      found: { message: { id: a-1, name: Ada } }
