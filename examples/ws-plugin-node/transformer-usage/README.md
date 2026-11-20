@@ -25,7 +25,7 @@ cargo build --locked -p decoy-runtime --example ws_transformer
 DECOY_BINARY_PATH="$PWD/target/debug/decoy" node examples/ws-plugin-node/transformer-usage/demo.mjs
 ```
 
-The demo uses real sockets and verifies every reply. The command paths are relative to the example working directory. See the [runtime comparison](../transformer-prototype/README.md) for measurements and remaining design choices.
+The demo uses real sockets and verifies every reply. The command paths are relative to the directory containing decoy.yaml. Each Route selects a pipeline by name. See the [runtime comparison](../transformer-prototype/README.md) for measurements and remaining design choices.
 
 ## Persistent worker without the SDK
 

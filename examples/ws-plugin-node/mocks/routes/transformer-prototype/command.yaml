@@ -1,23 +1,7 @@
 id: transformer-command
 transport: ws
 match: { path: /ws/transformer/command }
-transformer:
-  inbound:
-    - [
-        node,
-        transformer-prototype/command.mjs,
-        inbound,
-        transformer-prototype/schema-map.json,
-        approval,
-      ]
-  outbound:
-    - [
-        node,
-        transformer-prototype/command.mjs,
-        outbound,
-        transformer-prototype/schema-map.json,
-        approval,
-      ]
+pipeline: transformer-command
 cases:
   watch:
     match: { message: { ids: [a-1] } }

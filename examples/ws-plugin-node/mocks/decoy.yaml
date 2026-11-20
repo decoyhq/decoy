@@ -19,3 +19,70 @@ plugins:
 pipelines:
   approvals-ws: [env/envelope]
   rpc: [rpc/frame]
+  transformer-sdk: [transformer/sdk]
+  transformer-sdk-host: [transformer/sdk-host]
+  transformer-command:
+    inbound:
+      - [
+          node,
+          ../transformer-prototype/command.mjs,
+          inbound,
+          ../transformer-prototype/schema-map.json,
+          approval,
+        ]
+    outbound:
+      - [
+          node,
+          ../transformer-prototype/command.mjs,
+          outbound,
+          ../transformer-prototype/schema-map.json,
+          approval,
+        ]
+  transformer-native:
+    inbound:
+      - [
+          ../../../target/debug/examples/ws_transformer,
+          inbound,
+          ../transformer-prototype/schema-map.json,
+          ../proto,
+          approval,
+        ]
+    outbound:
+      - [
+          ../../../target/debug/examples/ws_transformer,
+          outbound,
+          ../transformer-prototype/schema-map.json,
+          ../proto,
+          approval,
+        ]
+  transformer-split:
+    inbound:
+      - [
+          node,
+          ../transformer-prototype/command.mjs,
+          strip-grpc,
+          ../transformer-prototype/schema-map.json,
+          approval,
+        ]
+      - [
+          node,
+          ../transformer-prototype/command.mjs,
+          read-proto,
+          ../transformer-prototype/schema-map.json,
+          approval,
+        ]
+    outbound:
+      - [
+          node,
+          ../transformer-prototype/command.mjs,
+          write-proto,
+          ../transformer-prototype/schema-map.json,
+          approval,
+        ]
+      - [
+          node,
+          ../transformer-prototype/command.mjs,
+          add-grpc,
+          ../transformer-prototype/schema-map.json,
+          approval,
+        ]

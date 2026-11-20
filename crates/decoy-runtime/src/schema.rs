@@ -31,16 +31,26 @@ pub struct Route {
     /// `pipeline: <name>` as written, until startup replaces it with that `pipelines:` entry.
     #[serde(skip)]
     pub pipeline_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     pub transformer: Option<WsTransformer>,
 }
 
 /// Временная конфигурация команд для бинарного WebSocket.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WsTransformer {
     pub inbound: Vec<Vec<String>>,
     pub outbound: Vec<Vec<String>>,
+    #[serde(skip)]
+    pub dir: std::path::PathBuf,
+}
+
+/// Именованный pipeline из decoy.yaml.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+pub enum NamedPipeline {
+    Steps(Vec<PipelineStep>),
+    Commands(WsTransformer),
 }
 
 /// A Pipeline step: one of the built-ins (gRPC only, ADR 0004), or `<key>/<step>` of a plugin.
@@ -116,7 +126,6 @@ struct RawRoute {
     passthrough: Option<PassthroughTarget>,
     #[serde(default)]
     pipeline: Option<PipelineSpec>,
-    transformer: Option<WsTransformer>,
 }
 
 impl TryFrom<RawRoute> for Route {
@@ -134,7 +143,7 @@ impl TryFrom<RawRoute> for Route {
             route_match,
             cases: raw.cases,
             passthrough: raw.passthrough,
-            transformer: raw.transformer,
+            transformer: None,
             pipeline_name: match &raw.pipeline {
                 Some(PipelineSpec::Named(name)) => Some(name.clone()),
                 _ => None,
@@ -209,13 +218,16 @@ impl Route {
 
     /// Replaces `pipeline: <name>` with the steps of that `pipelines:` entry; an unknown name is
     /// left for [`Self::validate`] to report.
-    pub fn resolve_pipeline(&mut self, pipelines: &BTreeMap<String, Vec<PipelineStep>>) {
-        if let Some(steps) = self
+    pub fn resolve_pipeline(&mut self, pipelines: &BTreeMap<String, NamedPipeline>) {
+        if let Some(pipeline) = self
             .pipeline_name
             .as_ref()
             .and_then(|name| pipelines.get(name))
         {
-            self.pipeline = Some(steps.clone());
+            match pipeline {
+                NamedPipeline::Steps(steps) => self.pipeline = Some(steps.clone()),
+                NamedPipeline::Commands(commands) => self.transformer = Some(commands.clone()),
+            }
             self.pipeline_name = None;
         }
     }

@@ -109,6 +109,26 @@ a MISS too (nothing is sent, a miss is logged); a step that throws or times out 
 On a single port, one entry handler dispatches per request: `/__decoy__/*` → Control API,
 `content-type: application/grpc*` → gRPC, everything else → HTTP (so REST over HTTP/2 works).
 
+### Named command pipelines
+
+Define commands and their argv in `decoy.yaml`. Use a name in the Route's `pipeline` field. The existing worker step list is also a named pipeline:
+
+```yaml
+plugins:
+  approvals:
+    command: node ./approvals-worker.mjs ./schemas.json approval
+
+pipelines:
+  approvals-feed: [approvals/message]
+  compressed-telemetry:
+    inbound:
+      - [node, ./telemetry-codec.mjs, unpack]
+    outbound:
+      - [node, ./telemetry-codec.mjs, pack]
+```
+
+Each command pipeline lists both directions in execution order. Commands run relative to `decoy.yaml`, without a shell. Inbound starts with WebSocket payload bytes and ends in JSON. Outbound starts with the Behavior's JSON and ends in bytes sent as a binary WebSocket message. Steps pass raw stdout to the next step. Command pipelines are opt-in for WebSocket Routes.
+
 ## 3. HTTP (today, for comparison)
 
 ```yaml

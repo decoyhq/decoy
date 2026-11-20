@@ -178,7 +178,7 @@ mod tests {
         }];
         named.resolve_pipeline(&std::collections::BTreeMap::from([(
             "approvals-ws".to_owned(),
-            steps.clone(),
+            crate::schema::NamedPipeline::Steps(steps.clone()),
         )]));
         assert_eq!(named.pipeline, Some(steps));
         assert!(named.validate().is_ok());

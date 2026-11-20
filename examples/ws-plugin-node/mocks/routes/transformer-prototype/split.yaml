@@ -1,37 +1,7 @@
 id: transformer-split
 transport: ws
 match: { path: /ws/transformer/split }
-transformer:
-  inbound:
-    - [
-        node,
-        transformer-prototype/command.mjs,
-        strip-grpc,
-        transformer-prototype/schema-map.json,
-        approval,
-      ]
-    - [
-        node,
-        transformer-prototype/command.mjs,
-        read-proto,
-        transformer-prototype/schema-map.json,
-        approval,
-      ]
-  outbound:
-    - [
-        node,
-        transformer-prototype/command.mjs,
-        write-proto,
-        transformer-prototype/schema-map.json,
-        approval,
-      ]
-    - [
-        node,
-        transformer-prototype/command.mjs,
-        add-grpc,
-        transformer-prototype/schema-map.json,
-        approval,
-      ]
+pipeline: transformer-split
 cases:
   watch:
     match: { message: { ids: [a-1] } }

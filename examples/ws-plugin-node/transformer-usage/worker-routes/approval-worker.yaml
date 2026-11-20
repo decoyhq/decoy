@@ -1,7 +1,7 @@
 id: approval-worker
 transport: ws
 match: { path: /ws/approval-worker }
-pipeline: [raw/message]
+pipeline: approval-worker
 cases:
   watch:
     match: { message: { ids: [a-1] } }

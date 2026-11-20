@@ -37,8 +37,8 @@ pub struct ServeConfig {
     pub max_body_bytes: usize,
     /// `plugins:` entries by key, the namespace of their steps (`<key>/<step>`).
     pub plugins: BTreeMap<String, PluginConfig>,
-    /// Named step lists a Route uses with `pipeline: <name>`.
-    pub pipelines: BTreeMap<String, Vec<crate::schema::PipelineStep>>,
+    /// Named step lists or command pipelines a Route uses with `pipeline: <name>`.
+    pub pipelines: BTreeMap<String, crate::schema::NamedPipeline>,
 }
 
 /// One plugin process (`docs/design/plugin-protocol.md`).
@@ -194,7 +194,7 @@ struct NativeConfigFile {
     #[serde(default)]
     plugins: BTreeMap<String, PluginFile>,
     #[serde(default)]
-    pipelines: BTreeMap<String, Vec<crate::schema::PipelineStep>>,
+    pipelines: BTreeMap<String, crate::schema::NamedPipeline>,
 }
 
 impl ServeConfig {
@@ -334,10 +334,15 @@ impl ServeConfig {
             .into_iter()
             .map(|(key, plugin)| Ok((key.clone(), plugin_config(&key, plugin, &config_base)?)))
             .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
-        let pipelines = file_config
+        let mut pipelines = file_config
             .as_ref()
             .map(|config| config.pipelines.clone())
             .unwrap_or_default();
+        for pipeline in pipelines.values_mut() {
+            if let crate::schema::NamedPipeline::Commands(commands) = pipeline {
+                commands.dir = config_base.clone();
+            }
+        }
         let protos = file_config
             .and_then(|config| config.protos)
             .map(|protos| ProtoSources {

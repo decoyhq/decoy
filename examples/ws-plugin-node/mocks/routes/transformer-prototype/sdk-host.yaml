@@ -1,7 +1,7 @@
 id: transformer-sdk-host
 transport: ws
 match: { path: /ws/transformer/sdk-host }
-pipeline: [transformer/sdk-host]
+pipeline: transformer-sdk-host
 cases:
   watch:
     match: { message: { ids: [a-1] } }

@@ -1,23 +1,7 @@
 id: transformer-native
 transport: ws
 match: { path: /ws/transformer/native }
-transformer:
-  inbound:
-    - [
-        ../../target/debug/examples/ws_transformer,
-        inbound,
-        transformer-prototype/schema-map.json,
-        proto,
-        approval,
-      ]
-  outbound:
-    - [
-        ../../target/debug/examples/ws_transformer,
-        outbound,
-        transformer-prototype/schema-map.json,
-        proto,
-        approval,
-      ]
+pipeline: transformer-native
 cases:
   watch:
     match: { message: { ids: [a-1] } }

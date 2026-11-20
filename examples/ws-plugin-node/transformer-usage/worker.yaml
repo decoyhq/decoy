@@ -8,3 +8,6 @@ protos:
 plugins:
   raw:
     command: node ./raw-worker.mjs ./schema-map.json approval
+
+pipelines:
+  approval-worker: [raw/message]

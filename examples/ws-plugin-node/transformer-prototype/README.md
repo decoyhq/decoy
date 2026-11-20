@@ -24,22 +24,26 @@ cargo build --locked -p decoy-runtime --example ws_transformer
 DECOY_BINARY_PATH="$PWD/target/debug/decoy" node examples/ws-plugin-node/transformer-prototype/bench.mjs
 ```
 
-Run with port 8095 free. The harness alternates two message types, verifies the full reply on each round trip, warms up every socket, rotates mode order and reports p50, p95, p99 and requests per second. Set `ROUNDS=1` for a quick verification. The commands resolve relative to the example directory where Decoy starts. See [command Route](../mocks/routes/transformer-prototype/command.yaml) and [split Route](../mocks/routes/transformer-prototype/split.yaml).
+Run with port 8095 free. The harness alternates two message types, verifies the full reply on each round trip, warms up every socket, rotates mode order and reports p50, p95, p99 and requests per second. Set `ROUNDS=1` for a quick verification. Command definitions live in the example’s decoy.yaml. The commands run from that file’s directory. See [command Route](../mocks/routes/transformer-prototype/command.yaml) and [split Route](../mocks/routes/transformer-prototype/split.yaml).
 
-| Route      | Round trip                                                                                                                    |
-| ---------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `text`     | Decoy's native JSON text path                                                                                                 |
-| `sdk`      | Persistent SDK worker running the same Node codec as the commands                                                             |
-| `sdk-host` | Persistent SDK worker using Decoy's `ctx.protobuf` host calls                                                                 |
-| `command`  | Decoy launches one Node process per direction                                                                                 |
-| `native`   | Decoy launches one Rust process per direction, compiling the example protos on each invocation                                |
-| `split`    | Decoy launches two Node processes per direction. The intermediate MessagePack record carries both the topic and payload bytes |
+| Mode       | Where the work runs                                                                                                                                          | New processes per round trip |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------: |
+| `text`     | Decoy handles JSON text directly. This is the WebSocket baseline.                                                                                            |                            0 |
+| `sdk`      | One persistent Node worker uses local protobufjs. It loads the schemas once and reuses them.                                                                 |                            0 |
+| `sdk-host` | One persistent Node worker handles MessagePack and framing. Decoy handles protobuf with its preloaded schemas via host calls.                                |                            0 |
+| `command`  | A new Node process handles each whole direction. The process loads the codec and schemas on each invocation.                                                 |                            2 |
+| `split`    | Each direction uses separate framing and protobuf Node processes. An intermediate MessagePack record carries the topic and payload bytes.                    |                            4 |
+| `native`   | A prebuilt Rust debug executable handles each whole direction. Cargo builds it before the run. The executable compiles the .proto files on every invocation. |                            2 |
 
 The benchmark compares small messages on one host. Per-command figures include Node startup, JS module loading and, for the protobuf step, schema loading. The Rust command gives a native reference. Generated code or compiled descriptor sets could change these figures again. `healthMs` is smoke-test output for the whole server, including startup polling, and is not per-mode startup data. For spawn-only measurements, compare a no-op payload command and the real command with Hyperfine separately.
 
 ## Measured on the Decoy runtime
 
 macOS arm64, 12 available cores, debug Rust builds and Node 24.22.1 invoked directly. Three rounds with 72 measured requests per mode for one socket and 192 for eight sockets. Recorded on the workspace filesystem. Compare the modes within this run.
+
+Each request here is one complete WebSocket request and reply. p50 is the median round-trip time. p95 is the time within which 95% of replies arrived. Requests per second is the combined rate across all sockets. Each socket keeps one request in flight.
+
+For example, at eight sockets, 95% of replies from the persistent worker using Decoy’s protobuf host calls arrived in 1.84 ms. Those sockets completed 7,070 round trips per second together. The equivalent Rust command completed 494 per second, with a p95 of 22.23 ms.
 
 | Mode       | 1 socket p50 / p95 (ms) | 1 socket req/s | 8 sockets p50 / p95 (ms) | 8 sockets req/s |
 | ---------- | ----------------------: | -------------: | -----------------------: | --------------: |
@@ -76,7 +80,7 @@ Run with `PROFILE=commands ROUNDS=1`. Socket count differs between profiles. Use
 
 - [#402 design](https://github.com/decoyhq/decoy/pull/402). Define independent inbound and outbound transformer lists, each running top to bottom. Put static invocation args in argv arrays. The application command owns the mapping from wire discriminators to schemas. For different outbound schemas, use a discriminator the application already exposes or add a named outbound transform to the Behavior alongside `message`. Implement that selector once a representative case needs it.
 - [#403 SDK](https://github.com/decoyhq/decoy/pull/403) and [#404 host](https://github.com/decoyhq/decoy/pull/404). Keep the persistent worker available while reviewing the measurements. Decide separately whether to publish the SDK or document a language-neutral worker contract. Binary RPC's per-socket counter and protobuf host services need an explicit home if worker support goes away. One-shot processes provide neither automatically.
-- [#405 runtime](https://github.com/decoyhq/decoy/pull/405). Keep the existing WS pipeline seam around Case resolution and Behavior rendering. Commands take bytes on stdin and return bytes on stdout. Inbound must end in JSON, outbound starts with JSON. The prototype uses binary replies, launch-directory paths and a two-second timeout per command. Before shipping, settle path resolution, output bounds, error versus miss, mixed text/binary handling, and whether startup checking and Control API `send` should invoke commands. The current runtime dry-runs encoding for Control API `send`, then encodes again when each receiver sends the frame.
+- [#405 runtime](https://github.com/decoyhq/decoy/pull/405). Keep the existing WS pipeline seam around Case resolution and Behavior rendering. Commands take bytes on stdin and return bytes on stdout. Inbound must end in JSON, outbound starts with JSON. The prototype uses binary replies, paths relative to decoy.yaml and a two-second timeout per command. Before shipping, settle path resolution, output bounds, error versus miss, mixed text/binary handling, and whether startup checking and Control API `send` should invoke commands. The current runtime dry-runs encoding for Control API `send`, then encodes again when each receiver sends the frame.
 - [#406 examples](https://github.com/decoyhq/decoy/pull/406). Use the opcode/topic-based example to demonstrate several schemas per Route without protobuf names in mock messages. Keep binary RPC as the example for request IDs and per-socket state.
 
 Keep both execution modes in this prototype so the comparison stays reproducible. Use the measurements to decide whether one-shot commands should be the default, an option for simple mocks, or just a local debugging tool.

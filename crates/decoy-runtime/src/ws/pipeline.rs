@@ -105,7 +105,13 @@ impl WsPipeline {
         connection: &CallConnection,
     ) -> Result<Value, PipelineError> {
         if let Some(transformer) = &self.transformer {
-            let bytes = transform("inbound", &transformer.inbound, payload.to_vec()).await?;
+            let bytes = transform(
+                "inbound",
+                &transformer.inbound,
+                &transformer.dir,
+                payload.to_vec(),
+            )
+            .await?;
             return serde_json::from_slice(&bytes).map_err(|error| PipelineError::Transformer {
                 direction: "inbound",
                 reason: error.to_string(),
@@ -138,6 +144,7 @@ impl WsPipeline {
             let bytes = transform(
                 "outbound",
                 &transformer.outbound,
+                &transformer.dir,
                 message.to_string().into_bytes(),
             )
             .await?;
@@ -273,28 +280,41 @@ async fn check_each(catalog: &crate::engine::Catalog, plugins: &Plugins) -> Resu
 async fn transform(
     direction: &'static str,
     commands: &[Vec<String>],
+    dir: &std::path::Path,
     mut input: Vec<u8>,
 ) -> Result<Vec<u8>, PipelineError> {
     for argv in commands {
         let [program, args @ ..] = argv.as_slice() else {
             unreachable!("route validation requires a command");
         };
-        input = run_command(program, args, input).await.map_err(|reason| {
-            PipelineError::Transformer {
+        input = run_command(program, args, dir, input)
+            .await
+            .map_err(|reason| PipelineError::Transformer {
                 direction,
                 reason: format!("{program}: {reason}"),
-            }
-        })?;
+            })?;
     }
     Ok(input)
 }
 
 /// Запускает команду без shell и одновременно подаёт stdin и читает stdout.
-async fn run_command(program: &str, args: &[String], input: Vec<u8>) -> Result<Vec<u8>, String> {
+async fn run_command(
+    program: &str,
+    args: &[String],
+    dir: &std::path::Path,
+    input: Vec<u8>,
+) -> Result<Vec<u8>, String> {
     use std::process::Stdio;
     use tokio::io::AsyncWriteExt;
 
-    let mut child = tokio::process::Command::new(program)
+    let path = std::path::Path::new(program);
+    let executable = if path.components().count() > 1 {
+        dir.join(path)
+    } else {
+        path.to_path_buf()
+    };
+    let mut child = tokio::process::Command::new(executable)
+        .current_dir(dir)
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

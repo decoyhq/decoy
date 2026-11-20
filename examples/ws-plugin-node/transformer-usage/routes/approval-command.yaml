@@ -1,23 +1,7 @@
 id: approval-command
 transport: ws
 match: { path: /ws/approval-command }
-transformer:
-  inbound:
-    - [
-        node,
-        transformer-prototype/command.mjs,
-        inbound,
-        transformer-usage/schema-map.json,
-        approval,
-      ]
-  outbound:
-    - [
-        node,
-        transformer-prototype/command.mjs,
-        outbound,
-        transformer-usage/schema-map.json,
-        approval,
-      ]
+pipeline: approval-command
 cases:
   watch:
     match: { message: { ids: [a-1] } }

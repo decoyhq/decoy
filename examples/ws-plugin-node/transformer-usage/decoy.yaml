@@ -1,3 +1,22 @@
 routes: routes
 collections: collections.yaml
 port: 8095
+
+pipelines:
+  approval-chain:
+    inbound:
+      - [node, ../transformer-prototype/command.mjs, strip-grpc, ./schema-map.json, approval]
+      - [node, ../transformer-prototype/command.mjs, read-proto, ./schema-map.json, approval]
+    outbound:
+      - [node, ../transformer-prototype/command.mjs, write-proto, ./schema-map.json, approval]
+      - [node, ../transformer-prototype/command.mjs, add-grpc, ./schema-map.json, approval]
+  approval-command:
+    inbound:
+      - [node, ../transformer-prototype/command.mjs, inbound, ./schema-map.json, approval]
+    outbound:
+      - [node, ../transformer-prototype/command.mjs, outbound, ./schema-map.json, approval]
+  user-native:
+    inbound:
+      - [../../../target/debug/examples/ws_transformer, inbound, ./schema-map.json, ../proto, user]
+    outbound:
+      - [../../../target/debug/examples/ws_transformer, outbound, ./schema-map.json, ../proto, user]
