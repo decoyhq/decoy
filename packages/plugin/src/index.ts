@@ -22,7 +22,7 @@ export interface Connection {
 }
 
 export interface Context {
-  /** Inbound: the kind of frame being decoded. Outbound and at startup: undefined. */
+  /** Тип кадра для входящего сообщения WebSocket. */
   frame: 'text' | 'binary' | undefined
 
   /** Undefined at startup (`check`). */
@@ -43,31 +43,20 @@ export interface Context {
   }
 }
 
-/** One pipeline step. */
-export interface Step {
-  /**
-   * Inbound: the frame's bytes → the value the Cases see. Call `miss` to skip the frame. In a
-   * pipeline of several steps, a later step gets the previous step's value instead.
-   */
-  decode(input: Uint8Array, ctx: Context): unknown
-
-  /**
-   * Outbound: a rendered message (JSON) → a string (sent as a text frame) or bytes (a binary
-   * frame). In a pipeline of several steps, an inner step's result goes to the step before it.
-   */
-  encode(value: unknown, ctx: Context): unknown
-
-  /** Optional: validate an outbound literal at startup, `${ }` templates included; throw to fail. */
-  check?(value: unknown, ctx: Context): unknown
-}
-
-export interface Plugin {
-  /** Shown in logs and errors as `<key>: <name>@<version>`. */
+export type Plugin = {
+  /** Имя и версия отображаются в диагностике рядом с именем Transformer. */
   name: string
 
   version: string
 
-  steps: Record<string, Step>
+  /** Преобразует входящее значение. Чтобы пропустить сообщение, вызови `miss`. */
+  input?(value: unknown, ctx: Context): unknown
+
+  /** Преобразует отрисованный payload или результат предыдущего шага. */
+  output?(value: unknown, ctx: Context): unknown
+
+  /** Проверяет литерал при старте, включая строки с шаблонами. */
+  check?(value: unknown, ctx: Context): unknown
 }
 
 /** Thrown by {@link miss}. */
@@ -75,7 +64,7 @@ export class Miss extends Error {
   override name = 'Miss'
 }
 
-/** From `decode`: this frame matches nothing. Decoy logs `reason` and keeps the socket open. */
+/** From `input`: this frame matches nothing. Decoy logs `reason` and keeps the socket open. */
 export function miss(reason: string): never {
   throw new Miss(reason)
 }

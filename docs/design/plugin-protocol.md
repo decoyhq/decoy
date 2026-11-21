@@ -6,7 +6,7 @@ someone writing an SDK in another language.
 
 ## Process
 
-- Decoy starts one process per `plugins:` entry with `command` run by the shell, in the directory of
+- Decoy starts one process per `transformers` entry with a `worker` argv list, in the directory of
   `decoy.yaml`, with `DECOY_PLUGIN=1` added to the environment.
 - stdin and stdout carry the protocol and nothing else: anything else on stdout is a protocol error
   that ends the plugin, so an SDK sends console output to stderr. stderr is free text: Decoy forwards each line
@@ -34,7 +34,7 @@ Decoy → plugin:
 | kind         | fields                                                                             |
 | ------------ | ---------------------------------------------------------------------------------- |
 | `hello`      | `protocol: 1`, `decoy: "<version>"`                                                |
-| `call`       | `id`, `op` (`decode`, `encode`, `check`), `step`, `input`, `frame?`, `connection?` |
+| `call`       | `id`, `op` (`input`, `output`, `check`), `input`, `frame?`, `connection?` |
 | `hostResult` | `id` (of the plugin's `host`), `ok: true, value` or `ok: false, error`             |
 | `close`      | `connection` (an id): drop the state kept for it                                   |
 | `shutdown`   | (none): exit now                                                                   |
@@ -43,15 +43,13 @@ Plugin → Decoy:
 
 | kind     | fields                                                                                       |
 | -------- | -------------------------------------------------------------------------------------------- |
-| `ready`  | `protocol: 1`, `name`, `version`, `steps: [<name>]`, `functions: []`                         |
+| `ready`  | `protocol: 1`, `name`, `version`, `directions: [<input or output>]`                         |
 | `result` | `id` (of the `call`); `ok: true, value`, or `ok: false, miss`, or `ok: false, error, stack?` |
 | `host`   | `id` (the plugin's own counter), `op`, `args: []`                                            |
 
 ## Handshake
 
-Decoy writes `hello` first. The plugin answers `ready` with the step names it serves. Startup fails
-when the plugin answers another `protocol`, exits first, sends no valid `ready` within 10 s, or a
-pipeline names a step it didn't list. v1 has no op that calls functions; `functions` is reserved and must be `[]`.
+Decoy writes `hello` first. The worker answers `ready` with the directions it provides. Startup fails if it advertises a different protocol version, exits before readiness, sends no valid `ready` within 10 s, or a Pipeline uses a direction it did not announce.
 
 ## Calls
 
@@ -59,17 +57,11 @@ pipeline names a step it didn't list. v1 has no op that calls functions; `functi
   concurrently. Decoy sends a connection's next call only after the previous one answered or timed
   out, so a step that keeps state per connection sees its messages in order unless one timed out.
   After a timeout the late call may still run, even after the connection's `close`.
-- `connection` is `{ id, route, session }`, absent for `check`. `frame` is `"text"` or `"binary"` on
-  `decode`, absent otherwise.
-- `decode`: inbound. The first step gets the frame's payload as `bin` (text frames as their UTF-8
-  bytes); each later step gets the value the previous one returned.
-- `encode`: outbound, steps in reverse. The step nearest the Cases gets the rendered message; each
-  step outward gets the value the inner one returned. The outermost step returns a `str` (sent as a
-  text frame) or `bin` (a binary frame).
-- `check`: at startup, once per outbound literal, on the step nearest the Cases. `input` is the
-  message as written, `${ }` templates included. A step without `check` answers `ok: true`.
-- `miss` (a reason) is only meaningful from `decode`: the frame is a MISS. From `encode`, it counts
-  as an error.
+- `connection` is `{ id, route, session }`, absent for `check`. WebSocket `input` also carries `frame` (`"text"` or `"binary"`).
+- `input` runs before Case matching. On WebSocket the first step gets the frame payload as `bin`. Each later step gets the previous step's result. The final result must be suitable for the transport's Message envelope.
+- `output` runs on the rendered Behavior payload or a Control API push. Each later step gets the previous step's result. WebSocket sends a final `str` as text or `bin` as binary.
+- `check` optionally validates a startup literal for the first worker in the output direction when that worker receives the untransformed value. A worker without a `check` callback answers `ok: true`.
+- A `miss` result on `input` records a Case miss for the frame. A `miss` result on `output` is a transform error.
 - No `result` within the plugin's `timeout` (default 5 s) is a plugin error; a late `result` is
   ignored.
 

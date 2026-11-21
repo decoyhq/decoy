@@ -62,16 +62,23 @@ export function serve(plugin: Plugin, io: Io = processIo): void {
     return { frame, connection, state, protobuf }
   }
 
-  const run = (step: Plugin['steps'][string], message: WireMessage, ctx: Context) => {
-    const input = message.input as Uint8Array
-
+  /** Вызывает преобразование в направлении, указанном Decoy. */
+  const run = (message: WireMessage, ctx: Context) => {
     switch (message.op) {
-      case 'decode':
-        return step.decode(input, ctx)
-      case 'encode':
-        return step.encode(input, ctx)
+      case 'input':
+      case 'output': {
+        const transform = plugin[message.op]
+
+        if (!transform) {
+          throw new Error(`plugin ${plugin.name} does not provide ${message.op}`)
+        }
+
+        return transform(message.input, ctx)
+      }
+      case 'check':
+        return plugin.check?.(message.input, ctx)
       default:
-        return step.check?.(input, ctx)
+        throw new Error(`unknown operation ${String(message.op)}`)
     }
   }
 
@@ -79,10 +86,7 @@ export function serve(plugin: Plugin, io: Io = processIo): void {
     const { id } = message
 
     try {
-      const step = plugin.steps[message.step as string]
-      if (!step) throw new Error(`plugin ${plugin.name} has no step \`${String(message.step)}\``)
-
-      const value = await run(step, message, context(message))
+      const value = await run(message, context(message))
 
       // `check` only passes or throws; what it returns means nothing.
       send({ kind: 'result', id, ok: true, value: message.op === 'check' ? null : (value ?? null) })
@@ -105,8 +109,7 @@ export function serve(plugin: Plugin, io: Io = processIo): void {
           protocol: PROTOCOL,
           name: plugin.name,
           version: plugin.version,
-          steps: Object.keys(plugin.steps),
-          functions: [],
+          directions: [...(plugin.input ? ['input'] : []), ...(plugin.output ? ['output'] : [])],
         })
         return
 

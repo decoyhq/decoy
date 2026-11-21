@@ -5,9 +5,7 @@ Date: 2026-10-17
 ## Status
 
 Accepted for direction. Hosting details may change once the first plugin worker is prototyped.
-Amended by [ADR 0004](0004-built-in-steps-only-for-grpc.md): only `grpc-frame` and `protobuf` are
-built in, a plugin is declared by its `command` alone (no manifest), and the plugin worker contract
-comes before any further built-in step.
+Amended by [ADR 0004](0004-built-in-steps-only-for-grpc.md): built-ins are limited to the gRPC default, and named Pipeline directions execute independently using worker or command Transformers. The original decisions below are retained for context.
 
 ## Context
 

@@ -158,17 +158,16 @@ _Avoid_: "socket" for the Session-level handle (a socket is one client connectio
 ### Extension concepts
 
 **Pipeline**:
-The ordered list of **Pipeline steps** between wire data and the decoded data Cases match. Inbound
-runs in order; outbound runs reversed. Declared per Route or as a config default. See ADR 0002.
-_Avoid_: separate config fields per extension kind, implicit step ordering.
+An ordered series of **Pipeline steps** between transport payloads and the values Cases and Behaviors use. Named Pipelines have independent `input` and `output` lists, each in execution order. See ADR 0004.
+_Avoid_: implicit step ordering.
+
+**Transformer**:
+A named definition for one reusable input or output transformation. A Transformer uses a persistent worker or commands for its supported directions.
 
 **Pipeline step**:
-One named transform in a **Pipeline**: the built-in `grpc-frame` and `protobuf`, or a plugin
-step. Built-in and plugin steps share one contract.
-_Avoid_: "codec" or "codec stage" (retired), "message transform stage" (retired), "middleware".
+One use of a Transformer in a Pipeline direction, or one of the built-in gRPC transforms.
+_Avoid_: "codec stage", "middleware".
 
 **Plugin**:
-A long-running external process, declared in config, that exports named **Pipeline steps** and/or
-named JMESPath functions. Started once with the runtime, never per request. Plugins format data;
-they do not redefine Route/Case/Behavior, Selection, or Session semantics.
-_Avoid_: "hook", "extension" for this concept, spawning one process per message.
+A persistent external Transformer worker. The worker formats data and can be written with the SDK or any implementation of the worker protocol.
+_Avoid_: "hook", "extension" for this concept.
