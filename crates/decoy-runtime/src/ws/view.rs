@@ -127,7 +127,7 @@ fn miss_warning(connection: &WsConnection, reason: &str) {
     ));
 }
 
-/// The frames a reply sends, as a JSON list of their texts; its close as headers.
+/// The rendered reply before scheduling and output transforms, with its planned close as headers.
 fn response(reply: Option<&WsReply>) -> CapturedResponse {
     let Some(reply) = reply else {
         return CapturedResponse {

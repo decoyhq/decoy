@@ -15,24 +15,44 @@ pub enum Transport {
     Ws,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(try_from = "RawRoute")]
 pub struct Route {
     pub id: String,
     pub transport: Transport,
-    #[serde(rename = "match")]
     pub route_match: RouteMatch,
-    #[serde(default)]
     pub cases: BTreeMap<String, Case>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub passthrough: Option<PassthroughTarget>,
     /// Steps that turn request bytes into the envelope's JSON and back (ADR 0002). `None` uses the
     /// transport default: `[grpc-frame, protobuf]` for gRPC, none for WebSocket.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<Vec<PipelineStep>>,
     /// Name of a Pipeline defined in the Decoy config.
-    #[serde(rename = "pipeline", skip_serializing_if = "Option::is_none")]
     pub pipeline_name: Option<String>,
+}
+
+impl Serialize for Route {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap as _;
+        let mut route = serializer.serialize_map(None)?;
+        route.serialize_entry("id", &self.id)?;
+        route.serialize_entry("transport", &self.transport)?;
+        route.serialize_entry("match", &self.route_match)?;
+        route.serialize_entry("cases", &self.cases)?;
+        if let Some(target) = &self.passthrough {
+            route.serialize_entry("passthrough", target)?;
+        }
+        match (&self.pipeline, &self.pipeline_name) {
+            (Some(_), Some(_)) => {
+                return Err(serde::ser::Error::custom(
+                    "a Route cannot have both built-in steps and a named Pipeline",
+                ));
+            }
+            (Some(steps), None) => route.serialize_entry("pipeline", steps)?,
+            (None, Some(name)) => route.serialize_entry("pipeline", name)?,
+            (None, None) => {}
+        }
+        route.end()
+    }
 }
 
 /// A built-in gRPC Pipeline step.

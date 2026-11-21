@@ -151,8 +151,14 @@ mod tests {
                 "id: s\ntransport: ws\nmatch: {{ path: /s }}\npipeline: {pipeline}\ncases:\n  any:\n    behaviors:\n      b: {{ message: x }}\n"
             ))
         };
-        let named = route("approvals").unwrap();
+        let mut named = route("approvals").unwrap();
         assert_eq!(named.pipeline_name.as_deref(), Some("approvals"));
+        assert_eq!(
+            Route::from_yaml(&serde_norway::to_string(&named).unwrap()).unwrap(),
+            named
+        );
+        named.pipeline = Some(vec![]);
+        assert!(serde_norway::to_string(&named).is_err());
         assert!(route("[protobuf]").is_err());
     }
 

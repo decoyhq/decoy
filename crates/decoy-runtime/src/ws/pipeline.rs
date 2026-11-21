@@ -169,7 +169,7 @@ impl WsPipeline {
                 .map(Encoded::Text)
                 .ok_or_else(|| step.failed(Op::Output, "returned non-UTF-8 text")),
             Msgpack::Binary(bytes) => Ok(Encoded::Binary(bytes)),
-            other => Err(step.failed(Op::Output, format!("expected text or bytes, got {other}"))),
+            _ => Err(step.failed(Op::Output, "expected text or bytes")),
         }
     }
 }
@@ -205,7 +205,7 @@ impl Codec {
                 crate::events::error(self.report(
                     &error,
                     "decoding a frame",
-                    &format!("frame: {}", preview(frame, payload)),
+                    &format!("\n  frame: {}", preview(frame, payload)),
                 ));
                 None
             }
@@ -224,7 +224,7 @@ impl Codec {
         match pipeline.output(message, &self.call).await {
             Ok(encoded) => Some(encoded),
             Err(error) => {
-                crate::events::error(self.report(&error, origin, &format!("message: {message}")));
+                crate::events::error(self.report(&error, origin, ""));
                 None
             }
         }
@@ -237,9 +237,7 @@ impl Codec {
             let lines: Vec<_> = stack.lines().map(|line| format!("\n    {line}")).collect();
             format!("\n  stack:{}", lines.concat())
         });
-        format!(
-            "ws `{route}` connection {id} (session {session}), {doing}: {error}\n  {value}{stack}"
-        )
+        format!("ws `{route}` connection {id} (session {session}), {doing}: {error}{value}{stack}")
     }
 
     /// Lets the plugins drop what they kept for this connection.
@@ -348,12 +346,18 @@ impl Step {
     }
 }
 
+const COMMAND_LIMIT: usize = 8;
+static COMMAND_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(COMMAND_LIMIT);
+
 /// Runs a command, reading its output while writing the payload to stdin.
 async fn run_command(
     argv: &[String],
     dir: &std::path::Path,
     bytes: &[u8],
 ) -> Result<Vec<u8>, String> {
+    let _slot = COMMAND_SLOTS
+        .try_acquire()
+        .map_err(|_| format!("command Transformer limit reached ({COMMAND_LIMIT} running)"))?;
     let mut child = tokio::process::Command::new(&argv[0])
         .args(&argv[1..])
         .current_dir(dir)
@@ -477,6 +481,21 @@ async fn check_each(catalog: &crate::engine::Catalog) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn saturated_commands_fail_before_spawn() {
+        let _busy = COMMAND_SLOTS
+            .try_acquire_many(COMMAND_LIMIT as u32)
+            .unwrap();
+        let error = run_command(
+            &["missing-executable".into()],
+            std::path::Path::new("."),
+            &[],
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("command Transformer limit"));
+    }
 
     #[tokio::test]
     async fn command_output_limit_accepts_exact_fit_and_rejects_overflow() {

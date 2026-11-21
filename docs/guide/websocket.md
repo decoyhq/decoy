@@ -143,4 +143,6 @@ apply worker config changes.
 
 Other languages can implement the [worker protocol](../design/plugin-protocol.md).
 
-A one-shot Transformer command has 5 seconds to finish. Decoy fails the transform if stdout exceeds 16 MiB or stderr exceeds 64 KiB. During a transform, each socket can buffer up to 64 subsequent data frames totaling at most 16 MiB. Exceeding either read-ahead limit closes that socket.
+A one-shot Transformer command has 5 seconds to finish. Decoy fails the transform if stdout exceeds 16 MiB or stderr exceeds 64 KiB. During a transform, each socket can buffer up to 64 subsequent data frames totaling at most 16 MiB. Across all sockets, the process budgets 64 MiB for read-ahead, charged in whole KiB with a minimum of 1 KiB per frame. Exceeding a read-ahead limit closes the socket requesting more space. Up to eight one-shot commands can run across all connections. When all slots are busy, the next command fails the transform before spawning.
+
+Open sockets keep the Pipeline selected at upgrade. Protobuf host calls use the currently loaded descriptors, including after a reload. WebSocket request events capture the rendered Behavior reply before output transforms and delays. A captured reply can therefore differ from the frames that reach the client.

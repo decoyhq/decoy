@@ -219,9 +219,12 @@ async fn serve_socket(
 const MAX_BUFFERED_FRAMES: usize = 64;
 const MAX_BUFFERED_BYTES: usize = 16 * 1024 * 1024;
 
+// Charge at least one KiB per frame to account for small and empty messages.
+static READ_AHEAD: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(64 * 1024);
+
 #[derive(Default)]
 struct BufferedFrames {
-    frames: VecDeque<Message>,
+    frames: VecDeque<(Message, tokio::sync::SemaphorePermit<'static>)>,
     bytes: usize,
 }
 
@@ -240,13 +243,18 @@ impl BufferedFrames {
         {
             return false;
         }
-        self.bytes += frame_size(&frame);
-        self.frames.push_back(frame);
+        let size = frame_size(&frame);
+        let kib = size.div_ceil(1024).max(1) as u32;
+        let Ok(permit) = READ_AHEAD.try_acquire_many(kib) else {
+            return false;
+        };
+        self.bytes += size;
+        self.frames.push_back((frame, permit));
         true
     }
 
     fn pop_front(&mut self) -> Option<Message> {
-        let frame = self.frames.pop_front()?;
+        let (frame, _permit) = self.frames.pop_front()?;
         self.bytes -= frame_size(&frame);
         Some(frame)
     }
@@ -430,6 +438,17 @@ mod tests {
             assert!(queued.push(Message::Binary(Default::default())));
         }
         assert!(!queued.push(Message::Binary(Default::default())));
+        drop(queued);
+
+        let frame = Message::Binary(vec![0; MAX_BUFFERED_BYTES].into());
+        let mut sockets: [_; 4] = std::array::from_fn(|_| BufferedFrames::default());
+        for socket in &mut sockets {
+            assert!(socket.push(frame.clone()));
+        }
+        let mut next = BufferedFrames::default();
+        assert!(!next.push(Message::Binary(Default::default())));
+        sockets[0].pop_front().unwrap();
+        assert!(next.push(frame));
     }
 
     #[tokio::test]
