@@ -27,7 +27,10 @@ use ratatui::backend::Backend;
 use tokio::sync::RwLock;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
-use app::{App, Effect, Event, Options, Verb};
+/// Public for `benches/render.rs`, which drives the TUI like `run` does.
+#[doc(hidden)]
+pub use app::{App, Event, Options};
+use app::{Effect, Verb};
 
 /// Runtime events handled per frame, so a burst of traffic draws once and keys stay responsive.
 const BATCH: usize = 1024;
