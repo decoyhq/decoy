@@ -26,6 +26,12 @@ tasks:
     desc: Run Rust and JS unit/integration tests
     deps: [test:rust, test:js]
 
+  bench:rust:
+    desc: Benchmark serving, gRPC, and TUI log rendering in release mode
+    cmds:
+      - cargo bench -p decoy-runtime --bench serving --bench grpc
+      - cargo test --release -p decoy-tui log_frame_timing -- --ignored --nocapture
+
   test:rust:
     internal: true
     cmds:

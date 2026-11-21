@@ -78,7 +78,7 @@ impl Catalog {
         // candidate.
         let mut json = OnceCell::<Rcvar>::new();
 
-        for activation in activations.iter().copied().rev() {
+        for activation in activations.rev() {
             let Some(route) = self.routes.get(&activation.route) else {
                 reject(&mut candidates, activation, || Rejection::MissingRoute);
                 continue;

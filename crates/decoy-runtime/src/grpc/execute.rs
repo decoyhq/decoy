@@ -1,24 +1,21 @@
-use std::cell::OnceCell;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
 use futures_util::StreamExt as _;
 use futures_util::stream::{self, BoxStream};
 use prost_reflect::MethodDescriptor;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tokio::sync::mpsc;
 
 use super::codec::{decode, encode, pipeline};
+use super::plan::{render, respond, status_code, status_only};
 use super::resolve::GrpcResolution;
-use super::schema::STATUS_CODES;
 use super::{GrpcRequest, GrpcResponse, INTERNAL, OK, StreamPart, UNAVAILABLE};
 use crate::collections::Activation;
 use crate::connections::{Connections, Registration};
 use crate::engine::{Catalog, MissDiagnostic};
 use crate::events::{Match, Outcome};
-use crate::expression::to_rcvar;
 use crate::schema::{ResponseBehavior, Route};
-use crate::template::render_grpc_response;
 
 /// A served call and what an event needs to explain it.
 pub(crate) struct GrpcCall {
@@ -69,6 +66,8 @@ impl Catalog {
                         ),
                         Err(reason) => (failed(reason), None),
                     }
+                } else if let Some(reply) = self.grpc_replies.get(&activation) {
+                    (reply.clone(), None)
                 } else {
                     let response = respond(route, &method, response, &envelope);
                     (response.unwrap_or_else(failed), None)
@@ -149,7 +148,7 @@ impl GrpcStream {
             Some(end) => stream::iter([StreamPart::End(end)]).boxed(),
             None => {
                 let (registration, receiver) =
-                    connections.register(session, &self.route, &self.output);
+                    connections.register_shared(session, &self.route, &self.output);
                 let open = Open {
                     _registration: registration,
                     receiver,
@@ -161,7 +160,7 @@ impl GrpcStream {
                         let end = GrpcResponse::error(UNAVAILABLE, "decoy is shutting down");
                         return Some((StreamPart::End(end), None));
                     };
-                    Some((StreamPart::Message(message), Some(open)))
+                    Some((StreamPart::Message(message.into()), Some(open)))
                 })
                 .boxed()
             }
@@ -173,15 +172,7 @@ impl GrpcStream {
 /// An open stream's link to Control API `send`; dropping it unregisters the call.
 struct Open {
     _registration: Registration,
-    receiver: mpsc::Receiver<Vec<u8>>,
-}
-
-fn render(response: &ResponseBehavior, envelope: &Value) -> Result<ResponseBehavior, String> {
-    let jmes = OnceCell::new();
-    render_grpc_response(response, &|| {
-        jmes.get_or_init(|| to_rcvar(envelope)).clone()
-    })
-    .map_err(|error| error.to_string())
+    receiver: mpsc::Receiver<bytes::Bytes>,
 }
 
 fn respond_stream(
@@ -218,62 +209,7 @@ fn respond_stream(
     })
 }
 
-fn respond(
-    route: &Route,
-    method: &MethodDescriptor,
-    response: &ResponseBehavior,
-    envelope: &Value,
-) -> Result<GrpcResponse, String> {
-    let rendered = render(response, envelope)?;
-    let status = match &rendered.status {
-        None => OK,
-        Some(status) => status_code(status)?,
-    };
-    if status != OK {
-        return status_only(status, rendered.message, rendered.metadata);
-    }
-    let message = rendered.message.unwrap_or_else(|| json!({}));
-    Ok(GrpcResponse {
-        body: encode(message, pipeline(route), &method.output())
-            .map_err(|error| error.to_string())?,
-        status: OK,
-        status_message: String::new(),
-        metadata: rendered.metadata,
-    })
-}
-
 /// `INTERNAL` naming the Behavior that could not render or encode.
 fn behavior_failed(address: &str, reason: impl std::fmt::Display) -> GrpcResponse {
     GrpcResponse::error(INTERNAL, format!("behavior `{address}` failed: {reason}"))
-}
-
-/// A bodyless answer: `status`, with `message` as its text.
-fn status_only(
-    status: u8,
-    message: Option<Value>,
-    metadata: BTreeMap<String, String>,
-) -> Result<GrpcResponse, String> {
-    let message = match message {
-        None => String::new(),
-        Some(Value::String(text)) => text,
-        Some(other) => return Err(format!("status message must be a string, got {other}")),
-    };
-    Ok(GrpcResponse {
-        metadata,
-        ..GrpcResponse::error(status, message)
-    })
-}
-
-/// A status name such as `NOT_FOUND`, or its number.
-fn status_code(status: &Value) -> Result<u8, String> {
-    let code = match status {
-        Value::String(name) => STATUS_CODES.iter().position(|code| code == name),
-        Value::Number(number) => number
-            .as_u64()
-            .and_then(|code| usize::try_from(code).ok())
-            .filter(|code| *code < STATUS_CODES.len()),
-        _ => None,
-    };
-    code.and_then(|code| u8::try_from(code).ok())
-        .ok_or_else(|| format!("status rendered {status}, not a gRPC status name"))
 }

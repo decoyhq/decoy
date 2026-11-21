@@ -111,7 +111,7 @@ impl Catalog {
         };
         let mut candidates = explain.then(Vec::new);
         let jmes = OnceCell::<Rcvar>::new();
-        for activation in activations.iter().copied().rev() {
+        for activation in activations.rev() {
             if activation.route != route_id {
                 continue;
             }
