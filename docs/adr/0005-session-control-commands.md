@@ -10,4 +10,4 @@ The Control API exposes the Controller verbs as commands under `/__decoy__/contr
 can express the same operation across process boundaries, and the Session header identifies the Session
 whose Selection changes. This decision covers mutations. It leaves room for separate inspection endpoints.
 
-For request bodies, status codes, and examples, see [Sessions and the Control API](../guide/sessions-and-control.md).
+For request bodies, status codes, and examples, see [Sessions and the Control API](../../apps/docs/content/guide/sessions-and-control.md).

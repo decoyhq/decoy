@@ -1,6 +1,6 @@
 # Decoy documentation
 
-Start with the [user guide](guide/README.md). The [quickstart](guide/quickstart.md) walks through
+Start with the [user guide](../apps/docs/content/index.md). The [quickstart](../apps/docs/content/quickstart.mdx) walks through
 serving an HTTP request and switching its response. For a complete project, browse the
 [runnable examples](../examples/README.md).
 

@@ -44,6 +44,6 @@ Try breaking it: a typo in a payload (`nmae: Ann` in `mocks/routes/rpc.yaml`) fa
 the worker's `check`; a `throw` in a worker's `input` shows up as an error event with the frame's
 bytes and the worker's stack.
 
-See the [WebSocket guide](../../docs/guide/websocket.md#transformers).
+See the [WebSocket guide](../../apps/docs/content/guide/websocket.md#transformers).
 
 [Transformer benchmark notes](transformer-benchmarks.md) compare worker and command execution.

@@ -1,0 +1,217 @@
+@import '../src/styles/fonts.css';
+@font-face {
+  font-family: Montserrat;
+  src: url('../src/fonts/montserrat.woff2') format('woff2');
+  font-weight: 100 900;
+  font-display: swap;
+}
+:root {
+  --rp-font-family-base: Inter, system-ui, sans-serif;
+  --rp-c-brand: #994318;
+  --rp-c-brand-light: #ab4d20;
+  --rp-c-link: #994318;
+  --paper: #f8f5ed;
+  --ink: #222e35;
+  --muted: #4b5a61;
+  --rule: #cecfc5;
+}
+.rp-dark {
+  --rp-c-brand: #efa772;
+  --rp-c-link: #efa772;
+  --paper: #202628;
+  --ink: #f5f1e6;
+  --muted: #c0cbc9;
+  --rule: #495154;
+}
+.rp-dark .rspress-logo {
+  background: #f3eddd;
+  border-radius: 0.3rem;
+}
+.decoy-home {
+  background: var(--paper);
+  color: var(--ink);
+  min-height: calc(100vh - 4rem);
+  padding: clamp(2.5rem, 7vw, 6.5rem) max(1.25rem, calc((100% - 72rem) / 2)) 4rem;
+}
+.home-hero {
+  display: grid;
+  grid-template-columns: 1.05fr 1fr;
+  align-items: center;
+  gap: clamp(2rem, 6vw, 6rem);
+}
+.hero-copy h1 {
+  font:
+    680 clamp(2.9rem, 5.4vw, 5rem)/1.04 Montserrat,
+    system-ui,
+    sans-serif;
+  letter-spacing: -0.065em;
+  text-wrap: balance;
+}
+.hero-copy p {
+  max-width: 32rem;
+  margin: 1.5rem 0;
+  color: var(--muted);
+  font-size: 1.12rem;
+  line-height: 1.65;
+}
+.home-actions {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  font-weight: 600;
+}
+.home-actions a:hover,
+.guide-links a:hover strong {
+  text-decoration: underline;
+}
+.start-link {
+  background: var(--ink);
+  color: var(--paper);
+  padding: 0.8rem 1.15rem;
+  border-radius: 0.45rem;
+}
+.start-link span {
+  margin-left: 0.5rem;
+}
+.request-demo {
+  min-width: 0;
+  background: #202a30;
+  color: #f3f0e8;
+  border-radius: 0.85rem;
+  box-shadow: 0 10px 22px -14px #18262b80;
+  overflow: hidden;
+  font-size: 0.9rem;
+}
+.demo-request,
+.demo-controls,
+.demo-response,
+.request-demo details {
+  padding: 1rem 1.4rem;
+}
+.demo-request {
+  background: #28353c;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+.demo-request b {
+  color: #b1d4be;
+  font: 700 0.8rem monospace;
+}
+.demo-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  color: #ced5d6;
+}
+.demo-controls [role='group'] {
+  display: flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+.demo-controls button {
+  color: inherit;
+  font: 0.85rem monospace;
+  border: 1px solid #657176;
+  border-radius: 0.3rem;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+}
+.demo-controls button[aria-pressed='true'] {
+  background: #f2e8ce;
+  color: #222b30;
+  border-color: #f2e8ce;
+}
+.demo-response {
+  padding-top: 0.35rem;
+}
+.demo-response strong {
+  color: #a8d9b6;
+  font: 600 0.85rem monospace;
+}
+.demo-response strong.missing {
+  color: #ffb792;
+}
+.request-demo pre {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin-top: 0.65rem;
+}
+.demo-response pre {
+  min-height: 6em;
+}
+.request-demo details {
+  border-top: 1px solid #465259;
+  color: #d6dede;
+}
+.request-demo summary {
+  cursor: pointer;
+}
+.home-guides {
+  margin-top: clamp(3rem, 7vw, 6rem);
+}
+.home-guides h2 {
+  font:
+    650 1.65rem Montserrat,
+    sans-serif;
+  letter-spacing: -0.045em;
+  margin-bottom: 1.4rem;
+}
+.guide-links {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 2rem;
+}
+.guide-links a {
+  border-top: 1px solid var(--rule);
+  padding-top: 1rem;
+}
+.guide-links strong {
+  display: flex;
+  justify-content: space-between;
+  font-size: 1.1rem;
+}
+.guide-links strong span {
+  color: var(--rp-c-link);
+}
+.guide-links a > span {
+  display: block;
+  margin-top: 0.5rem;
+  color: var(--muted);
+  line-height: 1.55;
+}
+.rspress-doc h1,
+.rspress-doc h2 {
+  font-family: Montserrat, system-ui, sans-serif;
+  letter-spacing: -0.045em;
+  text-wrap: balance;
+}
+.rspress-doc > h1 + p {
+  font-size: 1.1em;
+  line-height: 1.65;
+}
+@media (max-width: 48rem) {
+  .home-hero,
+  .guide-links {
+    grid-template-columns: 1fr;
+  }
+  .guide-links {
+    gap: 1.25rem;
+  }
+}
+.decoy-home .rp-header-anchor {
+  display: none;
+}
+.demo-controls button[aria-pressed='false'] {
+  background: transparent;
+}
+:root {
+  --rp-sidebar-width: 17rem;
+  --rp-c-brand-tint: #aa622814;
+}
+.rp-dark {
+  --rp-c-brand-tint: #f0b08220;
+}

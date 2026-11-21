@@ -4,3 +4,6 @@ target/
 **/test-results/
 **/playwright-report/
 **/.rstack/
+**/.rspress/
+**/.rspress-content/
+**/doc_build/

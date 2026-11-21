@@ -1,0 +1,48 @@
+name: Documentation site
+
+on:
+  pull_request:
+    paths:
+      - 'apps/docs/**'
+      - 'examples/**/*.md'
+      - 'packages/plugin/README.md'
+      - 'docs/reference/plugin-protocol.md'
+      - 'pnpm-*.yaml'
+      - '.github/workflows/docs-site.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
+        with:
+          auto-install: true
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm --filter @decoyhq/docs typecheck
+      - run: pnpm --filter @decoyhq/docs build
+        env:
+          DOCS_BASE: /decoy/
+      - uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: apps/docs/doc_build
+
+  deploy:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
+    steps:
+      - id: pages
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

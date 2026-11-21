@@ -2,7 +2,7 @@
 
 Write Decoy Transformer workers in TypeScript. A worker can turn an app's wire format (msgpack
 envelopes, binary headers in front of protobuf, compression) into the JSON that Cases match and
-Behaviors render, and back. See the [WebSocket Transformer guide](https://github.com/decoyhq/decoy/blob/main/docs/guide/websocket.md#transformers) for configuration.
+Behaviors render, and back. See the [WebSocket Transformer guide](https://github.com/decoyhq/decoy/blob/main/apps/docs/content/guide/websocket.md#transformers) for configuration.
 
 ```ts
 // workers/envelope.ts

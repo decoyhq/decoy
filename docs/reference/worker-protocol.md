@@ -2,7 +2,7 @@
 
 Use this specification to write a Transformer worker in another language. It describes the
 messages exchanged by Decoy and the [TypeScript SDK](../../packages/transformer/README.md).
-To configure a worker for a Route, see [WebSocket Transformers](../guide/websocket.md#transformers).
+To configure a worker for a Route, see [Configure a Transformer Pipeline](../../apps/docs/content/guide/transformer-pipelines.md).
 
 ## Process
 
@@ -25,8 +25,8 @@ most 16 MiB; a longer length ends the worker as a protocol error. Decoy never se
 
 Values are msgpack. Wire bytes are msgpack `bin`; everything else is the JSON data model (nil, bool,
 integer, float, str, array, map with str keys). Each transport defines how the final value becomes a Case input or a wire payload.
-See the [HTTP](../guide/routes.md#http-body-pipelines), [gRPC](../guide/grpc.md#pipelines),
-and [WebSocket](../guide/websocket.md#transformers) guides.
+See the [HTTP](../../apps/docs/content/guide/routes.md#http-body-pipelines), [gRPC](../../apps/docs/content/guide/grpc.md#pipelines),
+and [WebSocket](../../apps/docs/content/guide/websocket.md#transformers) guides.
 
 ## Messages
 

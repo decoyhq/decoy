@@ -22,4 +22,4 @@ reuses one already serving there.
 | `close`                        | The `unauthorized` Behavior sends its error, then closes with `4001`.                                          |
 | unmatched upgrade              | A `service` no Route lists is refused with the HTTP miss.                                                      |
 
-See the [WebSocket guide](../../docs/guide/websocket.md).
+See the [WebSocket guide](../../apps/docs/content/guide/websocket.md).

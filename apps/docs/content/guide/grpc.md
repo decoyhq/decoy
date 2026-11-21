@@ -237,4 +237,4 @@ which Cases see as a base64 string. A worker can call `miss` to skip its Route. 
 other Case matches, the client gets `UNIMPLEMENTED`. A named input step that fails
 ends the call with `INVALID_ARGUMENT`. An authored reply that fails to encode gets `INTERNAL`.
 
-See [`examples/grpc-node`](../../examples/grpc-node) for a runnable Node client.
+See [`examples/grpc-node`](../../../../examples/grpc-node) for a runnable Node client.

@@ -119,7 +119,10 @@ pipelines:
 ```
 
 See the [HTTP](routes.md#http-body-pipelines), [gRPC](grpc.md#pipelines), and
-[WebSocket](websocket.md) guides for the values each transport passes to its steps.
+[WebSocket](websocket.md#transformers) guides for the values each transport passes to its steps.
+For a setup walkthrough, see [Configure a Transformer Pipeline](transformer-pipelines.md).
+
+## Startup validation
 
 Paths in the file resolve relative to the file; flag paths resolve relative to the working
 directory. Unknown keys in the config, Routes or Collections, unreadable files, invalid Routes or Collections, duplicate Route or Collection ids,

@@ -1,0 +1,4 @@
+.rspress-content/
+doc_build/
+.rspress/
+.astro/
