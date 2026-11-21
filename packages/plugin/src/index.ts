@@ -43,20 +43,20 @@ export interface Context {
   }
 }
 
-export type Plugin = {
+export interface Plugin {
   /** Имя и версия отображаются в диагностике рядом с именем Transformer. */
   name: string
 
   version: string
 
   /** Преобразует входящее значение. Чтобы пропустить сообщение, вызови `miss`. */
-  input?(value: unknown, ctx: Context): unknown
+  input?: (value: unknown, ctx: Context) => unknown
 
   /** Преобразует отрисованный payload или результат предыдущего шага. */
-  output?(value: unknown, ctx: Context): unknown
+  output?: (value: unknown, ctx: Context) => unknown
 
   /** Проверяет литерал при старте, включая строки с шаблонами. */
-  check?(value: unknown, ctx: Context): unknown
+  check?: (value: unknown, ctx: Context) => unknown
 }
 
 /** Thrown by {@link miss}. */

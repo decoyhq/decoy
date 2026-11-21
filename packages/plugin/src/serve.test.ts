@@ -120,7 +120,11 @@ describe('serve', () => {
   })
 
   test('reports a miss, a thrown error with its stack, and an unavailable direction', async () => {
-    const plugin = start({ name: envelope.name, version: envelope.version, input: envelope.input })
+    const plugin = start({
+      name: envelope.name,
+      version: envelope.version,
+      input: (value, ctx) => envelope.input(value, ctx),
+    })
     const call = (id: number, text: string) => {
       plugin.send({
         kind: 'call',
