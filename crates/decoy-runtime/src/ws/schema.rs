@@ -21,7 +21,7 @@ pub fn validate_response(response: &ResponseBehavior) -> Result<(), String> {
     }
     response.message.iter().try_for_each(validate_value)?;
     for (index, item) in response.messages.iter().flatten().enumerate() {
-        validate_value(&item.message).map_err(|reason| format!("`messages[{index}]`: {reason}"))?;
+        validate_value(&item.payload).map_err(|reason| format!("`messages[{index}]`: {reason}"))?;
     }
     if let Some(close) = &response.close {
         if close.code != 1000 && !(3000..=4999).contains(&close.code) {
@@ -120,8 +120,10 @@ mod tests {
             .map_err(|error| error.to_string())
         };
         assert!(behavior("{ message: ping }").is_ok());
+        assert!(behavior("{ messages: [{ message: ping }] }").is_err());
+        assert!(behavior("{ messages: [{ payload: ping, delay: -1 }] }").is_err());
         assert!(
-            behavior("{ messages: [{ message: { a: 1 }, delay: 1s }], close: { code: 4001 } }")
+            behavior("{ messages: [{ payload: { a: 1 }, delay: 1s }], close: { code: 4001 } }")
                 .is_ok()
         );
         assert!(
@@ -140,6 +142,24 @@ mod tests {
                 .contains("3000–4999")
         );
         assert!(behavior("{ message: '${ [ }' }").is_err());
+    }
+
+    #[test]
+    fn routes_select_a_named_pipeline() {
+        let route = |pipeline: &str| {
+            Route::from_yaml(&format!(
+                "id: s\ntransport: ws\nmatch: {{ path: /s }}\npipeline: {pipeline}\ncases:\n  any:\n    behaviors:\n      b: {{ message: x }}\n"
+            ))
+        };
+        let mut named = route("approvals").unwrap();
+        assert_eq!(named.pipeline_name.as_deref(), Some("approvals"));
+        assert_eq!(
+            Route::from_yaml(&serde_norway::to_string(&named).unwrap()).unwrap(),
+            named
+        );
+        named.pipeline = Some(vec![]);
+        assert!(serde_norway::to_string(&named).is_err());
+        assert!(route("[protobuf]").is_err());
     }
 
     #[test]

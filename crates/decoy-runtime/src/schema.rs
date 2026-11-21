@@ -15,31 +15,70 @@ pub enum Transport {
     Ws,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(try_from = "RawRoute")]
 pub struct Route {
     pub id: String,
     pub transport: Transport,
-    #[serde(rename = "match")]
     pub route_match: RouteMatch,
-    #[serde(default)]
     pub cases: BTreeMap<String, Case>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub passthrough: Option<PassthroughTarget>,
     /// Steps that turn request bytes into the envelope's JSON and back (ADR 0002). `None` uses the
-    /// transport default: `[grpc-frame, protobuf]` for gRPC.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// transport default: `[grpc-frame, protobuf]` for gRPC, none for WebSocket.
     pub pipeline: Option<Vec<PipelineStep>>,
+    /// Name of a Pipeline defined in the Decoy config.
+    pub pipeline_name: Option<String>,
 }
 
-/// A built-in Pipeline step. Plugin steps come later.
+impl Serialize for Route {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap as _;
+        let mut route = serializer.serialize_map(None)?;
+        route.serialize_entry("id", &self.id)?;
+        route.serialize_entry("transport", &self.transport)?;
+        route.serialize_entry("match", &self.route_match)?;
+        route.serialize_entry("cases", &self.cases)?;
+        if let Some(target) = &self.passthrough {
+            route.serialize_entry("passthrough", target)?;
+        }
+        match (&self.pipeline, &self.pipeline_name) {
+            (Some(_), Some(_)) => {
+                return Err(serde::ser::Error::custom(
+                    "a Route cannot have both built-in steps and a named Pipeline",
+                ));
+            }
+            (Some(steps), None) => route.serialize_entry("pipeline", steps)?,
+            (None, Some(name)) => route.serialize_entry("pipeline", name)?,
+            (None, None) => {}
+        }
+        route.end()
+    }
+}
+
+/// A built-in gRPC Pipeline step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PipelineStep {
-    /// gRPC length-prefixed message framing.
     GrpcFrame,
-    /// Protobuf bytes ⇄ protobuf JSON, typed by the gRPC method.
     Protobuf,
+}
+
+impl std::fmt::Display for PipelineStep {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::GrpcFrame => formatter.write_str("grpc-frame"),
+            Self::Protobuf => formatter.write_str("protobuf"),
+        }
+    }
+}
+
+/// `pipeline:` as written: a list of steps, or the name of a `pipelines:` entry in decoy.yaml.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PipelineSpec {
+    Named(String),
+    /// Parsed into steps once the shape is known, so a bad name keeps its own message.
+    Steps(Vec<String>),
 }
 
 /// A Route as written; `match` is decoded once `transport` says which shape it has.
@@ -55,7 +94,7 @@ struct RawRoute {
     #[serde(default)]
     passthrough: Option<PassthroughTarget>,
     #[serde(default)]
-    pipeline: Option<Vec<PipelineStep>>,
+    pipeline: Option<PipelineSpec>,
 }
 
 impl TryFrom<RawRoute> for Route {
@@ -73,7 +112,28 @@ impl TryFrom<RawRoute> for Route {
             route_match,
             cases: raw.cases,
             passthrough: raw.passthrough,
-            pipeline: raw.pipeline,
+            pipeline_name: match &raw.pipeline {
+                Some(PipelineSpec::Named(name)) => Some(name.clone()),
+                _ => None,
+            },
+            pipeline: match raw.pipeline {
+                Some(PipelineSpec::Steps(steps)) => Some(
+                    steps
+                        .into_iter()
+                        .map(|name| match name.as_str() {
+                            "grpc-frame" => Ok(PipelineStep::GrpcFrame),
+                            "protobuf" => Ok(PipelineStep::Protobuf),
+                            _ if name.contains('/') => {
+                                Err("gRPC Routes take only `grpc-frame` and `protobuf` for now"
+                                    .to_owned())
+                            }
+                            _ => Err(format!("unknown pipeline step `{name}`")),
+                        })
+                        .collect::<Result<_, _>>()
+                        .map_err(<serde_json::Error as serde::de::Error>::custom)?,
+                ),
+                _ => None,
+            },
         })
     }
 }
@@ -85,6 +145,21 @@ impl Route {
         Ok(route)
     }
 
+    /// Checks that the Pipeline has the form required by the Route transport.
+    fn validate_pipeline(&self) -> Result<(), String> {
+        match (&self.transport, &self.pipeline_name, &self.pipeline) {
+            (Transport::Ws, _, None) | (_, None, None) => Ok(()),
+            (Transport::Ws, _, Some(_)) => {
+                Err("WebSocket Routes select a named Pipeline".to_owned())
+            }
+            (Transport::Grpc, None, Some(steps)) => crate::grpc::schema::validate_pipeline(steps),
+            (Transport::Grpc, Some(_), _) => {
+                Err("gRPC Routes take built-in Pipeline steps".to_owned())
+            }
+            (Transport::Http, _, _) => Err("HTTP Routes do not take a `pipeline` yet".to_owned()),
+        }
+    }
+
     /// Whether the envelope's `message` is protobuf JSON (the default) rather than raw bytes.
     pub fn decodes_protobuf(&self) -> bool {
         self.pipeline
@@ -94,26 +169,11 @@ impl Route {
 
     pub fn validate(&self) -> Result<(), ValidationError> {
         validate_id("route", &self.id)?;
-
-        if self.pipeline.is_some() && self.transport != Transport::Grpc {
-            let transport = match self.transport {
-                Transport::Ws => "WebSocket",
-                _ => "HTTP",
-            };
-            return Err(ValidationError::InvalidPipeline {
+        self.validate_pipeline()
+            .map_err(|reason| ValidationError::InvalidPipeline {
                 route: self.id.clone(),
-                reason: format!("{transport} Routes do not take a `pipeline` yet"),
-            });
-        }
-
-        if let Some(steps) = &self.pipeline {
-            crate::grpc::schema::validate_pipeline(steps).map_err(|reason| {
-                ValidationError::InvalidPipeline {
-                    route: self.id.clone(),
-                    reason,
-                }
+                reason,
             })?;
-        }
 
         if let Some(target) = &self.passthrough {
             target.validate()?;
@@ -364,7 +424,7 @@ pub struct ResponseBehavior {
     pub stream: Option<Vec<StreamItem>>,
     /// WebSocket: messages sent in order, each `delay` after the one before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub messages: Option<Vec<StreamItem>>,
+    pub messages: Option<Vec<MessageItem>>,
     /// WebSocket: close the connection after the messages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub close: Option<WsClose>,
@@ -391,35 +451,61 @@ impl WsClose {
 
 /// One message of a server-streaming answer, sent `delay` after the one before it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "RawStreamItem", into = "RawStreamItem")]
+#[serde(from = "MessageItem", into = "MessageItem")]
 pub struct StreamItem {
     pub message: Value,
     pub delay: Option<Duration>,
 }
 
+impl From<MessageItem> for StreamItem {
+    fn from(item: MessageItem) -> Self {
+        Self {
+            message: item.payload,
+            delay: item.delay,
+        }
+    }
+}
+
+impl From<StreamItem> for MessageItem {
+    fn from(item: StreamItem) -> Self {
+        Self {
+            payload: item.message,
+            delay: item.delay,
+        }
+    }
+}
+
+/// Payload and delay for one message in a WebSocket Behavior.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "RawMessageItem", into = "RawMessageItem")]
+pub struct MessageItem {
+    pub payload: Value,
+    pub delay: Option<Duration>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawStreamItem {
-    message: Value,
+struct RawMessageItem {
+    payload: Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     delay: Option<Value>,
 }
 
-impl TryFrom<RawStreamItem> for StreamItem {
+impl TryFrom<RawMessageItem> for MessageItem {
     type Error = ValidationError;
 
-    fn try_from(raw: RawStreamItem) -> Result<Self, Self::Error> {
+    fn try_from(raw: RawMessageItem) -> Result<Self, Self::Error> {
         Ok(Self {
-            message: raw.message,
+            payload: raw.payload,
             delay: raw.delay.as_ref().map(parse_delay).transpose()?,
         })
     }
 }
 
-impl From<StreamItem> for RawStreamItem {
-    fn from(item: StreamItem) -> Self {
+impl From<MessageItem> for RawMessageItem {
+    fn from(item: MessageItem) -> Self {
         Self {
-            message: item.message,
+            payload: item.payload,
             delay: item.delay.map(format_delay),
         }
     }
@@ -470,7 +556,7 @@ struct RawBehavior {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     stream: Option<Vec<StreamItem>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    messages: Option<Vec<StreamItem>>,
+    messages: Option<Vec<MessageItem>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     close: Option<WsClose>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -858,7 +944,7 @@ cases:
         };
         let http = |behavior| error("http", "{ method: GET, path: /r }", behavior);
         for behavior in [
-            "{ messages: [{ message: { id: a-1 } }] }",
+            "{ messages: [{ payload: { id: a-1 } }] }",
             "{ close: { code: 4001 } }",
         ] {
             let error = grpc(behavior);
@@ -888,8 +974,8 @@ cases:
     behaviors:
       progress:
         stream:
-          - { message: { id: a-1 } }
-          - { message: { id: a-2 }, delay: 500ms }
+          - { payload: { id: a-1 } }
+          - { payload: { id: a-2 }, delay: 500ms }
         status: ABORTED
 "#,
         )
@@ -911,7 +997,9 @@ cases:
             ])
         );
 
-        let error = route_error("", "        stream: [{ message: { id: 1 } }]");
+        assert!(serde_norway::from_str::<StreamItem>("{ message: {} }").is_err());
+
+        let error = route_error("", "        stream: [{ payload: { id: 1 } }]");
         assert!(
             error.contains("`stream` is for server-streaming gRPC Routes"),
             "{error}"

@@ -174,15 +174,15 @@ cases:
     behaviors:
       then-ok:
         stream:
-          - { message: { id: '${ message.ids[0] }', state: PENDING } }
-          - { message: { id: '${ message.ids[0] }', state: APPROVED }, delay: 50ms }
+          - { payload: { id: '${ message.ids[0] }', state: PENDING } }
+          - { payload: { id: '${ message.ids[0] }', state: APPROVED }, delay: 50ms }
         status: OK
       then-aborted:
-        stream: [{ message: { id: a-1, state: PENDING } }]
+        stream: [{ payload: { id: a-1, state: PENDING } }]
         status: ABORTED
         message: gave up
       open:
-        stream: [{ message: { id: a-1, state: PENDING } }]
+        stream: [{ payload: { id: a-1, state: PENDING } }]
 "#;
 
 const WATCH_COLLECTIONS: &str = r#"
@@ -376,7 +376,7 @@ fn stream_on_a_unary_method_fails_startup() {
     fs::create_dir_all(temp.path().join("routes")).unwrap();
     fs::write(
         temp.path().join("routes/approvals.yaml"),
-        "id: approvals-get\ntransport: grpc\nmatch: { service: approvals.v1.Approvals, method: GetApproval }\ncases:\n  any:\n    behaviors:\n      ok: { stream: [{ message: { id: a-1 } }] }\n",
+        "id: approvals-get\ntransport: grpc\nmatch: { service: approvals.v1.Approvals, method: GetApproval }\ncases:\n  any:\n    behaviors:\n      ok: { stream: [{ payload: { id: a-1 } }] }\n",
     )
     .unwrap();
     fs::write(
@@ -431,7 +431,7 @@ fn proto_files_compile_only_the_matching_entry_files() {
         ),
         (
             "decoy/routes/catalog.yaml",
-            "id: catalog-price\ntransport: grpc\nmatch: { service: catalog.v1.CatalogService, method: GetPrice }\ncases:\n  any:\n    behaviors:\n      ok: { stream: [{ message: { units: 1 } }] }\n",
+            "id: catalog-price\ntransport: grpc\nmatch: { service: catalog.v1.CatalogService, method: GetPrice }\ncases:\n  any:\n    behaviors:\n      ok: { stream: [{ payload: { units: 1 } }] }\n",
         ),
         (
             "decoy/collections.yaml",

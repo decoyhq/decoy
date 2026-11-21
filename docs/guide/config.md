@@ -13,18 +13,20 @@ port: 8080
 decoy serve --config mocks/decoy.yaml
 ```
 
-| file key             | flag                     | default                             |
-| -------------------- | ------------------------ | ----------------------------------- |
-| `routes`             | `--routes <dir>`         | required                            |
-| `collections`        | `--collections <file>`   | required                            |
-| `port`               | `--port <port>`          | `8080`                              |
-| `host`               | `--host <host>`          | `localhost` (`127.0.0.1` and `::1`) |
-| `listeners`          | none                     | none                                |
-| `collection`         | `--collection <id>`      | first Collection in the file        |
-| `passthroughBaseUrl` | `--passthrough-base-url` | none (see [Passthrough](routes.md)) |
-| `protos`             | none                     | none                                |
-| `tls`                | none                     | none (plain http)                   |
-| `maxBodyBytes`       | none                     | `33554432` (32 MiB)                 |
+| file key             | flag                     | default                                           |
+| -------------------- | ------------------------ | ------------------------------------------------- |
+| `routes`             | `--routes <dir>`         | required                                          |
+| `collections`        | `--collections <file>`   | required                                          |
+| `port`               | `--port <port>`          | `8080`                                            |
+| `host`               | `--host <host>`          | `localhost` (`127.0.0.1` and `::1`)               |
+| `listeners`          | none                     | none                                              |
+| `collection`         | `--collection <id>`      | first Collection in the file                      |
+| `passthroughBaseUrl` | `--passthrough-base-url` | none (see [Passthrough](routes.md))               |
+| `protos`             | none                     | none                                              |
+| `tls`                | none                     | none (plain http)                                 |
+| `maxBodyBytes`       | none                     | `33554432` (32 MiB)                               |
+| `transformers`       | none                     | none (see [WebSocket](websocket.md#transformers)) |
+| `pipelines`          | none                     | none                                              |
 
 `listeners` opens extra named listeners. Each serves the same Routes, Sessions, and Control API as
 `port`, so a gRPC client and an HTTP client can use different ports but share one Session:
@@ -95,10 +97,26 @@ protos:
   roots: [../proto, ../proto/v1/keyboards, ../proto/v2/my-entity]
 ```
 
+Define reusable `transformers` and named `pipelines` here. Routes select a Pipeline by name.
+
+```yaml
+transformers:
+  approvals:
+    worker: [node, ../plugins/approvals.ts]
+  gzip:
+    input: [gzip, -dc]
+    output: [gzip, -c]
+pipelines:
+  approvals-feed:
+    input: [gzip, approvals]
+    output: [approvals, gzip]
+```
+
 Paths in the file resolve relative to the file; flag paths resolve relative to the working
 directory. Unknown keys in the config, Routes or Collections, unreadable files, invalid Routes or Collections, duplicate Route or Collection ids,
-a port used twice or already taken, missing proto roots, a proto `files` pattern that matches nothing, protos that don't compile, unreadable or mismatched TLS cert/key, an unreadable `.decoy/` CA, and an unknown
-startup Collection all fail at startup with a diagnostic.
+a port used twice or already taken, missing proto roots, a proto `files` pattern that matches nothing, protos that don't compile, unreadable or mismatched TLS cert/key, an unreadable `.decoy/` CA, an unknown
+startup Collection, a plugin that doesn't start, an unknown Transformer or unsupported Pipeline direction, and an outbound
+literal a plugin's `check` rejects all fail at startup with a diagnostic.
 
 ## Reloading
 

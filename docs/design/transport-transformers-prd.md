@@ -65,11 +65,11 @@ pipelines:
 - Each named worker definition exposes one Pipeline step with either or both directions. The same worker process serves its configured directions. One-shot commands are opt-in. A reference to a Transformer must support the direction that uses it.
 - Document conversion between typed worker values and byte-oriented commands at intermediate boundaries. Each transport specifies the payload accepted at both ends of its Pipeline.
 - Run the output Pipeline once per recipient connection when sending a message. For the Control API, `delivered` counts queue acceptance. If transformation fails after queueing, Decoy reports the failure and skips the message. This would remove the extra encode preflight present in the worker prototype.
-- Settle command timeout and output limits, and decide whether startup checks invoke commands, before implementation. Preserve a distinct failure diagnostic for transform errors and a Case miss for an unmatched decoded message.
+- A one-shot command runs when its Pipeline reaches that step. Decoy consumes stdout through EOF. Startup checks validate the authored payload through the first output step when it is a worker. Preserve a distinct failure diagnostic for a transform error and a Case miss.
 
 ### Transport integration
 
-- **WebSocket.** `input` runs on an incoming message payload before the Message envelope is built. A terminal input command emits JSON for Case matching. On `output`, terminal worker text or bytes select the frame kind. A terminal command emits a binary message.
+- **WebSocket.** The [WebSocket Routes PRD](websocket-routes-prd.md) defines the Route and Behavior contract. `input` runs on an incoming message payload before the Message envelope is built. A terminal input command emits JSON for Case matching. On `output`, terminal worker text or bytes select the frame kind. A terminal command emits a binary message.
 - **SSE.** The event stream uses `output` on each event's `data`. The transport handles text framing and the `event`, `id`, and `retry` fields. Define how a terminal command's bytes become event text when integrating the SSE transport. [#218](https://github.com/decoyhq/decoy/issues/218)
 - **Other transports.** Reuse the same Pipeline configuration and SDK contract when adding an integration. Define its payload boundaries and supported directions there. The HTTP and gRPC defaults stay as they are.
 

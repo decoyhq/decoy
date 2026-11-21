@@ -4,7 +4,7 @@ Decoy accepts WebSocket upgrades on its normal port, next to plain HTTP, gRPC an
 Point the client's socket URL at Decoy. With [TLS](tls.md) on, the same port serves `wss://`.
 
 Supported so far: text frames carrying JSON or plain text, `on: connect` Cases, timed replies,
-`close`, and Control API `send`. Binary frames and `pipeline` (msgpack, protobuf) come later.
+`close`, Control API `send`, and binary formats through [Transformers](#transformers).
 
 ## WebSocket Routes
 
@@ -37,8 +37,8 @@ cases:
     behaviors:
       updates:
         messages:
-          - { message: { id: '${ message.id }', type: subscribed, topic: '${ message.topic }' } }
-          - { message: { type: update, topic: '${ message.topic }', count: 1 }, delay: 1s }
+          - { payload: { id: '${ message.id }', type: subscribed, topic: '${ message.topic }' } }
+          - { payload: { type: update, topic: '${ message.topic }', count: 1 }, delay: 1s }
 ```
 
 - **Picking the Route:** the path matches as for HTTP (`{param}` captures a segment) and every
@@ -54,8 +54,8 @@ cases:
   like HTTP `body`) plus `pathParams`, `query`, `headers` and `cookies` of the upgrade, or one
   `${ }` predicate. A frame that parses as JSON is JSON, anything else stays a string:
   ``match: '${ message == `"ping"` }'``.
-- **Unmatched message:** Decoy sends nothing, logs a miss, and keeps the socket open. A binary frame
-  is always a miss for now.
+- **Unmatched message:** Decoy sends nothing, logs a miss, and keeps the socket open. Without a
+  `pipeline`, a binary frame is always a miss.
 
 Collections and Sessions work as for HTTP: `on: connect` Cases are entries like any other.
 
@@ -77,7 +77,7 @@ Collections and Sessions work as for HTTP: `on: connect` Cases are entries like 
 | field      | what it does                                                                                |
 | ---------- | ------------------------------------------------------------------------------------------- |
 | `message`  | one reply. A string goes out as-is; a mapping or list goes out as JSON text.                |
-| `messages` | a list of `{ message, delay? }` items, each sent `delay` after the one before.              |
+| `messages` | a list of `{ payload, delay? }` items, each sent `delay` after the one before.              |
 | `close`    | `{ code, reason }`: close the socket after the messages. `code` is `1000` or `3000`–`4999`. |
 | `delay`    | initial wait, applied once before the Behavior sends anything.                              |
 
@@ -92,8 +92,8 @@ delays add up. Both fields accept a nonnegative integer in milliseconds or a dur
 updates:
   delay: 1000
   messages:
-    - { message: subscribed, delay: 250ms }
-    - { message: update, delay: 500ms }
+    - { payload: subscribed, delay: 250ms }
+    - { payload: update, delay: 500ms }
 ```
 
 Decoy sends `subscribed` after 1.25 seconds and `update` 0.5 seconds later.
@@ -122,3 +122,27 @@ curl -X POST localhost:8080/__decoy__/control/send \
 ```
 
 The [ws-node example](../../examples/ws-node) runs all of the above against a real client.
+
+## Transformers
+
+Set `pipeline: <name>` on a Route to select its Pipeline from [decoy.yaml](config.md). Decoy runs
+`input` before matching Cases and `output` after rendering a Behavior or when sending a Control API
+message. Both directions run in the order listed.
+
+Use a [worker](../../packages/plugin) for per-connection state or protobuf host calls. Use a
+one-shot command for an executable such as `gzip`. A command reads stdin to EOF and returns bytes
+on stdout. Terminal input commands return JSON for Case matching. On output, worker strings become
+text frames and bytes become binary frames.
+
+The Control API `send` counts messages queued for delivery. The output Pipeline runs once per
+recipient connection. If it fails, Decoy logs the Transformer and skips that frame.
+
+Decoy validates referenced Transformers and directions when loading Routes. A worker can also
+check the authored output literal at startup when it is the first output step. Restart Decoy to
+apply worker config changes.
+
+Other languages can implement the [worker protocol](../design/plugin-protocol.md).
+
+A one-shot Transformer command has 5 seconds to finish. Decoy fails the transform if stdout exceeds 16 MiB or stderr exceeds 64 KiB. During a transform, each socket can buffer up to 64 subsequent data frames totaling at most 16 MiB. Across all sockets, the process budgets 64 MiB for read-ahead, charged in whole KiB with a minimum of 1 KiB per frame. Exceeding a read-ahead limit closes the socket requesting more space. Up to eight one-shot commands can run across all connections. When all slots are busy, the next command fails the transform before spawning.
+
+Open sockets keep the Pipeline selected at upgrade. Protobuf host calls use the currently loaded descriptors, including after a reload. WebSocket request events capture the rendered Behavior reply before output transforms and delays. A captured reply can therefore differ from the frames that reach the client.

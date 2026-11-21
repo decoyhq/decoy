@@ -52,7 +52,7 @@ curl -X POST localhost:8080/__decoy__/control/send \
 
 - gRPC: `message` is the response message as protobuf JSON; it goes through the Route's Pipeline.
   One that doesn't fit the method's output type gets `400` with the reason, and nothing is sent.
-- WebSocket: a string `message` goes out as-is, anything else as JSON text.
+- WebSocket: the Route’s output Pipeline transforms each recipient’s message, including strings. Without output steps, strings go out as-is and other values become JSON text.
 - Only connections opened in the same Session (`x-mock-session`) get it.
 - With no live connection yet, `send` waits for one up to `timeout` milliseconds (default `5000`,
   at most 5 minutes: a longer `timeout` is cut to that).

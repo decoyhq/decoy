@@ -101,13 +101,19 @@ pub fn load_catalog_from_files(
     let routes_dir = routes_dir.as_ref();
     let collections_file = collections_file.as_ref();
 
+    for name in runtime.pipelines.keys() {
+        crate::ws::pipeline::WsPipeline::named(&runtime, name).map_err(|reason| {
+            StartupError::new(StartupDiagnosticKind::Schema, routes_dir, reason)
+        })?;
+    }
+
     let mut routes = Vec::new();
     let mut seen_route_paths = BTreeMap::new();
     for route_path in discover_route_files(routes_dir)? {
         let input = fs::read_to_string(&route_path).map_err(|error| {
             StartupError::new(StartupDiagnosticKind::Io, &route_path, error.to_string())
         })?;
-        let route = decode_route(&route_path, &input)?;
+        let route = decode_route(&route_path, &input, &runtime)?;
         crate::grpc::schema::check_route(&route, &runtime.protos).map_err(|reason| {
             StartupError::new(StartupDiagnosticKind::Schema, &route_path, reason)
         })?;
@@ -247,7 +253,7 @@ fn normalize_for_sort(routes_dir: &Path, path: &Path) -> String {
         .join("/")
 }
 
-fn decode_route(path: &Path, input: &str) -> Result<Route, StartupError> {
+fn decode_route(path: &Path, input: &str, runtime: &RuntimeConfig) -> Result<Route, StartupError> {
     parse_yaml(path, input)?;
     // Decode from text, not the parsed value, so schema errors keep their line.
     let route = serde_norway::from_str::<Route>(input).map_err(|error| {
@@ -258,6 +264,8 @@ fn decode_route(path: &Path, input: &str) -> Result<Route, StartupError> {
         )
     })?;
     route.validate().map_err(|error| route_error(path, error))?;
+    crate::ws::pipeline::WsPipeline::of(&route, runtime)
+        .map_err(|reason| StartupError::new(StartupDiagnosticKind::Schema, path, reason))?;
     Ok(route)
 }
 
@@ -377,6 +385,42 @@ mod tests {
     use crate::http::RuntimeConfig;
     use crate::schema::PassthroughTarget;
     use crate::startup::{StartupDiagnosticKind, load_catalog_from_files};
+
+    #[test]
+    fn rejects_unused_pipelines_with_unknown_transformers_or_directions() {
+        let dir = tempfile::tempdir().unwrap();
+        let commands = std::collections::BTreeMap::from([(
+            "reader".to_owned(),
+            crate::config::CommandsConfig {
+                input: Some(vec!["cat".to_owned()]),
+                output: None,
+                dir: dir.path().to_path_buf(),
+            },
+        )]);
+        for (name, expected) in [
+            ("missing", "unknown Transformer `missing`"),
+            ("reader", "does not provide `output`"),
+        ] {
+            let pipelines = std::collections::BTreeMap::from([(
+                "unused".to_owned(),
+                crate::config::PipelineConfig {
+                    input: Vec::new(),
+                    output: vec![name.to_owned()],
+                },
+            )]);
+            let result = load_catalog_from_files(
+                dir.path(),
+                dir.path().join("collections.yaml"),
+                RuntimeConfig {
+                    commands: commands.clone(),
+                    pipelines,
+                    ..RuntimeConfig::default()
+                },
+                None,
+            );
+            assert!(matches!(result, Err(error) if error.to_string().contains(expected)));
+        }
+    }
 
     fn write(path: &std::path::Path, contents: &str) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();

@@ -1,7 +1,7 @@
 //! gRPC Route checks. Shape checks run with the rest of Route validation; proto checks run at
 //! startup against the loaded `DescriptorPool` (design note `docs/design/transports.md` §4, Q3):
 //! the service and method exist, and literal `match.message` / response `message` and
-//! `stream[].message` values fit the method's input / output types as protobuf JSON. `${ }` strings
+//! `stream[].payload` values fit the method's input / output types as protobuf JSON. `${ }` strings
 //! are skipped (checked at render).
 //!
 //! Response literals may use any form protobuf JSON accepts. Match literals are compared with the
@@ -59,17 +59,10 @@ pub fn validate_pipeline(steps: &[PipelineStep]) -> Result<(), String> {
     }
     for (index, step) in steps.iter().enumerate() {
         if steps[..index].contains(step) {
-            return Err(format!("step `{}` appears twice", step_name(*step)));
+            return Err(format!("step `{step}` appears twice"));
         }
     }
     Ok(())
-}
-
-fn step_name(step: PipelineStep) -> &'static str {
-    match step {
-        PipelineStep::GrpcFrame => "grpc-frame",
-        PipelineStep::Protobuf => "protobuf",
-    }
 }
 
 /// Shape of a gRPC response Behavior: `message` (success), or `status` plus an optional `message`
@@ -134,7 +127,7 @@ pub fn validate_response(response: &ResponseBehavior, decoded: bool) -> Result<(
         (Some(_), _) => return Err("`message` must be a mapping of response fields".into()),
     }
     for (index, item) in response.stream.iter().flatten().enumerate() {
-        let path = format!("stream[{index}].message");
+        let path = format!("stream[{index}].payload");
         match &item.message {
             Value::String(text) if text.contains("${") => {}
             Value::String(text) if !decoded => {
@@ -247,7 +240,7 @@ fn check_behavior(
     }
     for (index, item) in response.stream.iter().flatten().enumerate() {
         if item.message.is_object() {
-            let path = format!("stream[{index}].message");
+            let path = format!("stream[{index}].payload");
             check_response_message(&item.message, &method.output(), &path)?;
         }
     }
@@ -840,7 +833,19 @@ cases:
         )
         .unwrap_err()
         .to_string();
-        assert!(unknown.contains("unknown variant `msgpack`"), "{unknown}");
+        assert!(
+            unknown.contains("unknown pipeline step `msgpack`"),
+            "{unknown}"
+        );
+        let plugin = Route::from_yaml(
+            "id: r\ntransport: grpc\nmatch: { service: s, method: m }\npipeline: [grpc-frame, env/envelope]\ncases: {}\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(
+            plugin.contains("gRPC Routes take only `grpc-frame` and `protobuf` for now"),
+            "{plugin}"
+        );
 
         let http = Route::from_yaml(
             "id: r\ntransport: http\nmatch: { method: GET, path: /x }\npipeline: [protobuf]\ncases:\n  any:\n    behaviors:\n      ok: {}\n",
@@ -959,15 +964,15 @@ cases:
     behaviors:
       then-ok:
         stream:
-          - { message: { id: a-1, state: PENDING } }
-          - { message: { id: '${ message.ids[0] }' }, delay: 10ms }
+          - { payload: { id: a-1, state: PENDING } }
+          - { payload: { id: '${ message.ids[0] }' }, delay: 10ms }
         status: OK
       then-aborted:
-        stream: [{ message: { id: a-1 } }]
+        stream: [{ payload: { id: a-1 } }]
         status: ABORTED
         message: 'gave up on ${ message.ids[0] }'
         metadata: { x-reason: gone }
-      open: { stream: [{ message: { id: a-1 } }] }
+      open: { stream: [{ payload: { id: a-1 } }] }
       open-empty: {}
       fails-at-once: { status: UNAVAILABLE }
 "#,
@@ -981,24 +986,24 @@ cases:
             "  any:
     behaviors:
       ok:
-        stream: [{ message: { id: a-1 } }, { message: { nope: 1 } }]
+        stream: [{ payload: { id: a-1 } }, { payload: { nope: 1 } }]
 ",
         )
         .unwrap_err();
         assert_eq!(
             error,
-            "behavior `approvals-get:any:ok`: unknown field `stream[1].message.nope` in approvals.v1.Approval"
+            "behavior `approvals-get:any:ok`: unknown field `stream[1].payload.nope` in approvals.v1.Approval"
         );
         let error = check_watch(
             "  any:
     behaviors:
       ok:
-        stream: [{ message: { evidence: 'not base64!' } }]
+        stream: [{ payload: { evidence: 'not base64!' } }]
 ",
         )
         .unwrap_err();
         assert!(
-            error.contains("`stream[0].message` does not fit approvals.v1.Approval"),
+            error.contains("`stream[0].payload` does not fit approvals.v1.Approval"),
             "{error}"
         );
     }
@@ -1024,7 +1029,7 @@ cases:
             assert!(error.contains(expected), "{behavior}: {error}");
         }
         let error =
-            check("  any:\n    behaviors:\n      ok: { stream: [{ message: { id: a-1 } }] }\n")
+            check("  any:\n    behaviors:\n      ok: { stream: [{ payload: { id: a-1 } }] }\n")
                 .unwrap_err();
         assert_eq!(
             error,
@@ -1042,25 +1047,25 @@ cases:
             .to_string()
         };
         assert!(
-            invalid("", "{ stream: [{ message: plain }] }")
-                .contains("`stream[0].message` must be a mapping of response fields")
+            invalid("", "{ stream: [{ payload: plain }] }")
+                .contains("`stream[0].payload` must be a mapping of response fields")
         );
         assert!(
             invalid(
                 "pipeline: [grpc-frame]\n",
-                "{ stream: [{ message: { id: x } }] }"
+                "{ stream: [{ payload: { id: x } }] }"
             )
-            .contains("`stream[0].message` is base64 bytes, not a mapping")
+            .contains("`stream[0].payload` is base64 bytes, not a mapping")
         );
         assert!(
             invalid(
                 "pipeline: [grpc-frame]\n",
-                "{ stream: [{ message: 'not base64!' }] }"
+                "{ stream: [{ payload: 'not base64!' }] }"
             )
-            .contains("`stream[0].message` must be base64 bytes")
+            .contains("`stream[0].payload` must be base64 bytes")
         );
         // Templates in stream messages are parsed at load time too.
-        invalid("", "{ stream: [{ message: { id: '${ nope(' } }] }");
+        invalid("", "{ stream: [{ payload: { id: '${ nope(' } }] }");
     }
 
     #[test]

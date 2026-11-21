@@ -1,9 +1,9 @@
 # Transports: worked examples
 
 Status: **draft for review** (#216). Once agreed, this becomes the spec for gRPC (#217) and
-WebSocket/SSE (#218). Implemented: HTTP, gRPC unary and server streaming, and WebSocket text frames
-without pipelines (section 6; `every`, Control API `close` and the `wait` conditions other than
-`connected: true` not yet).
+WebSocket/SSE (#218). Implemented: HTTP, gRPC unary and server streaming, WebSocket (section 6;
+`every`, Control API `close` and the `wait` conditions other than `connected: true` not yet), and
+plugin steps (section 7; plugin functions not yet).
 
 Read it as "what would I write in my mocks". Every open choice is marked **Q** with a recommendation
 at the end.
@@ -390,8 +390,8 @@ miss on input or report a transform failure. A worker process exiting stops Deco
 
 One-shot commands run with the configured argv in the directory of `decoy.yaml`. The command reads
 stdin to EOF, writes its result to stdout, and uses stderr for logs. A nonzero exit fails the
-transform. Decoy passes bytes to the next command as-is and serializes structured values as
-UTF-8 JSON for stdin. A command's stdout remains bytes when passed to another step. On WebSocket, a terminal input command emits JSON for the Message envelope. The last output
+transform. Decoy passes bytes to the next command as-is, writes strings as UTF-8 text, and
+serializes other values as UTF-8 JSON for stdin. A command's stdout remains bytes when passed to another step. On WebSocket, a terminal input command emits JSON for the Message envelope. The last output
 worker selects text or binary by its return value. A terminal output command sends a binary frame.
 
 ## 8. Server-Sent Events

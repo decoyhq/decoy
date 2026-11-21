@@ -67,7 +67,7 @@ export function serve(plugin: Plugin, io: Io = processIo): void {
     return { frame, connection, state, protobuf }
   }
 
-  /** Вызывает преобразование в направлении, указанном Decoy. */
+  /** Runs the transform in the direction requested by Decoy. */
   const run = (message: WireMessage, ctx: Context) => {
     switch (message.op) {
       case 'input':

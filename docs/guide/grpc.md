@@ -114,17 +114,18 @@ cases:
     behaviors:
       progress:
         stream:
-          - { message: { id: '${ message.ids[0] }', state: PENDING } }
-          - { message: { id: '${ message.ids[0] }', state: APPROVED }, delay: 500ms }
+          - { payload: { id: '${ message.ids[0] }', state: PENDING } }
+          - { payload: { id: '${ message.ids[0] }', state: APPROVED }, delay: 500ms }
         status: OK # end the call here
       gives-up:
-        stream: [{ message: { id: a-1, state: PENDING } }]
+        stream: [{ payload: { id: a-1, state: PENDING } }]
         status: ABORTED
         message: gave up
       live:
-        stream: [{ message: { id: a-1, state: PENDING } }] # no status: stays open
+        stream: [{ payload: { id: a-1, state: PENDING } }] # no status: stays open
 ```
 
+- Each `stream` item carries its data in `payload`.
 - With `status`, the call ends after the list: `OK`, or an error with its `message` text and
   `metadata`, as for unary calls.
 - Without `status`, the call stays open after the list. Each Control API
@@ -140,7 +141,7 @@ cases:
 ## Checked at startup
 
 - The service and method exist in the loaded protos.
-- Literal response `message` and `stream[].message` values fit the method's output type: no
+- Literal response `message` and `stream[].payload` values fit the method's output type: no
   unknown fields, valid enum names, scalar types and ranges. A message with no `${ }` is also
   parsed as protobuf JSON.
 - Literal `match.message` values fit the input type in the envelope's form above. `created_at_ms`

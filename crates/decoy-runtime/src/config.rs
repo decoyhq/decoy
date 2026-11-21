@@ -39,6 +39,9 @@ pub struct ServeConfig {
     pub max_body_bytes: usize,
     /// Transformers configured with a persistent worker.
     pub plugins: BTreeMap<String, PluginConfig>,
+    /// Named step lists a Route uses with `pipeline: <name>`.
+    pub pipelines: BTreeMap<String, PipelineConfig>,
+    pub commands: BTreeMap<String, CommandsConfig>,
 }
 
 /// One plugin process (`docs/design/plugin-protocol.md`).
@@ -53,6 +56,36 @@ pub struct PluginConfig {
 
 /// A plugin call's timeout when its entry sets none.
 pub const DEFAULT_PLUGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PipelineConfig {
+    #[serde(default)]
+    pub input: Vec<String>,
+    #[serde(default)]
+    pub output: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandsConfig {
+    pub input: Option<Vec<String>>,
+    pub output: Option<Vec<String>>,
+    pub dir: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+enum TransformerFile {
+    Worker(PluginFile),
+    Commands(CommandFile),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CommandFile {
+    input: Option<Vec<String>>,
+    output: Option<Vec<String>>,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -191,7 +224,9 @@ struct NativeConfigFile {
     protos: Option<ProtoSources>,
     max_body_bytes: Option<usize>,
     #[serde(default)]
-    transformers: BTreeMap<String, PluginFile>,
+    transformers: BTreeMap<String, TransformerFile>,
+    #[serde(default)]
+    pipelines: BTreeMap<String, PipelineConfig>,
 }
 
 impl ServeConfig {
@@ -324,13 +359,34 @@ impl ServeConfig {
             .as_ref()
             .and_then(|config| config.max_body_bytes)
             .unwrap_or(DEFAULT_MAX_BODY_BYTES);
-        let plugins = file_config
+        let mut plugins = BTreeMap::new();
+        let mut commands = BTreeMap::new();
+        for (name, transformer) in file_config
             .as_ref()
             .map(|config| config.transformers.clone())
             .unwrap_or_default()
-            .into_iter()
-            .map(|(key, plugin)| Ok((key.clone(), plugin_config(&key, plugin, &config_base)?)))
-            .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
+        {
+            match transformer {
+                TransformerFile::Worker(worker) => {
+                    let worker = plugin_config(&name, worker, &config_base)?;
+                    plugins.insert(name, worker);
+                }
+                TransformerFile::Commands(command) => {
+                    commands.insert(
+                        name,
+                        CommandsConfig {
+                            input: command.input,
+                            output: command.output,
+                            dir: config_base.clone(),
+                        },
+                    );
+                }
+            }
+        }
+        let pipelines = file_config
+            .as_ref()
+            .map(|config| config.pipelines.clone())
+            .unwrap_or_default();
         let protos = file_config
             .and_then(|config| config.protos)
             .map(|protos| ProtoSources {
@@ -363,6 +419,8 @@ impl ServeConfig {
             protos,
             max_body_bytes,
             plugins,
+            pipelines,
+            commands,
         })
     }
 }
