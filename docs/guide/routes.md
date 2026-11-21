@@ -109,8 +109,7 @@ The default `kind`. All fields are optional:
 
 ### Delay
 
-Any Behavior, Response or Passthrough, can wait before answering: `delay: 250` (milliseconds) or
-a duration such as `500ms`, `2s`, `1m 30s`. Other requests are not held up while one waits.
+Any Behavior, Response or Passthrough, can wait before answering. Set `delay` to an integer in milliseconds or to a duration with `ms` or `s`, such as `500ms`, `2s`, or `1.5s`. Other requests can proceed while one waits.
 
 ```yaml
 behaviors:

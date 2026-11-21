@@ -11,6 +11,7 @@ use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncWrite, BufReader};
 use tokio::sync::{mpsc, oneshot};
 
 use super::wire::{self, field, message};
+use crate::time::format_duration;
 
 /// The protocol version Decoy speaks.
 pub const PROTOCOL: u64 = 1;
@@ -70,7 +71,7 @@ pub enum CallError {
         /// The plugin's own stack trace, when it sent one.
         stack: Option<String>,
     },
-    #[error("timeout after {}", humantime::format_duration(*.0))]
+    #[error("timeout after {}", format_duration(*.0))]
     Timeout(Duration),
     #[error("the plugin process is gone")]
     Gone,

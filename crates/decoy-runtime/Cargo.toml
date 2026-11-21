@@ -23,7 +23,7 @@ walkdir = "2"
 globset = "0.4"
 jmespath = "0.5"
 fastrand = "2"
-humantime = "2"
+jiff = { version = "0.2", default-features = false, features = ["std"] }
 protox = "0.10.0"
 prost-reflect = { version = "0.16.5", features = ["serde"] }
 base64 = "0.23"

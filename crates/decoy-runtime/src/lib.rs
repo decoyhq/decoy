@@ -20,6 +20,7 @@ pub mod schema;
 pub mod server;
 pub mod startup;
 pub mod template;
+mod time;
 pub mod tls;
 pub mod watch;
 pub mod ws;

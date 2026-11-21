@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::time::parse_duration;
+
 pub const DEFAULT_PORT: u16 = 8080;
 /// Larger request bodies get `413` (gRPC: `RESOURCE_EXHAUSTED`) instead of being buffered.
 pub const DEFAULT_MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
@@ -385,8 +387,7 @@ fn plugin_config(key: &str, plugin: PluginFile, dir: &Path) -> Result<PluginConf
     }
     let timeout = match plugin.timeout {
         None => DEFAULT_PLUGIN_TIMEOUT,
-        Some(text) => humantime::parse_duration(&text)
-            .ok()
+        Some(text) => parse_duration(&text)
             .filter(|timeout| !timeout.is_zero())
             .ok_or_else(|| invalid(format!("`timeout: {text}` is not a duration like `5s`")))?,
     };
@@ -911,6 +912,42 @@ listeners:
         );
         fs::write(base.join("decoy.yaml"), "routes: r\ncollections: c.yaml\n").unwrap();
         assert_eq!(load(None).port.host, DEFAULT_HOST);
+    }
+
+    #[test]
+    fn plugin_timeouts_use_milliseconds_or_seconds() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        let path = base.join("decoy.yaml");
+        let load = |timeout| {
+            fs::write(
+                &path,
+                format!(
+                    "routes: r\ncollections: c.yaml\ntransformers:\n  demo:\n    worker: [node, worker.js]\n    timeout: {timeout}\n"
+                ),
+            )
+            .unwrap();
+            ServeConfig::from_options(
+                ServeCliOptions {
+                    config_file: Some(path.clone()),
+                    ..ServeCliOptions::default()
+                },
+                base,
+            )
+        };
+
+        for (value, millis) in [("500ms", 500), ("1.5s", 1_500)] {
+            assert_eq!(
+                load(value).unwrap().plugins["demo"].timeout,
+                std::time::Duration::from_millis(millis)
+            );
+        }
+        for value in ["1m", "0s"] {
+            assert!(matches!(
+                load(value),
+                Err(ConfigError::InvalidPlugin { .. })
+            ));
+        }
     }
 
     #[test]

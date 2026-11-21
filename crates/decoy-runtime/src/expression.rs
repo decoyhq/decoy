@@ -6,7 +6,6 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::LazyLock;
 use std::thread::LocalKey;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use jmespath::functions::{ArgumentType, CustomFunction, Signature};
 use jmespath::{
@@ -15,6 +14,8 @@ use jmespath::{
 };
 use serde_json::Value;
 use thiserror::Error;
+
+use crate::time::{now_rfc3339, now_unix_seconds};
 
 /// Why an expression didn't scan, compile or evaluate. The text reaches miss bodies and template
 /// errors, so it is part of the wire contract.
@@ -260,14 +261,10 @@ fn uuid_v4() -> String {
 
 /// `now()` → RFC 3339 UTC with milliseconds; `now('unix')` → whole seconds since the epoch.
 fn now(args: &[Rcvar], ctx: &mut Context<'_>) -> Result<Rcvar, JmespathError> {
-    let now = SystemTime::now();
     match args.first().map(|format| format.as_string().cloned()) {
-        None => Ok(string(humantime::format_rfc3339_millis(now).to_string())),
+        None => Ok(string(now_rfc3339())),
         Some(Some(format)) if format == "unix" && args.len() == 1 => {
-            let seconds = now
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or(Duration::ZERO)
-                .as_secs();
+            let seconds = now_unix_seconds();
             Ok(Rcvar::new(Variable::Number(seconds.into())))
         }
         _ => Err(invalid(ctx, "now() or now('unix')")),
@@ -448,10 +445,11 @@ mod tests {
         assert_ne!(evaluate("uuid()", &envelope), evaluate("uuid()", &envelope));
 
         let now = evaluate("now()", &envelope).unwrap();
-        assert!(
-            humantime::parse_rfc3339(now.as_str().unwrap()).is_ok(),
-            "{now}"
-        );
+        let now = now.as_str().unwrap();
+        assert_eq!(now.len(), 24);
+        assert_eq!(&now[19..20], ".");
+        assert!(now[20..23].bytes().all(|byte| byte.is_ascii_digit()));
+        assert!(now.ends_with('Z'));
         let unix = evaluate("now('unix')", &envelope)
             .unwrap()
             .as_u64()

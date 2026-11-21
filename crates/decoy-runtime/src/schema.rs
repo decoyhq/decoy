@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
+use crate::time::parse_duration;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Transport {
@@ -473,7 +475,7 @@ struct RawBehavior {
     close: Option<WsClose>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     target: Option<PassthroughTarget>,
-    /// Integer milliseconds or a duration string such as `500ms` or `2s`.
+    /// Integer milliseconds or a duration string with `ms` and `s` units.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     delay: Option<Value>,
 }
@@ -529,7 +531,7 @@ impl TryFrom<RawBehavior> for Behavior {
 fn parse_delay(delay: &Value) -> Result<Duration, ValidationError> {
     let parsed = match delay {
         Value::Number(millis) => millis.as_u64().map(Duration::from_millis),
-        Value::String(text) => humantime::parse_duration(text).ok(),
+        Value::String(text) => parse_duration(text),
         _ => None,
     };
     parsed.ok_or_else(|| ValidationError::InvalidDelay(delay.to_string()))
@@ -967,10 +969,12 @@ cases:
             ))
         };
         for (input, millis) in [
+            ("0", 0),
             ("250", 250),
             ("'500ms'", 500),
             ("2s", 2000),
-            ("1m 30s", 90_000),
+            ("1.5s", 1_500),
+            ("500ms 1s 500ms", 2_000),
         ] {
             let route = route(input).unwrap();
             for behavior in route.cases["any"].behaviors.values() {
@@ -984,6 +988,7 @@ cases:
         let error = route("fast").unwrap_err().to_string();
         assert!(error.contains("must be integer milliseconds"), "{error}");
         assert!(route("-5").is_err());
+        assert!(route("1m 30s").is_err());
     }
 
     fn route_error(extra_route: &str, behavior: &str) -> String {
