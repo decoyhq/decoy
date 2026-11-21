@@ -217,7 +217,7 @@ impl App {
 
     fn draw_log(&mut self, frame: &mut Frame, area: Rect) {
         self.rows.clear();
-        if area.height == 0 || self.log.is_empty() {
+        if area.height == 0 {
             return;
         }
         let theme = self.theme();
@@ -268,6 +268,33 @@ impl App {
             frame.render_widget(paragraph.scroll((h - rect.height, 0)), rect);
             rows.push((rect, index));
             y = top;
+        }
+        // Center the duck below the startup notices until the transcript begins.
+        let free = area.height.saturating_sub(used);
+        const DUCK_WIDTH: u16 = 19;
+        const DUCK_HEIGHT: u16 = 7;
+        if self.log.len() == self.startup_entries
+            && self.input.is_empty()
+            && self.picker.is_none()
+            && free >= DUCK_HEIGHT
+            && area.width >= DUCK_WIDTH
+        {
+            // Braille samples of the paper duck. Sparse dots distinguish its folded wing.
+            let logo = Paragraph::new(vec![
+                Line::raw("            ⢀⣴⣦⡀"),
+                Line::raw("          ⢠⣶⣿⣿⣍⣽⣆"),
+                Line::from(vec![
+                    Span::raw("⠐⢔⢤      ⢐⢵⣿⣿⣿⣿⡟"),
+                    Span::styled("⠽⠷⠦", theme.fg(Color::Rgb(195, 93, 39))),
+                ]),
+                Line::raw("  ⢕⢕⢕⢤⢀⢀⢜⢕⣽⣿⣿⣿⠏"),
+                Line::raw("   ⢑⢕⢕⢕⢕⢷⢕⣿⣿⣿⠏"),
+                Line::raw("    ⠑⢕⢕⢕⢕⣵⣿⣿⡟"),
+                Line::raw("     ⠑⠵⠿⠟⠛⠛⠋"),
+            ]);
+            let x = area.x + (area.width - DUCK_WIDTH) / 2;
+            let y = area.y + used + (free - DUCK_HEIGHT) / 2;
+            frame.render_widget(logo, Rect::new(x, y, DUCK_WIDTH, DUCK_HEIGHT));
         }
         self.rows = rows;
         if scroll != self.scroll {
@@ -464,7 +491,7 @@ mod tests {
     }
 
     fn mixed(app: &mut App) {
-        app.info("decoy 0.2.0 · listening on http://127.0.0.1:4010");
+        app.info("listening on http://127.0.0.1:4010");
         app.handle_event(hit(7));
         app.handle_event(miss(8));
         app.handle_event(passthrough(9));
@@ -484,7 +511,10 @@ mod tests {
 
     #[test]
     fn empty_state() {
-        insta::assert_snapshot!(plain(&render(&mut app(), 80, 8)));
+        let mut app = app();
+        app.info("listening on localhost");
+        app.startup_entries = app.log.len();
+        insta::assert_snapshot!(plain(&render(&mut app, 80, 12)));
     }
 
     #[test]

@@ -1,6 +1,8 @@
+![Decoy, a portable local mock server for development and testing](docs/assets/decoy-banner.svg)
+
 # Decoy
 
-Decoy is a local mock server for HTTP, gRPC, and WebSocket clients. Describe your API in YAML,
+Decoy is a local mock server for HTTP, gRPC, and WebSocket clients. Define your Routes,
 point your app at Decoy, and switch the same request from success to failure while the app is
 running. When a request misses, Decoy returns a diagnostic. Forwarding to an upstream requires
 an explicit Passthrough Behavior.

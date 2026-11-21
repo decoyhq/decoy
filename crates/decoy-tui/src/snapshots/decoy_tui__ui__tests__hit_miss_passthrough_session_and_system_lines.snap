@@ -2,7 +2,7 @@
 source: crates/decoy-tui/src/ui.rs
 expression: "styled(&render(&mut app, 120, 16))"
 ---
-[DIM]decoy 0.2.0 · listening on http://127.0.0.1:4010[/]
+[DIM]listening on http://127.0.0.1:4010[/]
 [DIM] #7 12:01:03 [/]GET     /users/123                               [DIM]→ [/][Green]users-by-id:user-123:success[/] 200[DIM] 4ms[/]
 [DIM] #8 12:01:03 [/]POST    /orders?page=2&limit=50&sort=created_at… [Red BOLD]MISS[/][Red] no active route matched[/] 404[DIM] 4ms[/]
 [DIM] #9 12:01:03 [/]GET     /avatars/ada.png                         [Yellow]→ upstream http://cdn.local/avatars/ada.png[/] 200[DIM] 31ms[/]

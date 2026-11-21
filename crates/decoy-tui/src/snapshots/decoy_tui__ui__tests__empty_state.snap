@@ -1,11 +1,15 @@
 ---
 source: crates/decoy-tui/src/ui.rs
-expression: "plain(&render(&mut app(), 80, 8))"
+expression: "plain(&render(&mut app, 80, 12))"
 ---
-
-
-
-
+listening on localhost
+                                          ⢀⣴⣦⡀
+                                        ⢠⣶⣿⣿⣍⣽⣆
+                              ⠐⢔⢤      ⢐⢵⣿⣿⣿⣿⡟⠽⠷⠦
+                                ⢕⢕⢕⢤⢀⢀⢜⢕⣽⣿⣿⣿⠏
+                                 ⢑⢕⢕⢕⢕⢷⢕⣿⣿⣿⠏
+                                  ⠑⢕⢕⢕⢕⣵⣿⣿⡟
+                                   ⠑⠵⠿⠟⠛⠛⠋
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │› type / for commands · Ctrl+O recent requests                                │
 ╰──────────────────────────────────────────────────────────────────────────────╯
