@@ -74,21 +74,62 @@ pub struct CommandsConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(untagged)]
+#[serde(try_from = "TransformerFields")]
 enum TransformerFile {
     Worker(PluginFile),
     Commands(CommandFile),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+// Read keys before choosing the form so an unknown field keeps its YAML location.
+// An explicitly null option still belongs to its form (e.g. a worker cannot set input).
+#[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct TransformerFields {
+    #[serde(default, deserialize_with = "present")]
+    worker: Option<Vec<String>>,
+    #[serde(default, deserialize_with = "present")]
+    timeout: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    input: Option<Option<Vec<String>>>,
+    #[serde(default, deserialize_with = "present")]
+    output: Option<Option<Vec<String>>>,
+}
+
+fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error> {
+    T::deserialize(deserializer).map(Some)
+}
+
+impl TryFrom<TransformerFields> for TransformerFile {
+    type Error = &'static str;
+
+    fn try_from(fields: TransformerFields) -> Result<Self, Self::Error> {
+        match fields.worker {
+            Some(worker) if fields.input.is_none() && fields.output.is_none() => {
+                Ok(Self::Worker(PluginFile {
+                    worker,
+                    timeout: fields.timeout.flatten(),
+                }))
+            }
+            None if fields.timeout.is_none() => Ok(Self::Commands(CommandFile {
+                input: fields.input.flatten(),
+                output: fields.output.flatten(),
+            })),
+            _ => {
+                Err("a Transformer takes worker and optional timeout, or input and output commands")
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct CommandFile {
     input: Option<Vec<String>>,
     output: Option<Vec<String>>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct PluginFile {
     worker: Vec<String>,
     timeout: Option<String>,
@@ -127,14 +168,27 @@ enum TlsFile {
 
 impl<'de> Deserialize<'de> for TlsFile {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        use serde::de::Error;
-        match serde_norway::Value::deserialize(deserializer)? {
-            serde_norway::Value::String(value) if value == "auto" => Ok(Self::Auto),
-            value @ serde_norway::Value::Mapping(_) => serde_norway::from_value(value)
-                .map(Self::Files)
-                .map_err(D::Error::custom),
-            _ => Err(D::Error::custom("expected `auto` or `{ cert, key }`")),
+        struct TlsVisitor;
+        impl<'de> serde::de::Visitor<'de> for TlsVisitor {
+            type Value = TlsFile;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("`auto` or `{ cert, key }`")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<TlsFile, E> {
+                match value {
+                    "auto" => Ok(TlsFile::Auto),
+                    _ => Err(E::custom("expected `auto` or `{ cert, key }`")),
+                }
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<TlsFile, A::Error> {
+                TlsFiles::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+                    .map(TlsFile::Files)
+            }
         }
+        deserializer.deserialize_any(TlsVisitor)
     }
 }
 
@@ -153,42 +207,48 @@ struct ListenerFile {
 fn listener_file<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<ListenerFile, D::Error> {
-    use serde::de::Error;
-    match serde_norway::Value::deserialize(deserializer)? {
-        serde_norway::Value::Mapping(mapping) => {
-            serde_norway::from_value(serde_norway::Value::Mapping(mapping))
-                .map_err(D::Error::custom)
+    struct ListenerVisitor;
+    impl<'de> serde::de::Visitor<'de> for ListenerVisitor {
+        type Value = ListenerFile;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a port number or listener settings")
         }
-        value => u16::deserialize(value)
-            .map(|port| ListenerFile {
+
+        fn visit_u64<E: serde::de::Error>(self, port: u64) -> Result<ListenerFile, E> {
+            let port = u16::try_from(port).map_err(E::custom)?;
+            Ok(ListenerFile {
                 port,
                 host: None,
                 tls: None,
             })
-            .map_err(D::Error::custom),
+        }
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<ListenerFile, A::Error> {
+            ListenerFile::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+        }
     }
+    deserializer.deserialize_any(ListenerVisitor)
 }
+
+#[derive(Deserialize)]
+struct ListenerEntry(#[serde(deserialize_with = "listener_file")] ListenerFile);
 
 fn optional_listener_file<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<ListenerFile>, D::Error> {
-    match serde_norway::Value::deserialize(deserializer)? {
-        serde_norway::Value::Null => Ok(None),
-        value => listener_file(value)
-            .map(Some)
-            .map_err(serde::de::Error::custom),
-    }
+    Ok(Option::<ListenerEntry>::deserialize(deserializer)?.map(|entry| entry.0))
 }
 
 fn listener_files<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<BTreeMap<String, ListenerFile>, D::Error> {
-    #[derive(Deserialize)]
-    struct Entry(#[serde(deserialize_with = "listener_file")] ListenerFile);
-    Ok(BTreeMap::<String, Entry>::deserialize(deserializer)?
-        .into_iter()
-        .map(|(name, Entry(listener))| (name, listener))
-        .collect())
+    Ok(
+        BTreeMap::<String, ListenerEntry>::deserialize(deserializer)?
+            .into_iter()
+            .map(|(name, entry)| (name, entry.0))
+            .collect(),
+    )
 }
 
 /// Where gRPC message types come from; paths are absolute after config resolution.
@@ -461,9 +521,17 @@ fn read_config_file(path: &Path) -> Result<NativeConfigFile, ConfigError> {
         path: path.to_path_buf(),
         source,
     })?;
-    serde_norway::from_str(&input).map_err(|source| ConfigError::ParseConfig {
-        path: path.to_path_buf(),
-        source,
+    crate::yaml::from_str(&input).map_err(|schema_error| {
+        let path = path.to_path_buf();
+        // A visitor may reject a field before reaching a syntax error later in its value.
+        let error = serde_norway::from_str::<serde_norway::Value>(&input)
+            .err()
+            .map(crate::yaml::Error::from)
+            .unwrap_or(schema_error);
+        match error {
+            crate::yaml::Error::Plain(source) => ConfigError::ParseConfig { path, source },
+            crate::yaml::Error::Merge(source) => ConfigError::ParseMergedConfig { path, source },
+        }
     })
 }
 
@@ -504,6 +572,11 @@ pub enum ConfigError {
     ParseConfig {
         path: PathBuf,
         source: serde_norway::Error,
+    },
+    #[error("failed to parse config `{}`: {source}", path.display())]
+    ParseMergedConfig {
+        path: PathBuf,
+        source: Box<serde_saphyr::Error>,
     },
     #[error("`{second}` uses port {port}, already taken by `{first}`")]
     PortConflict {
@@ -903,6 +976,50 @@ listeners:
         );
     }
 
+    #[test]
+    fn listener_can_merge_settings_from_the_main_port() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("decoy.yaml"), "routes: r\ncollections: c.yaml\nport: &main { port: 8000, host: 127.0.0.1 }\nlisteners: { second: { <<: *main, port: 8001 } }").unwrap();
+        let config = load_raw(dir.path()).unwrap();
+        assert_eq!(config.listeners["second"].port, 8001);
+        assert_eq!(config.listeners["second"].host, "127.0.0.1");
+    }
+
+    #[test]
+    fn merged_listener_error_names_the_bad_key_and_line() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("decoy.yaml");
+        fs::write(
+            &path,
+            "listeners:\n  second:\n    <<:\n      port: 8080\n      typo: true",
+        )
+        .unwrap();
+        let error = read_config_file(&path).unwrap_err().to_string();
+        assert!(error.contains(&path.display().to_string()), "{error}");
+        assert!(
+            error.contains("typo") && error.contains("line 5"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn transformer_merges_report_unknown_keys_and_keep_worker_and_command_fields_separate() {
+        let yaml = "transformers:\n  a:\n    <<:\n      worker: [node]\n      typo: true";
+        let error = crate::yaml::from_str::<NativeConfigFile>(yaml).unwrap_err();
+        assert_eq!(error.line(), Some(5));
+        assert!(error.to_string().contains("typo"));
+        for invalid in [
+            "{ worker: [node], input: null }",
+            "{ timeout: null }",
+            "{ worker: null }",
+        ] {
+            assert!(
+                crate::yaml::from_str::<TransformerFile>(invalid).is_err(),
+                "{invalid}"
+            );
+        }
+    }
+
     /// Pins the YAML parse errors users see (message and location) across YAML library swaps.
     #[test]
     fn config_parse_errors_keep_their_messages_and_locations() {
@@ -920,15 +1037,15 @@ listeners:
         );
         assert_eq!(
             load("routes: r\ncollections: c.yaml\nlisteners: { a: { port: 9000, bind: x } }\n"),
-            "failed to parse config `<dir>/decoy.yaml`: listeners: unknown field `bind`, expected one of `port`, `host`, `tls` at line 3 column 12"
+            "failed to parse config `<dir>/decoy.yaml`: listeners.a: unknown field `bind`, expected one of `port`, `host`, `tls` at line 3 column 31"
         );
         assert_eq!(
             load("routes: r\ncollections: c.yaml\nport: { port: high }\n"),
-            "failed to parse config `<dir>/decoy.yaml`: invalid type: string \"high\", expected u16"
+            "failed to parse config `<dir>/decoy.yaml`: port.port: invalid type: string \"high\", expected u16 at line 3 column 15"
         );
         assert_eq!(
             load("routes: r\ncollections: c.yaml\ntls: yes-please\n"),
-            "failed to parse config `<dir>/decoy.yaml`: expected `auto` or `{ cert, key }`"
+            "failed to parse config `<dir>/decoy.yaml`: tls: expected `auto` or `{ cert, key }` at line 3 column 6"
         );
     }
 
