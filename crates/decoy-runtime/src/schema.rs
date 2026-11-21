@@ -30,12 +30,12 @@ pub struct Route {
     /// transport default: `[grpc-frame, protobuf]` for gRPC, none for WebSocket.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pipeline: Option<Vec<PipelineStep>>,
-    /// Имя Pipeline из конфигурации Decoy.
+    /// Name of a Pipeline defined in the Decoy config.
     #[serde(rename = "pipeline", skip_serializing_if = "Option::is_none")]
     pub pipeline_name: Option<String>,
 }
 
-/// Встроенный шаг gRPC Pipeline.
+/// A built-in gRPC Pipeline step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum PipelineStep {
@@ -125,7 +125,7 @@ impl Route {
         Ok(route)
     }
 
-    /// Проверяет форму Pipeline для транспорта Route.
+    /// Checks that the Pipeline has the form required by the Route transport.
     fn validate_pipeline(&self) -> Result<(), String> {
         match (&self.transport, &self.pipeline_name, &self.pipeline) {
             (Transport::Ws, _, None) | (_, None, None) => Ok(()),
@@ -455,7 +455,7 @@ impl From<StreamItem> for MessageItem {
     }
 }
 
-/// Payload и задержка отдельного сообщения WebSocket.
+/// Payload and delay for one message in a WebSocket Behavior.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(try_from = "RawMessageItem", into = "RawMessageItem")]
 pub struct MessageItem {

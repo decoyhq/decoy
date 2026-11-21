@@ -252,7 +252,7 @@ impl BufferedFrames {
     }
 }
 
-/// Возвращает ранее прочитанный кадр или читает следующий из WebSocket.
+/// Returns the oldest buffered frame or reads the next one from the socket.
 async fn next_frame(
     stream: &mut Stream,
     queued: &mut BufferedFrames,
@@ -263,7 +263,7 @@ async fn next_frame(
     stream.next().await
 }
 
-/// Прерывает преобразование при закрытии сокета, сохраняя прочитанные сообщения в порядке прихода.
+/// Cancels the transform if the socket closes and buffers incoming data frames in order.
 async fn while_connected<T>(
     stream: &mut Stream,
     queued: &mut BufferedFrames,
@@ -285,7 +285,7 @@ async fn while_connected<T>(
     }
 }
 
-/// Отправляет кадр и сообщает таймеру Behavior, когда можно начать следующую задержку.
+/// Sends a frame and signals when the Behavior can start its next delay.
 async fn send(
     sink: &mut Sink,
     stream: &mut Stream,

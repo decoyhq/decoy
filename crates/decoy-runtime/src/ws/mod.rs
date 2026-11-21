@@ -18,7 +18,7 @@ use crate::schema::WsClose;
 pub use resolve::WsResolution;
 pub use view::Inbound;
 
-/// Тип payload для очереди Control API. Соединение получает JSON.
+/// Payload type for Control API pushes. Each connection receives JSON.
 pub const OUTPUT: &str = "ws:json";
 
 /// Why a message got no reply.

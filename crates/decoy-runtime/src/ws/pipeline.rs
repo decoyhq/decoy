@@ -1,4 +1,4 @@
-//! Преобразования между кадрами WebSocket и данными Cases и Behaviors.
+//! Converts WebSocket frames to Case inputs and Behavior payloads to frames.
 
 use super::Inbound;
 
@@ -53,7 +53,7 @@ pub enum PipelineError {
 }
 
 impl PipelineError {
-    /// Возвращает stack trace, присланный worker.
+    /// Returns the stack trace reported by the worker.
     pub fn stack(&self) -> Option<&str> {
         match self {
             Self::Step {
@@ -66,7 +66,7 @@ impl PipelineError {
 }
 
 impl WsPipeline {
-    /// Находит Pipeline и проверяет ссылки в обоих направлениях.
+    /// Looks up the Route’s Pipeline and validates its Transformer references in both directions.
     pub fn of(route: &Route, runtime: &RuntimeConfig) -> Result<Option<Self>, String> {
         let Some(name) = &route.pipeline_name else {
             return Ok(None);
@@ -76,7 +76,7 @@ impl WsPipeline {
             .map_err(|reason| format!("route `{}`: {reason}", route.id))
     }
 
-    /// Собирает шаги именованного Pipeline для обоих направлений.
+    /// Resolves the input and output steps of a named Pipeline.
     pub(crate) fn named(runtime: &RuntimeConfig, name: &str) -> Result<Self, String> {
         let spec = runtime
             .pipelines
@@ -94,17 +94,17 @@ impl WsPipeline {
         })
     }
 
-    /// Проверяет наличие преобразований входящего payload.
+    /// Whether the Pipeline transforms incoming payloads.
     pub fn has_input(&self) -> bool {
         !self.input.is_empty()
     }
 
-    /// Проверяет наличие преобразований исходящего payload.
+    /// Whether the Pipeline transforms outgoing payloads.
     pub fn has_output(&self) -> bool {
         !self.output.is_empty()
     }
 
-    /// Возвращает workers, участвующие в Pipeline.
+    /// Returns each worker used by the Pipeline once.
     pub fn plugins(&self) -> impl Iterator<Item = &Arc<Plugin>> {
         let mut seen = HashSet::new();
         self.input
@@ -117,7 +117,7 @@ impl WsPipeline {
             .filter(move |worker| seen.insert(worker.key.as_str()))
     }
 
-    /// Проверяет исходный литерал, если первый шаг является worker.
+    /// Checks the literal payload if the first output step is a worker.
     pub async fn check(&self, payload: &Value) -> Result<(), PipelineError> {
         if let Some(
             step @ Step {
@@ -131,7 +131,7 @@ impl WsPipeline {
         Ok(())
     }
 
-    /// Преобразует кадр в JSON для Message envelope.
+    /// Converts an incoming frame to JSON for the Message envelope.
     async fn input(
         &self,
         frame: Frame,
@@ -152,7 +152,7 @@ impl WsPipeline {
         }
     }
 
-    /// Преобразует отрисованный payload в исходящий кадр.
+    /// Converts a rendered payload to an outgoing frame.
     async fn output(
         &self,
         payload: &Value,
@@ -251,7 +251,7 @@ impl Codec {
 }
 
 impl Step {
-    /// Выбирает worker или команду для направления.
+    /// Selects the worker or command for this direction.
     fn resolve(runtime: &RuntimeConfig, name: &str, op: Op) -> Result<Self, String> {
         let unsupported = || format!("Transformer `{name}` does not provide `{}`", op.name());
         let runner = if let Some(worker) = runtime.plugins.get(name) {
@@ -286,7 +286,7 @@ impl Step {
         })
     }
 
-    /// Передаёт значение выбранному исполнителю.
+    /// Passes the value to the worker or command.
     async fn run(
         &self,
         op: Op,
@@ -335,7 +335,7 @@ impl Step {
         }
     }
 
-    /// Добавляет имя Transformer и направление в ошибку.
+    /// Adds the Transformer name and direction to the error.
     fn failed(&self, op: Op, reason: impl Into<String>) -> PipelineError {
         PipelineError::Step {
             name: self.name.clone(),
@@ -348,7 +348,7 @@ impl Step {
     }
 }
 
-/// Запускает команду и собирает stdout, пока данные пишутся в stdin.
+/// Runs a command, reading its output while writing the payload to stdin.
 async fn run_command(
     argv: &[String],
     dir: &std::path::Path,

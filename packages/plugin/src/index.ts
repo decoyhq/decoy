@@ -22,7 +22,7 @@ export interface Connection {
 }
 
 export interface Context {
-  /** Тип кадра для входящего сообщения WebSocket. */
+  /** Frame type of the incoming WebSocket message. */
   frame: 'text' | 'binary' | undefined
 
   /** Undefined at startup (`check`). */
@@ -44,18 +44,18 @@ export interface Context {
 }
 
 export interface Plugin {
-  /** Имя и версия отображаются в диагностике рядом с именем Transformer. */
+  /** Diagnostics show the worker name and version alongside the Transformer name. */
   name: string
 
   version: string
 
-  /** Преобразует входящее значение. Чтобы пропустить сообщение, вызови `miss`. */
+  /** Transforms an incoming value. Call `miss` to skip the message. */
   input?: (value: unknown, ctx: Context) => unknown
 
-  /** Преобразует отрисованный payload или результат предыдущего шага. */
+  /** Transforms the rendered payload or the previous step’s result. */
   output?: (value: unknown, ctx: Context) => unknown
 
-  /** Проверяет литерал при старте, включая строки с шаблонами. */
+  /** Validates a literal at startup, including strings that contain templates. */
   check?: (value: unknown, ctx: Context) => unknown
 }
 

@@ -62,7 +62,7 @@ export function read(
   })
 }
 
-/** Сохраняет допустимые ключи JSON, не изменяя прототипы объектов. */
+/** Preserves valid JSON keys without changing object prototypes. */
 function decodeMessage(body: Uint8Array): unknown {
   try {
     return decode(body)
@@ -82,7 +82,7 @@ function decodeMessage(body: Uint8Array): unknown {
   return restoreKeys(value)
 }
 
-/** Снимает префикс с ключей и создаёт собственные свойства даже для `__proto__`. */
+/** Removes the key prefix and restores own properties, including `__proto__`. */
 function restoreKeys(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(restoreKeys)
   if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) {
@@ -97,7 +97,7 @@ function restoreKeys(value: unknown): unknown {
   )
 }
 
-/** Проверяет обязательное поле сообщения протокола. */
+/** Checks that the protocol message has a string `kind` field. */
 function isWireMessage(value: unknown): value is WireMessage {
   return (
     typeof value === 'object' && value !== null && 'kind' in value && typeof value.kind === 'string'
