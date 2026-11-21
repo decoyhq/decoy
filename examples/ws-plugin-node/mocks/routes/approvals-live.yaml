@@ -1,0 +1,21 @@
+# msgpack { type, data: <protobuf> } in binary frames, plain JSON in text frames (typed-envelope plugin).
+id: approvals-live
+transport: ws
+match: { path: /ws/approvals }
+pipeline: approvals-ws
+cases:
+  hello:
+    on: connect
+    behaviors:
+      ping: { message: { action: ping } } # no `type`: the plugin sends it as JSON text
+  watch:
+    match:
+      message: { type: approvals.v1.WatchRequest, data: { ids: [a-1] } }
+    behaviors:
+      approved:
+        messages:
+          - payload: { type: approvals.v1.Approval, data: { id: a-1, state: PENDING } }
+          - payload: { type: approvals.v1.Approval, data: { id: a-1, state: APPROVED } }
+            delay: 200ms
+      missing:
+        message: { type: approvals.v1.Error, data: { code: 404, reason: 'no approval a-1' } }
