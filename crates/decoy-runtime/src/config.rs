@@ -37,7 +37,7 @@ pub struct ServeConfig {
     pub passthrough_base_url: Option<String>,
     pub protos: ProtoSources,
     pub max_body_bytes: usize,
-    /// Запущенные через `worker` Transformers.
+    /// Transformers configured with a persistent worker.
     pub plugins: BTreeMap<String, PluginConfig>,
 }
 
@@ -45,7 +45,7 @@ pub struct ServeConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginConfig {
     pub command: Vec<String>,
-    /// Каталог конфигурации Decoy.
+    /// Directory containing the Decoy config file.
     pub dir: PathBuf,
     /// Longest a call may take.
     pub timeout: std::time::Duration,
@@ -367,7 +367,7 @@ impl ServeConfig {
     }
 }
 
-/// Собирает параметры постоянного worker.
+/// Validates the configuration for a persistent worker.
 fn plugin_config(key: &str, plugin: PluginFile, dir: &Path) -> Result<PluginConfig, ConfigError> {
     let invalid = |reason: String| ConfigError::InvalidPlugin {
         key: key.to_owned(),

@@ -93,7 +93,7 @@ type Pending = Mutex<HashMap<u64, oneshot::Sender<Result<Msgpack, CallError>>>>;
 /// A plugin that answered `ready`.
 #[derive(Debug)]
 pub struct Plugin {
-    /// Имя Transformer в конфигурации.
+    /// Transformer key in the Decoy config.
     pub key: String,
     pub name: String,
     pub version: String,
@@ -110,7 +110,7 @@ impl Plugin {
         format!("{}: {}@{}", self.key, self.name, self.version)
     }
 
-    /// Проверяет направление, объявленное worker при запуске.
+    /// Whether the worker announced this operation at startup.
     pub fn supports(&self, op: Op) -> bool {
         self.directions.contains(&op)
     }

@@ -10,7 +10,7 @@ const YEAR_SECONDS: u64 = 31_557_600;
 const DURATION_PARSER: SpanParser = SpanParser::new();
 const DURATION_PRINTER: SpanPrinter = SpanPrinter::new().designator(Designator::HumanTime);
 
-/// Разбирает длительность с единицами `ms` и `s`.
+/// Parses a duration expressed in `ms` or `s`.
 pub(crate) fn parse_duration(input: &str) -> Option<Duration> {
     let input = input.trim();
     if input.is_empty() {
@@ -36,7 +36,7 @@ pub(crate) fn parse_duration(input: &str) -> Option<Duration> {
         })
 }
 
-/// Форматирует длительность для сообщения об истечении таймаута.
+/// Formats the duration for a timeout error.
 pub(crate) fn format_duration(duration: Duration) -> String {
     let mut seconds = duration.as_secs();
     let mut parts = Vec::new();
@@ -59,12 +59,12 @@ pub(crate) fn format_duration(duration: Duration) -> String {
     parts.join(" ")
 }
 
-/// Возвращает текущее время в UTC с точностью до миллисекунд.
+/// Current UTC time in RFC 3339 format with milliseconds.
 pub(crate) fn now_rfc3339() -> String {
     format!("{:.3}", Timestamp::now())
 }
 
-/// Возвращает текущее время в целых секундах Unix.
+/// Current Unix time in whole seconds.
 pub(crate) fn now_unix_seconds() -> i64 {
     Timestamp::now().as_second().max(0)
 }
