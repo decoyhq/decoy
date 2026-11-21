@@ -5,6 +5,9 @@ all-features = true
 [advisories]
 # Unmaintained crates are reported by #267 follow-ups instead of failing every PR.
 unmaintained = "workspace"
+ignore = [
+  { id = "RUSTSEC-2026-0542", reason = "Maintenance-only notice for the existing humantime dependency" },
+]
 
 [licenses]
 allow = [
