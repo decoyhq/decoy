@@ -2,12 +2,12 @@
 
 Accepted 2026-10-19.
 
-The original runtime mixed matching, per-Session state, wire conversion, and network I/O in the
+The original runtime mixed matching, per-Session Selection, wire conversion, and network I/O in the
 same modules. Adding a transport required editing those modules together, and checking which
 Behavior won could involve starting a server.
 
-The engine owns the Catalog and per-Session Selection. Each transport resolves a request against
-that state to produce a match or miss. Its execution code performs delays, forwarding, and wire
+The engine owns the Catalog and per-Session Selection. Each transport uses both to resolve a
+request to a match or miss. Its execution code performs delays, forwarding, and wire
 I/O. Server and Control API adapters call inward. The engine can use transport request and plan
 types, but transport execution and server dependencies stay outside it.
 

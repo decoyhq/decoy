@@ -25,6 +25,14 @@ what CI gates on). Without it, use the underlying commands:
 | `pnpm build` / `pnpm typecheck` / `pnpm test`           | JS workspace packages       |
 | `pnpm check` / `pnpm fix`                               | ESLint + Prettier           |
 
+Run `task bench:rust` to measure HTTP hits, gRPC replies, live connection fan-out, and TUI log
+frames. The benchmarks use in-process fixtures and report median release timings over five batches.
+Compare on an idle machine with the same Rust toolchain. For the original baseline (`8edafdf`),
+copy the two runtime bench files and their `[[bench]]` manifest entries to that checkout, and use
+`register` in place of `register_shared` in the queue benchmark. For the TUI baseline, copy just
+the `log_frame_timing` test into the same test module. The two Cargo commands in `task bench:rust`
+then exercise the same workloads on both revisions.
+
 Examples (`examples/*`) are the e2e tier and run their own `test:e2e` per workspace.
 
 `task e2e` builds the packages and the `decoy` binary, then runs every example's `test:e2e`.

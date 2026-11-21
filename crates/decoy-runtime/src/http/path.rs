@@ -22,16 +22,10 @@ pub(crate) fn template_params(pattern: &str) -> Result<Vec<&str>, String> {
 }
 
 pub(crate) fn match_path(pattern: &str, actual: &str) -> Option<BTreeMap<String, String>> {
-    let pattern_parts = split_path(pattern);
-    let actual_parts = split_path(actual);
-
-    if pattern_parts.len() != actual_parts.len() {
-        return None;
-    }
-
+    let mut actual_parts = split_path(actual);
     let mut params = BTreeMap::new();
-
-    for (pattern_part, actual_part) in pattern_parts.iter().zip(actual_parts) {
+    for pattern_part in split_path(pattern) {
+        let actual_part = actual_parts.next()?;
         if pattern_part.starts_with('{') && pattern_part.ends_with('}') {
             let name = &pattern_part[1..pattern_part.len() - 1];
             // Decoded like query values, so `/users/a%20b` gives `a b`.
@@ -40,17 +34,27 @@ pub(crate) fn match_path(pattern: &str, actual: &str) -> Option<BTreeMap<String,
             continue;
         }
 
-        if *pattern_part != percent_encoding::percent_decode_str(actual_part).decode_utf8_lossy() {
+        if pattern_part != percent_encoding::percent_decode_str(actual_part).decode_utf8_lossy() {
             return None;
         }
     }
 
-    Some(params)
+    actual_parts.next().is_none().then_some(params)
 }
 
-pub(crate) fn split_path(path: &str) -> Vec<&str> {
-    path.trim_matches('/')
-        .split('/')
-        .filter(|part| !part.is_empty())
-        .collect()
+pub(crate) fn split_path(path: &str) -> impl Iterator<Item = &str> {
+    path.split('/').filter(|part| !part.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn params_bind_one_nonempty_segment_before_percent_decoding() {
+        let params = match_path("/users/{id}", "//users//a%2Fb/").unwrap();
+        assert_eq!(params["id"], "a/b");
+        assert!(match_path("/users/{id}", "/users/").is_none());
+        assert!(match_path("/users/{id}", "/users/a/b").is_none());
+    }
 }

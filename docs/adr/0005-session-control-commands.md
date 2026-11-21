@@ -4,10 +4,10 @@ Accepted 2026-08-26 for the native HTTP runtime. This records the [original Cont
 
 Switching a Collection or overriding a Behavior changes one Session's Selection. We considered
 modeling these operations as edits to REST resources. That would have required defining resource
-identities and lifetimes for state that a test can discard with a single call.
+identities and lifetimes for the Selection that Decoy drops when a test ends its Session.
 
 The Control API exposes the Controller verbs as commands under `/__decoy__/control/`. Adapters
-can express the same operation across process boundaries, and the Session header selects whose
-state changes. This decision covers mutations. It leaves room for separate inspection endpoints.
+can express the same operation across process boundaries, and the Session header identifies the Session
+whose Selection changes. This decision covers mutations. It leaves room for separate inspection endpoints.
 
 For request bodies, status codes, and examples, see [Sessions and the Control API](../guide/sessions-and-control.md).

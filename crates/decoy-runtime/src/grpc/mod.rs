@@ -4,6 +4,7 @@
 
 mod codec;
 pub mod execute;
+mod plan;
 pub mod resolve;
 pub mod schema;
 mod view;
@@ -15,6 +16,7 @@ use bytes::Bytes;
 use crate::schema::PipelineStep;
 
 pub use codec::GrpcCodecError;
+pub(crate) use plan::static_unary_replies;
 pub use resolve::GrpcResolution;
 
 /// Encodes `message` as a response of `method` through the Route's Pipeline, as a stream sends it.
@@ -211,6 +213,22 @@ mod tests {
             decoded(&catalog, &response),
             json!({ "id": "a-1", "state": "PENDING", "approvers": ["acme"] })
         );
+    }
+
+    #[tokio::test]
+    async fn static_message_with_templated_metadata_reads_each_request() {
+        let catalog = catalog(
+            "  any:\n    behaviors:\n      ok:\n        message: { id: literal }\n        metadata: { x-id: '${ message.id }' }\n",
+            "get:any:ok",
+        );
+        for id in ["a-1", "a-2"] {
+            let call = catalog
+                .execute_grpc("default", &[], request(&catalog, json!({ "id": id })), true)
+                .await;
+            assert_eq!(call.response.status, OK);
+            assert_eq!(call.response.metadata["x-id"], id);
+            assert_eq!(call.message.unwrap()["id"], "literal");
+        }
     }
 
     #[tokio::test]
@@ -485,6 +503,31 @@ cases:
             response.status_message.contains("not a gRPC status name"),
             "{response:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn numeric_status_template_checks_the_rendered_code_on_each_call() {
+        let catalog = catalog(
+            "  any:\n    behaviors:\n      pick: { status: '${ to_number(message.id) }' }\n",
+            "get:any:pick",
+        );
+        for (id, status) in [("5", 5), ("17", INTERNAL), ("unknown", INTERNAL)] {
+            let response = catalog
+                .execute_grpc(
+                    "default",
+                    &[],
+                    request(&catalog, json!({ "id": id })),
+                    false,
+                )
+                .await
+                .response;
+            assert_eq!(response.status, status);
+            if status == INTERNAL {
+                assert!(response.status_message.contains("not a gRPC status name"));
+            } else {
+                assert!(response.status_message.is_empty());
+            }
+        }
     }
 
     #[tokio::test]

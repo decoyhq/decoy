@@ -61,12 +61,13 @@ pub fn find_tie<'a>(earlier: &'a [Route], route: &Route) -> Option<&'a Route> {
 
 /// Whether some path matches both templates: as many segments, each equal or a `{param}` in one.
 fn paths_overlap(a: &str, b: &str) -> bool {
-    let (a, b) = (split_path(a), split_path(b));
+    let mut right = split_path(b);
     let param = |segment: &str| segment.starts_with('{');
-    a.len() == b.len()
-        && a.iter()
-            .zip(&b)
-            .all(|(a, b)| a == b || param(a) || param(b))
+    split_path(a).all(|left| {
+        right
+            .next()
+            .is_some_and(|r| left == r || param(left) || param(r))
+    }) && right.next().is_none()
 }
 
 /// The startup message for a tie.

@@ -286,7 +286,7 @@ fn is_template(value: &Value) -> bool {
     value.as_str().is_some_and(|text| text.contains("${"))
 }
 
-fn has_template(value: &Value) -> bool {
+pub(super) fn has_template(value: &Value) -> bool {
     match value {
         Value::String(text) => text.contains("${"),
         Value::Array(items) => items.iter().any(has_template),
