@@ -1,0 +1,10 @@
+{
+  // Editor, lint, and `typecheck` view: every file, tests included.
+  // The build emits from ./tsconfig.build.json instead.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["src", "rslib.config.ts", "rstest.config.ts"]
+}
