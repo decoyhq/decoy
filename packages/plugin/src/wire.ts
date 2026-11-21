@@ -1,7 +1,7 @@
 import { decode, encode } from '@msgpack/msgpack'
 import type { Readable, Writable } from 'node:stream'
 
-/** One protocol message: a msgpack map with a string `kind` (`docs/design/plugin-protocol.md`). */
+/** One protocol message: a msgpack map with a string `kind` (`docs/reference/plugin-protocol.md`). */
 export type WireMessage = Record<string, unknown> & { kind: string }
 
 /** Longest message either side may send. */

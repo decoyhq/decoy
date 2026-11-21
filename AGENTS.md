@@ -6,8 +6,8 @@ Operating manual for agents working in the **decoy** monorepo.
 
 - `CONTEXT.md` is the normative glossary. Read it before changing schemas, public APIs, docs,
   adapters, or issue text that names Decoy concepts.
-- `docs/design/` holds working design notes. Read the relevant note before implementing roadmap or
-  architecture changes.
+- Before writing a spec, ADR, or user guide, follow the [documentation placement rules](CONTRIBUTING.md#where-documentation-goes).
+- Read the feature issue and applicable ADRs before implementing planned behavior.
 - `docs/adr/` holds accepted architectural decisions. Read ADRs before reversing or replacing a
   recorded decision.
 - Crates may carry their own `AGENTS.md` with layering rules (e.g. `crates/decoy-runtime/AGENTS.md`).

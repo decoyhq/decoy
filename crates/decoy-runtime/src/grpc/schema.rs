@@ -1,5 +1,5 @@
 //! gRPC Route checks. Shape checks run with the rest of Route validation; proto checks run at
-//! startup against the loaded `DescriptorPool` (design note `docs/design/transports.md` §4, Q3):
+//! startup against the loaded `DescriptorPool`:
 //! the service and method exist, and literal `match.message` / response `message` and
 //! `stream[].payload` values fit the method's input / output types as protobuf JSON. `${ }` strings
 //! are skipped (checked at render).

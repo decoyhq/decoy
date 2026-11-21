@@ -1,6 +1,6 @@
 # Repository automation
 
-What runs on every PR, and the one-time settings a maintainer switches on for it.
+Use this runbook when configuring GitHub Apps, security scanning, or merge checks for the Decoy repository.
 
 | Need                         | Tool                                          | Lives in                                        |
 | ---------------------------- | --------------------------------------------- | ----------------------------------------------- |
@@ -31,7 +31,7 @@ choose **Only select repositories → decoy**, save. All are free for public rep
 3. **autofix.ci** — <https://github.com/apps/autofix-ci>. Without it the `autofix.ci` job still
    runs but can't push the fix.
 4. **Codecov** — <https://github.com/apps/codecov>, then sign in at <https://app.codecov.io> with
-   GitHub and open `what3verCODE/decoy` once. Uploads use OIDC, so no `CODECOV_TOKEN` secret.
+   GitHub and open `decoyhq/decoy` once. Uploads use OIDC, so no `CODECOV_TOKEN` secret.
 
 ### 2. Repository settings
 

@@ -1,6 +1,6 @@
 # Collections
 
-A **Collection** is a Scenario: the list of Behaviors that are active together. All Collections
+A **Collection** lists the Behaviors that are active together for a Scenario. All Collections
 live in one YAML file.
 
 ```yaml

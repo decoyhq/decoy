@@ -123,7 +123,7 @@ async function beginSession(
 /**
  * Routing rewrites requests over CDP, so it needs Chrome or Chromium, in either WebDriver Classic
  * or BiDi sessions. WebDriver BiDi's own `network.continueRequest({ url })` can't replace it yet:
- * Chrome drops cookies on the rewritten request and Firefox aborts it (docs/design/testplane.md).
+ * Chrome drops cookies on the rewritten request and Firefox aborts it.
  */
 async function cdpOf(browser: WebdriverIO.Browser): Promise<CdpSession> {
   let puppeteer: Awaited<ReturnType<WebdriverIO.Browser['getPuppeteer']>>

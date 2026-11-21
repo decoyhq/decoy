@@ -45,10 +45,42 @@ builds it with cargo. Browser examples also need Chromium once (`pnpm install` s
 pnpm --filter ./examples/playwright-ts-e2e exec playwright install --with-deps chromium
 ```
 
+## Where documentation goes
+
+Publish a product requirements document (PRD) as a GitHub issue. Choose **Issues → New issue →
+Feature PRD**, fill in the prompts, and link the issue from the implementation PR. If you use
+another editor, copy the body of the [PRD template](.github/ISSUE_TEMPLATE/feature-prd.md) into an issue.
+For a completed example, see the [WebSocket Routes PRD](https://github.com/decoyhq/decoy/issues/416).
+
+Write an ADR once a choice is accepted if reversing it would be costly, there was a real
+alternative, and a future contributor would need the reasoning to understand the choice. Most
+features need only an issue and a guide update. For instance, the [WebSocket PRD](https://github.com/decoyhq/decoy/issues/416)
+describes what a test author needs. [ADR 0004](docs/adr/0004-built-in-steps-only-for-grpc.md)
+explains why reversing the input steps on output would fail for some clients.
+
+For a new ADR, take the next four-digit number in [the index](docs/adr/README.md) and add an entry.
+If a later decision changes it, give the new decision its own number and link both records,
+stating which part changed.
+
+When a user-visible change ships, update the relevant [guide](docs/guide/README.md) in the same PR.
+Keep wire-level contracts for other implementations in [reference](docs/reference/) and link to
+them from the guide. When moving or retiring a page, update its index and check for references in
+package READMEs and source comments.
+
+### Formats by document type
+
+For a repository file, copy its [Markdown template](docs/maintainers/document-templates.md) into
+the destination file, replace the placeholders, and preview the result. Each template includes a
+link to a finished example.
+
+GitHub loads the [feature PRD](.github/ISSUE_TEMPLATE/feature-prd.md) through the issue chooser
+and fills new pull request descriptions from the [pull request template](.github/pull_request_template.md).
+Edit those files on `main` through a PR to change the prompts for future submissions.
+
 ## Automation
 
 Bots and checks on every PR (Renovate, CodeRabbit, autofix.ci, CodeQL, zizmor, Codecov) and the
-settings that enable them: [`docs/repo-automation.md`](docs/repo-automation.md).
+settings that enable them: [Repository automation](docs/maintainers/repository-automation.md).
 
 ## Conventions
 

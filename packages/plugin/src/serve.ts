@@ -21,7 +21,7 @@ interface HostCall {
   reject: (error: Error) => void
 }
 
-/** Answers Decoy's messages on `io` for `plugin` (`docs/design/plugin-protocol.md`). */
+/** Answers Decoy's messages on `io` for `plugin` (`docs/reference/plugin-protocol.md`). */
 export function serve(plugin: Plugin, io: Io = processIo): void {
   const send = (message: WireMessage) => {
     write(io.output, message)

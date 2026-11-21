@@ -1,8 +1,8 @@
 # Plugin wire protocol, version 1
 
-Status: **spec** for the plugin host in `decoy-runtime` and the `@decoyhq/plugin` SDK. What plugins
-are for and how users configure them: `docs/design/transports.md` §7 and ADR 0004. This note is for
-someone writing an SDK in another language.
+Use this specification to write a Transformer worker in another language. It describes the
+messages exchanged by Decoy and the [TypeScript SDK](../../packages/plugin/README.md).
+To configure a worker for a Route, see [WebSocket Transformers](../guide/websocket.md#transformers).
 
 ## Process
 

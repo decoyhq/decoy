@@ -1,5 +1,5 @@
 //! One plugin process: the handshake, calls matched to their results by id, host calls, and its
-//! stderr. `docs/design/plugin-protocol.md` is the contract.
+//! stderr. `docs/reference/plugin-protocol.md` is the contract.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};

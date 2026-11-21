@@ -2,7 +2,7 @@
 
 Write Decoy plugin steps in TypeScript. A plugin turns an app's own wire format (msgpack envelopes,
 binary headers in front of protobuf, compression) into the JSON that Cases match and Behaviors
-render, and back. Background: `docs/design/transports.md` §7.
+render, and back. See the [WebSocket Transformer guide](https://github.com/decoyhq/decoy/blob/main/docs/guide/websocket.md#transformers) for configuration.
 
 ```ts
 // plugins/envelope.ts
@@ -52,4 +52,4 @@ pipelines:
 - `console.log` goes to stderr while serving, since stdout carries the protocol. Decoy prints each
   stderr line with the plugin's name.
 
-Other languages: speak `docs/design/plugin-protocol.md` directly.
+To implement a worker in another language, see the [wire protocol](https://github.com/decoyhq/decoy/blob/main/docs/reference/plugin-protocol.md).
