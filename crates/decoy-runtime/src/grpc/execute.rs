@@ -7,7 +7,7 @@ use prost_reflect::MethodDescriptor;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use super::codec::{decode, decode_named, encode_for_route, pipeline};
+use super::codec::{decode, decode_named, encode_response_async, pipeline};
 use super::plan::{prepare_unary, render, status_code, status_only};
 use super::resolve::GrpcResolution;
 use super::{GrpcRequest, GrpcResponse, INTERNAL, INVALID_ARGUMENT, OK, StreamPart, UNAVAILABLE};
@@ -191,10 +191,14 @@ impl Catalog {
                         if let Some(message) = message {
                             let captured =
                                 (capture && route.pipeline_name.is_some()).then(|| message.clone());
-                            reply.body =
-                                encode_for_route(route, self.runtime(), message, &method.output())
-                                    .await
-                                    .map_err(|error| error.to_string())?;
+                            reply.body = encode_response_async(
+                                route,
+                                self.runtime(),
+                                message,
+                                &method.output(),
+                            )
+                            .await
+                            .map_err(|error| error.to_string())?;
                             logical_reply = captured;
                         }
                         Ok(reply)
@@ -319,7 +323,7 @@ async fn respond_stream(
     let rendered = render(response, envelope)?;
     let mut messages = Vec::new();
     for item in rendered.stream.unwrap_or_default() {
-        let message = encode_for_route(route, runtime, item.message, &method.output())
+        let message = encode_response_async(route, runtime, item.message, &method.output())
             .await
             .map_err(|error| error.to_string())?;
         messages.push((item.delay, message));

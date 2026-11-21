@@ -103,7 +103,8 @@ pub(super) async fn decode_named(
     .map_err(|reason| pipeline.invalid_result(Op::Input, reason))
 }
 
-pub(crate) async fn encode_for_route(
+/// Encodes one unary reply, stream item, or Control API push through the configured Pipeline.
+pub async fn encode_response_async(
     route: &Route,
     runtime: &RuntimeConfig,
     message: Value,

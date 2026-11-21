@@ -246,11 +246,14 @@ async fn try_send(
     // client's stream, and streams opened before a reload write exactly these bytes.
     let message = match &method {
         None => serde_json::to_vec(&body.message).expect("JSON values serialize"),
-        Some(method) => {
-            crate::grpc::encode_for_route(route, catalog.runtime(), body.message, &method.output())
-                .await
-                .map_err(ControlApiError::SendMessage)?
-        }
+        Some(method) => crate::grpc::encode_response_async(
+            route,
+            catalog.runtime(),
+            body.message,
+            &method.output(),
+        )
+        .await
+        .map_err(ControlApiError::SendMessage)?,
     };
     let timeout = live_timeout(body.timeout);
     connections

@@ -16,11 +16,12 @@ use bytes::Bytes;
 use crate::schema::PipelineStep;
 
 pub use codec::GrpcCodecError;
-pub(crate) use codec::encode_for_route;
+pub use codec::encode_response_async;
 pub(crate) use plan::static_unary_replies;
 pub use resolve::GrpcResolution;
 
-/// Encodes `message` as a response of `method` through the Route's Pipeline, as a stream sends it.
+/// Encodes `message` with the Route's inline or default built-in codec. Named Pipelines
+/// need the configured Transformers supplied to [`encode_response_async`].
 pub fn encode_response(
     route: &crate::schema::Route,
     method: &prost_reflect::MethodDescriptor,
