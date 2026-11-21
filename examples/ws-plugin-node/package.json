@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "cargo run --quiet -p decoy -- serve --config mocks/decoy.yaml",
-    "test:e2e": "node --test \"plugins/*.test.ts\" \"tests/*.test.ts\"",
+    "test:e2e": "node --test \"plugins/*.test.ts\" \"tests/*.test.ts\" && node transformer-apps/demo.mjs",
     "typecheck": "tsc"
   },
   "dependencies": {

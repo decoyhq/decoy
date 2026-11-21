@@ -1,0 +1,10 @@
+id: approvals
+transport: ws
+match: { path: /ws/approvals }
+pipeline: approvals-feed
+cases:
+  watch:
+    match: { message: { ids: [expense-42] } }
+    behaviors:
+      pending:
+        message: { id: expense-42, state: PENDING }

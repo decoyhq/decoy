@@ -1,0 +1,14 @@
+id: telemetry
+transport: ws
+match: { path: /ws/telemetry }
+pipeline: compressed-telemetry
+cases:
+  subscribe:
+    match: { message: { action: subscribe, sensorId: freezer-17 } }
+    behaviors:
+      snapshot:
+        message:
+          event: snapshot
+          sensorId: '${ message.sensorId }'
+          temperatureC: -18.4
+          alarm: false

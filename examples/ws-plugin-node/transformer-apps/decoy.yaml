@@ -1,0 +1,21 @@
+routes: routes
+collections: collections.yaml
+port: 8095
+
+protos:
+  roots: [../proto]
+
+transformers:
+  approvals:
+    worker: [node, ./raw-worker.mjs]
+  gzip:
+    input: [gzip, -dc]
+    output: [gzip, -c]
+
+pipelines:
+  approvals-feed:
+    input: [approvals]
+    output: [approvals]
+  compressed-telemetry:
+    input: [gzip]
+    output: [gzip]

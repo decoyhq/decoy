@@ -1,0 +1,4 @@
+- id: normal
+  routes:
+    - approvals:watch:pending
+    - telemetry:subscribe:snapshot

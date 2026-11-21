@@ -23,9 +23,9 @@ export function decodeProto(type: string, bytes: Uint8Array): unknown {
 }
 
 /** Starts an isolated server and waits for the address it reports after binding. */
-export async function startDecoy(): Promise<() => Promise<void>> {
+export async function startDecoy(config = 'mocks/decoy.yaml'): Promise<() => Promise<void>> {
   const bin = process.env.DECOY_BINARY_PATH
-  const serve = ['serve', '--config', 'mocks/decoy.yaml', '--host', '127.0.0.1', '--port', '0']
+  const serve = ['serve', '--config', config, '--host', '127.0.0.1', '--port', '0']
   const child = spawn(
     bin ?? 'cargo',
     bin !== undefined ? serve : ['run', '--quiet', '-p', 'decoy', '--', ...serve],
