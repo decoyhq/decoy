@@ -1,5 +1,4 @@
 use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD as BASE64;
 use prost::Message as _;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
 use serde_json::Value;
@@ -8,6 +7,26 @@ use thiserror::Error;
 use super::DEFAULT_PIPELINE;
 use super::schema::request_json;
 use crate::schema::{PipelineStep, Route};
+
+fn base64_engine() -> &'static impl base64::Engine {
+    #[cfg(any(
+        target_arch = "x86_64",
+        all(target_arch = "aarch64", target_feature = "neon")
+    ))]
+    {
+        use base64::engine::{Simd, general_purpose::PAD};
+        use std::sync::LazyLock;
+        static ENGINE: LazyLock<Simd> = LazyLock::new(|| Simd::standard(PAD));
+        &*ENGINE
+    }
+    #[cfg(not(any(
+        target_arch = "x86_64",
+        all(target_arch = "aarch64", target_feature = "neon")
+    )))]
+    {
+        &base64::engine::general_purpose::STANDARD
+    }
+}
 
 pub(super) fn pipeline(route: &Route) -> &[PipelineStep] {
     route.pipeline.as_deref().unwrap_or(&DEFAULT_PIPELINE)
@@ -73,7 +92,7 @@ pub(super) fn decode(
             }
         }
     }
-    Ok(Value::String(BASE64.encode(bytes)))
+    Ok(Value::String(base64_engine().encode(bytes)))
 }
 
 /// Run the Pipeline bottom to top over the response message. Without a `protobuf` step the
@@ -106,7 +125,9 @@ pub(super) fn encode(
 fn bytes(data: Data) -> Result<Vec<u8>, GrpcCodecError> {
     match data {
         Data::Bytes(bytes) => Ok(bytes),
-        Data::Json(Value::String(text)) => BASE64.decode(text).map_err(GrpcCodecError::NotBase64),
+        Data::Json(Value::String(text)) => base64_engine()
+            .decode(text)
+            .map_err(GrpcCodecError::NotBase64),
         Data::Json(other) => Err(GrpcCodecError::NotAString(other)),
     }
 }

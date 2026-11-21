@@ -45,3 +45,11 @@ pretty_assertions = "1"
 tempfile = "3"
 # Tests build clients before any passthrough installs `ring`, so give them a fallback provider.
 reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+
+[[bench]]
+name = "serving"
+harness = false
+
+[[bench]]
+name = "grpc"
+harness = false

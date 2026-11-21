@@ -66,7 +66,7 @@ pub(super) async fn accept(
     };
     // Registered before the handshake task starts, so a drain that begins in between still
     // waits for this socket.
-    let registration = connections.register(&session, &connection.route, crate::ws::OUTPUT);
+    let registration = connections.register_shared(&session, &connection.route, crate::ws::OUTPUT);
     let events = crate::events::current();
     upgrade.on_upgrade(move |socket| async move {
         let codec = Codec {
@@ -122,7 +122,7 @@ async fn run(
     controller: Arc<RwLock<Controller>>,
     session: String,
     connection: WsConnection,
-    registration: (Registration, mpsc::Receiver<Vec<u8>>),
+    registration: (Registration, mpsc::Receiver<bytes::Bytes>),
 ) {
     let (mut sink, mut stream) = socket.split();
     let (registration, pushed) = registration;
@@ -146,7 +146,7 @@ async fn serve_socket(
     controller: Arc<RwLock<Controller>>,
     session: String,
     connection: WsConnection,
-    mut pushed: mpsc::Receiver<Vec<u8>>,
+    mut pushed: mpsc::Receiver<bytes::Bytes>,
 ) {
     let mut queued = BufferedFrames::default();
     let (outbox, mut outgoing) = mpsc::channel(OUTBOX);

@@ -229,16 +229,17 @@ impl App {
         let height = |paragraph: &Paragraph| paragraph.line_count(area.width).max(1) as u16;
 
         // Never scroll back further than a pane that starts at the oldest entry.
-        let mut filled: u16 = 0;
-        let mut max_scroll = 0;
-        for index in 0..self.log.len() {
-            filled = filled.saturating_add(height(&paragraph(index)));
-            if filled >= area.height {
-                max_scroll = self.log.len() - 1 - index;
-                break;
+        let mut scroll = 0;
+        if self.scroll > 0 {
+            let mut filled: u16 = 0;
+            for index in 0..self.log.len() {
+                filled = filled.saturating_add(height(&paragraph(index)));
+                if filled >= area.height {
+                    scroll = self.scroll.min(self.log.len() - 1 - index);
+                    break;
+                }
             }
         }
-        let scroll = self.scroll.min(max_scroll);
 
         let selected = self.selected.map(|(a, b)| (a.min(b), a.max(b)));
         let end = self.log.len() - scroll;
@@ -382,6 +383,33 @@ mod tests {
         let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
         terminal.draw(|frame| app.draw(frame)).unwrap();
         terminal.backend().buffer().clone()
+    }
+
+    /// Run with `cargo test --release -p decoy-tui log_frame_timing -- --ignored --nocapture`.
+    #[test]
+    #[ignore = "release timing"]
+    fn log_frame_timing() {
+        let mut app = app();
+        for id in 1..=500 {
+            app.handle_event(hit(id));
+        }
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).unwrap();
+        for scroll in [0, 100] {
+            app.scroll = scroll;
+            let mut samples = [0.0; 5];
+            for sample in &mut samples {
+                let start = std::time::Instant::now();
+                for _ in 0..500 {
+                    terminal.draw(|frame| app.draw(frame)).unwrap();
+                }
+                *sample = start.elapsed().as_secs_f64() * 1e6 / 500.0;
+            }
+            samples.sort_by(f64::total_cmp);
+            println!(
+                "log frame, scroll {scroll}: {:.2} µs/frame (median of 5)",
+                samples[2]
+            );
+        }
     }
 
     /// The screen as text; runs of non-default style are wrapped as `[fg bg modifiers]text[/]`.

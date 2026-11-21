@@ -71,7 +71,7 @@ impl Catalog {
         let mut decoded: Option<(&[PipelineStep], Decoded)> = None;
         // The first decode error, the answer when no other Route matches.
         let mut decode_failure = None;
-        for activation in activations.iter().copied().rev() {
+        for activation in activations.rev() {
             let Some(route) = self.route(&activation.route) else {
                 reject(&mut candidates, activation, || Rejection::MissingRoute);
                 continue;

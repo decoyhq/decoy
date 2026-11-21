@@ -9,6 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use bytes::Bytes;
 use tokio::sync::{Notify, mpsc};
 
 #[derive(Debug, Clone, Default)]
@@ -41,7 +42,26 @@ struct Live {
 type Address = (String, String);
 
 /// Carries encoded messages to one connection.
-type Sender = mpsc::Sender<Vec<u8>>;
+#[derive(Debug)]
+enum Sender {
+    Owned(mpsc::Sender<Vec<u8>>),
+    Shared(mpsc::Sender<Bytes>),
+}
+
+impl Sender {
+    fn deliver(&self, message: &Bytes) -> bool {
+        match self {
+            Self::Owned(sender) => {
+                let Ok(slot) = sender.try_reserve() else {
+                    return false;
+                };
+                slot.send(message.to_vec());
+                true
+            }
+            Self::Shared(sender) => sender.try_send(message.clone()).is_ok(),
+        }
+    }
+}
 
 /// Messages a connection may have queued and unread; past it, `send` skips that connection.
 const SEND_QUEUE: usize = 64;
@@ -75,6 +95,33 @@ impl Connections {
         output: &str,
     ) -> (Registration, mpsc::Receiver<Vec<u8>>) {
         let (sender, receiver) = mpsc::channel(SEND_QUEUE);
+        (
+            self.register_sender(session, route, output, Sender::Owned(sender)),
+            receiver,
+        )
+    }
+
+    /// Like [`Self::register`], with one encoded buffer shared across recipients.
+    pub fn register_shared(
+        &self,
+        session: &str,
+        route: &str,
+        output: &str,
+    ) -> (Registration, mpsc::Receiver<Bytes>) {
+        let (sender, receiver) = mpsc::channel(SEND_QUEUE);
+        (
+            self.register_sender(session, route, output, Sender::Shared(sender)),
+            receiver,
+        )
+    }
+
+    fn register_sender(
+        &self,
+        session: &str,
+        route: &str,
+        output: &str,
+        sender: Sender,
+    ) -> Registration {
         let address = (session.to_owned(), route.to_owned());
         let mut live = self.inner.live.lock().expect("connections lock");
         let id = live.next_id;
@@ -89,12 +136,11 @@ impl Connections {
         }
         drop(live);
         self.inner.registered.notify_waiters();
-        let registration = Registration {
+        Registration {
             inner: self.inner.clone(),
             address,
             id,
-        };
-        (registration, receiver)
+        }
     }
 
     /// Delivers `message`, encoded as `output`, to every live connection of `route` in `session`
@@ -110,6 +156,7 @@ impl Connections {
         timeout: Duration,
     ) -> Result<usize, LiveError> {
         let address = (session.to_owned(), route.to_owned());
+        let message = Bytes::from(message);
         self.wait_for(timeout, || self.deliver(&address, output, &message))
             .await
     }
@@ -188,7 +235,12 @@ impl Connections {
         }
     }
 
-    fn deliver(&self, address: &Address, output: &str, message: &[u8]) -> Result<usize, LiveError> {
+    fn deliver(
+        &self,
+        address: &Address,
+        output: &str,
+        message: &Bytes,
+    ) -> Result<usize, LiveError> {
         let live = self.inner.live.lock().expect("connections lock");
         if live.closed {
             return Err(LiveError::Closed);
@@ -196,9 +248,7 @@ impl Connections {
         Ok(live.by_address.get(address).map_or(0, |senders| {
             senders
                 .iter()
-                .filter(|(_, opened, sender)| {
-                    opened == output && sender.try_send(message.to_vec()).is_ok()
-                })
+                .filter(|(_, opened, sender)| opened == output && sender.deliver(message))
                 .count()
         }))
     }
@@ -258,7 +308,7 @@ mod tests {
     async fn send_reaches_every_connection_of_the_route_in_that_session_only() {
         let connections = Connections::default();
         let (_a1, mut a1) = connections.register("a", "live", "live.Tick");
-        let (_a2, mut a2) = connections.register("a", "live", "live.Tick");
+        let (_a2, mut a2) = connections.register_shared("a", "live", "live.Tick");
         let (_b, mut b) = connections.register("b", "live", "live.Tick");
         let (_other, mut other) = connections.register("a", "other", "live.Tick");
 

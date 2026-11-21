@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use thiserror::Error;
@@ -18,6 +18,7 @@ pub struct Catalog {
     /// HTTP Response Behaviors without templates, planned once with the body serialized:
     /// route → case → behavior.
     pub(crate) static_plans: BTreeMap<String, BTreeMap<String, BTreeMap<String, HttpResponsePlan>>>,
+    pub(crate) grpc_replies: HashMap<Activation, crate::grpc::GrpcResponse>,
     pub(crate) runtime: RuntimeConfig,
 }
 
@@ -83,7 +84,9 @@ impl Catalog {
                 (route.id.clone(), cases.collect())
             })
             .collect();
+        let grpc_replies = crate::grpc::static_unary_replies(by_id.values(), &runtime.protos);
         Ok(Self {
+            grpc_replies,
             routes: by_id,
             collections,
             resolved,
@@ -145,7 +148,7 @@ impl Catalog {
         &'a self,
         collection_id: &str,
         overrides: &'a [Activation],
-    ) -> Result<Vec<&'a Activation>, Arc<CollectionError>> {
+    ) -> Result<impl DoubleEndedIterator<Item = &'a Activation>, Arc<CollectionError>> {
         let collection = self
             .resolved
             .get(collection_id)
@@ -157,16 +160,13 @@ impl Catalog {
             .as_ref()
             .map_err(Clone::clone)?;
         let same = |a: &Activation, b: &Activation| a.route == b.route && a.case == b.case;
-        let mut activations: Vec<&Activation> = collection
+        let entries = collection
             .iter()
-            .map(|entry| overrides.iter().find(|o| same(o, entry)).unwrap_or(entry))
-            .collect();
-        activations.extend(
-            overrides
-                .iter()
-                .filter(|o| !collection.iter().any(|entry| same(o, entry))),
-        );
-        Ok(activations)
+            .map(move |entry| overrides.iter().find(|o| same(o, entry)).unwrap_or(entry));
+        let appended = overrides
+            .iter()
+            .filter(move |o| !collection.iter().any(|entry| same(o, entry)));
+        Ok(entries.chain(appended))
     }
 
     pub(crate) fn route(&self, id: &str) -> Option<&Route> {
