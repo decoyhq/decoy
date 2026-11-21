@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package approvals.v1;
+
+message WatchRequest {
+  repeated string ids = 1;
+}
+
+message Approval {
+  string id = 1;
+  State state = 2;
+}
+
+message Error {
+  int32 code = 1;
+  string reason = 2;
+}
+
+enum State {
+  STATE_UNSPECIFIED = 0;
+  PENDING = 1;
+  APPROVED = 2;
+  REJECTED = 3;
+}

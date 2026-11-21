@@ -1,0 +1,19 @@
+- id: happy-path
+  routes:
+    - approvals-live:hello:ping
+    - approvals-live:watch:approved
+    - compressed-approvals:hello:ping
+    - compressed-approvals:watch:approved
+    - rpc:hello:welcome
+    - rpc:get-user:ann
+
+- id: manual-start
+  from: happy-path
+  routes:
+    - rpc:hello:silent
+
+- id: broken
+  from: happy-path
+  routes:
+    - approvals-live:watch:missing
+    - rpc:get-user:not-found
