@@ -39,5 +39,5 @@ jobs:
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           use_oidc: true
-          files: packages/cli/coverage/lcov.info,packages/playwright/coverage/lcov.info,packages/runner-core/coverage/lcov.info,packages/testplane/coverage/lcov.info
+          files: packages/cli/coverage/lcov.info,packages/playwright/coverage/lcov.info,packages/plugin/coverage/lcov.info,packages/runner-core/coverage/lcov.info,packages/testplane/coverage/lcov.info
           flags: js

@@ -217,7 +217,7 @@ impl From<ControlApiError> for ControlApiResponse {
 /// delivers `message` to every live connection of the Route in the request's Session and answers
 /// `{ "delivered": <n> }`; a connection whose queue is full is skipped and not counted. With no
 /// live connection it waits up to `timeout` (default 5000) and fails with `408` (Q5). Unknown Route: `404`; a Route without long-lived connections: `409`; a
-/// `message` that doesn't encode for the Route: `400`.
+/// gRPC `message` that does not fit the Route output type: `400`.
 ///
 /// Unlike the other verbs it waits, so the server calls it without holding the Controller.
 pub async fn handle_send_request(
@@ -246,7 +246,7 @@ async fn try_send(
     // Encoded here, against the current Catalog, so a bad message fails the call instead of the
     // client's stream, and streams opened before a reload write exactly these bytes.
     let message = match &method {
-        None => crate::ws::encode_text(&body.message).into_bytes(),
+        None => serde_json::to_vec(&body.message).expect("JSON values serialize"),
         Some(method) => crate::grpc::encode_response(route, method, body.message)
             .map_err(ControlApiError::SendMessage)?,
     };

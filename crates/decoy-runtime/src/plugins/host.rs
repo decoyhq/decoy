@@ -27,7 +27,7 @@ pub enum Op {
 }
 
 impl Op {
-    fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::Input => "input",
             Self::Output => "output",
@@ -109,6 +109,17 @@ pub struct Plugin {
     next_id: AtomicU64,
 }
 
+struct PendingCall<'a> {
+    worker: &'a Plugin,
+    id: u64,
+}
+
+impl Drop for PendingCall<'_> {
+    fn drop(&mut self) {
+        self.worker.forget(self.id);
+    }
+}
+
 impl Plugin {
     /// `env: typed-envelope@1.0.0`, as logs and errors name it.
     pub fn label(&self) -> String {
@@ -162,15 +173,13 @@ impl Plugin {
                 .lock()
                 .expect("plugin calls lock")
                 .insert(id, reply);
+            let _pending = PendingCall { worker: self, id };
             self.outbox
                 .send((call, Some(slot)))
                 .map_err(|_| CallError::Gone)?;
             result.await.unwrap_or(Err(CallError::Gone))
         };
         let outcome = tokio::time::timeout(self.timeout, exchange).await;
-        if !matches!(outcome, Ok(Ok(_))) {
-            self.forget(id);
-        }
         outcome.unwrap_or(Err(CallError::Timeout(self.timeout)))
     }
 
@@ -547,6 +556,27 @@ mod tests {
             .await;
         });
         assert_eq!(result, Ok("ok".into()));
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_sent_call_removes_its_pending_reply() {
+        let (handshake, _reader, mut fake) = start(Duration::from_secs(60));
+        fake.next().await;
+        fake.send("ready", ready(PROTOCOL)).await;
+        let plugin = handshake.await.unwrap();
+        {
+            let call = plugin.call(Call {
+                op: Op::Input,
+                input: Msgpack::Nil,
+                frame: None,
+                connection: None,
+            });
+            tokio::select! {
+                _ = call => panic!("worker has not replied"),
+                message = fake.next() => assert_eq!(field(&message, "kind").as_str(), Some("call")),
+            }
+        }
+        assert!(plugin.pending.lock().unwrap().is_empty());
     }
 
     #[tokio::test]

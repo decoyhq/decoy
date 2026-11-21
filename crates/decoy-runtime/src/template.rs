@@ -6,7 +6,7 @@ use serde_json::{Map, Value};
 use thiserror::Error;
 
 use crate::expression::{ExprError, Segment, evaluate, segments, validate_expression};
-use crate::schema::{ResponseBehavior, StreamItem};
+use crate::schema::{MessageItem, ResponseBehavior, StreamItem};
 
 /// Whether rendering could change anything (`\${` escapes count, so they get unescaped).
 pub fn has_templates(response: &ResponseBehavior) -> bool {
@@ -172,7 +172,21 @@ pub fn render_ws_response(
             .as_ref()
             .map(|value| render_value(value, request))
             .transpose()?,
-        messages: render_items(&response.messages, request)?,
+        messages: response
+            .messages
+            .as_ref()
+            .map(|items| {
+                items
+                    .iter()
+                    .map(|item| {
+                        Ok(MessageItem {
+                            payload: render_value(&item.payload, request)?,
+                            delay: item.delay,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ExprError>>()
+            })
+            .transpose()?,
         ..response.clone()
     })
 }

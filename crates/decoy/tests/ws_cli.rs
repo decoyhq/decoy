@@ -41,8 +41,8 @@ cases:
     behaviors:
       updates:
         messages:
-          - { message: { type: subscribed, topic: '${ message.topic }' } }
-          - { message: { type: update, topic: '${ message.topic }', count: 1 }, delay: 200ms }
+          - { payload: { type: subscribed, topic: '${ message.topic }' } }
+          - { payload: { type: update, topic: '${ message.topic }', count: 1 }, delay: 200ms }
 "#;
 
 const BEST_FRIEND: &str = r#"

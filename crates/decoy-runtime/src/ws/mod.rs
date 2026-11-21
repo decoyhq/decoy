@@ -3,6 +3,7 @@
 //! socket itself is the server's job. See `docs/design/transports.md` §6.
 
 pub mod execute;
+pub mod pipeline;
 pub mod resolve;
 pub mod schema;
 mod view;
@@ -17,9 +18,8 @@ use crate::schema::WsClose;
 pub use resolve::WsResolution;
 pub use view::Inbound;
 
-/// What a `ws` connection registers with in [`crate::connections::Connections`]: its messages
-/// are text, whatever the Route.
-pub const OUTPUT: &str = "ws:text";
+/// Тип payload для очереди Control API. Соединение получает JSON.
+pub const OUTPUT: &str = "ws:json";
 
 /// Why a message got no reply.
 pub(crate) const MESSAGE_MISS: &str = "no active route case matched message";
@@ -67,12 +67,15 @@ pub fn encode_text(message: &Value) -> String {
     }
 }
 
-/// A rendered Behavior: wait `delay`, send each text frame `delay` after the one before, then
-/// `close` if set.
+/// A rendered Behavior: wait `delay`, send each message `delay` after the one before, then
+/// `close` if set. Messages are encoded as they go out: as text without a Pipeline, by its steps
+/// with one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WsReply {
+    /// The Behavior's address, for error events.
+    pub behavior: String,
     pub delay: Option<Duration>,
-    pub messages: Vec<(Option<Duration>, String)>,
+    pub messages: Vec<(Option<Duration>, Value)>,
     pub close: Option<WsClose>,
 }
 
