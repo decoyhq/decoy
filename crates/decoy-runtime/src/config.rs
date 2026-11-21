@@ -35,16 +35,15 @@ pub struct ServeConfig {
     pub passthrough_base_url: Option<String>,
     pub protos: ProtoSources,
     pub max_body_bytes: usize,
-    /// `plugins:` entries by key, the namespace of their steps (`<key>/<step>`).
+    /// Запущенные через `worker` Transformers.
     pub plugins: BTreeMap<String, PluginConfig>,
 }
 
 /// One plugin process (`docs/design/plugin-protocol.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginConfig {
-    /// Run by the shell.
-    pub command: String,
-    /// Where `command` runs: the config file's directory.
+    pub command: Vec<String>,
+    /// Каталог конфигурации Decoy.
     pub dir: PathBuf,
     /// Longest a call may take.
     pub timeout: std::time::Duration,
@@ -56,7 +55,7 @@ pub const DEFAULT_PLUGIN_TIMEOUT: std::time::Duration = std::time::Duration::fro
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PluginFile {
-    command: String,
+    worker: Vec<String>,
     timeout: Option<String>,
 }
 
@@ -190,7 +189,7 @@ struct NativeConfigFile {
     protos: Option<ProtoSources>,
     max_body_bytes: Option<usize>,
     #[serde(default)]
-    plugins: BTreeMap<String, PluginFile>,
+    transformers: BTreeMap<String, PluginFile>,
 }
 
 impl ServeConfig {
@@ -325,7 +324,7 @@ impl ServeConfig {
             .unwrap_or(DEFAULT_MAX_BODY_BYTES);
         let plugins = file_config
             .as_ref()
-            .map(|config| config.plugins.clone())
+            .map(|config| config.transformers.clone())
             .unwrap_or_default()
             .into_iter()
             .map(|(key, plugin)| Ok((key.clone(), plugin_config(&key, plugin, &config_base)?)))
@@ -366,8 +365,7 @@ impl ServeConfig {
     }
 }
 
-/// A key is the namespace in `<key>/<step>` and `<key>.<function>()`, so it takes neither
-/// separator.
+/// Собирает параметры постоянного worker.
 fn plugin_config(key: &str, plugin: PluginFile, dir: &Path) -> Result<PluginConfig, ConfigError> {
     let invalid = |reason: String| ConfigError::InvalidPlugin {
         key: key.to_owned(),
@@ -382,8 +380,8 @@ fn plugin_config(key: &str, plugin: PluginFile, dir: &Path) -> Result<PluginConf
             "a key takes only letters, digits, `-` and `_`".to_owned(),
         ));
     }
-    if plugin.command.trim().is_empty() {
-        return Err(invalid("`command` is empty".to_owned()));
+    if plugin.worker.first().is_none_or(String::is_empty) {
+        return Err(invalid("`worker` needs an executable".to_owned()));
     }
     let timeout = match plugin.timeout {
         None => DEFAULT_PLUGIN_TIMEOUT,
@@ -393,7 +391,7 @@ fn plugin_config(key: &str, plugin: PluginFile, dir: &Path) -> Result<PluginConf
             .ok_or_else(|| invalid(format!("`timeout: {text}` is not a duration like `5s`")))?,
     };
     Ok(PluginConfig {
-        command: plugin.command,
+        command: plugin.worker,
         dir: dir.to_path_buf(),
         timeout,
     })

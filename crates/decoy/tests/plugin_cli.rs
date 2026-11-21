@@ -1,4 +1,4 @@
-//! `decoy serve` running `plugins:` processes: the handshake, forwarded stderr, a plugin exiting
+//! `decoy serve` running Transformer workers: the handshake, forwarded stderr, a plugin exiting
 //! (which stops Decoy), and shutdown. The fake plugins are shell scripts that print a `ready`
 //! message prepared here.
 #![cfg(unix)]
@@ -34,7 +34,7 @@ fn project(command: &str) -> TempDir {
     fs::write(
         dir.path().join("decoy.yaml"),
         format!(
-            "routes: routes\ncollections: collections.yaml\nplugins:\n  env:\n    command: {command:?}\n"
+            "routes: routes\ncollections: collections.yaml\ntransformers:\n  env:\n    worker: [sh, -c, {command:?}]\n"
         ),
     )
     .unwrap();
@@ -148,13 +148,13 @@ fn plugin_keys_take_no_separators() {
     );
 }
 
-/// `ready { protocol: 1, name: fake, version: 1.0.0, steps: [envelope], functions: [] }`, framed.
+/// `ready { protocol: 1, name: fake, version: 1.0.0, directions: [input] }`, framed.
 fn ready() -> Vec<u8> {
     fn text(out: &mut Vec<u8>, text: &str) {
         out.push(0xa0 | u8::try_from(text.len()).unwrap());
         out.extend_from_slice(text.as_bytes());
     }
-    let mut body = vec![0x86];
+    let mut body = vec![0x85];
     text(&mut body, "kind");
     text(&mut body, "ready");
     text(&mut body, "protocol");
@@ -163,11 +163,9 @@ fn ready() -> Vec<u8> {
     text(&mut body, "fake");
     text(&mut body, "version");
     text(&mut body, "1.0.0");
-    text(&mut body, "steps");
+    text(&mut body, "directions");
     body.push(0x91);
-    text(&mut body, "envelope");
-    text(&mut body, "functions");
-    body.push(0x90);
+    text(&mut body, "input");
     let mut framed = u32::try_from(body.len()).unwrap().to_be_bytes().to_vec();
     framed.extend(body);
     framed

@@ -1,4 +1,4 @@
-//! Plugin processes: started with Decoy, one per `plugins:` entry, spoken to over stdin/stdout
+//! Plugin processes: started with Decoy, one per `transformers` worker, spoken to over stdin/stdout
 //! (`docs/design/plugin-protocol.md`). A plugin exiting stops Decoy; nothing restarts it
 //! (ADR 0004).
 
@@ -154,7 +154,8 @@ async fn spawn(
     events: crate::events::Sender,
     exited: mpsc::UnboundedSender<PluginError>,
 ) -> Result<(Arc<Plugin>, tokio::task::JoinHandle<()>), PluginError> {
-    let mut child = shell(&config.command)
+    let mut child = Command::new(&config.command[0])
+        .args(&config.command[1..])
         .current_dir(&config.dir)
         .env("DECOY_PLUGIN", "1")
         .stdin(Stdio::piped())
@@ -164,7 +165,7 @@ async fn spawn(
         .spawn()
         .map_err(|source| PluginError::Spawn {
             key: key.to_owned(),
-            command: config.command.clone(),
+            command: config.command.join(" "),
             source,
         })?;
     let stderr = Arc::new(Stderr::default());
@@ -244,18 +245,4 @@ fn exit_status(status: std::io::Result<std::process::ExitStatus>) -> String {
         Ok(status) => format!("exited ({status})"),
         Err(error) => format!("can't be watched: {error}"),
     }
-}
-
-#[cfg(unix)]
-fn shell(command: &str) -> Command {
-    let mut shell = Command::new("sh");
-    shell.arg("-c").arg(command);
-    shell
-}
-
-#[cfg(windows)]
-fn shell(command: &str) -> Command {
-    let mut shell = Command::new("cmd");
-    shell.arg("/C").arg(command);
-    shell
 }

@@ -20,16 +20,16 @@ const STDERR_TAIL: usize = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
-    Decode,
-    Encode,
+    Input,
+    Output,
     Check,
 }
 
 impl Op {
     fn name(self) -> &'static str {
         match self {
-            Self::Decode => "decode",
-            Self::Encode => "encode",
+            Self::Input => "input",
+            Self::Output => "output",
             Self::Check => "check",
         }
     }
@@ -53,7 +53,6 @@ pub struct CallConnection {
 #[derive(Debug, Clone)]
 pub struct Call<'a> {
     pub op: Op,
-    pub step: &'a str,
     pub input: Msgpack,
     pub frame: Option<Frame>,
     pub connection: Option<&'a CallConnection>,
@@ -93,11 +92,11 @@ type Pending = Mutex<HashMap<u64, oneshot::Sender<Result<Msgpack, CallError>>>>;
 /// A plugin that answered `ready`.
 #[derive(Debug)]
 pub struct Plugin {
-    /// Its `plugins:` key.
+    /// Имя Transformer в конфигурации.
     pub key: String,
     pub name: String,
     pub version: String,
-    pub steps: Vec<String>,
+    directions: Vec<Op>,
     timeout: Duration,
     outbox: mpsc::UnboundedSender<Msgpack>,
     pending: Arc<Pending>,
@@ -110,8 +109,9 @@ impl Plugin {
         format!("{}: {}@{}", self.key, self.name, self.version)
     }
 
-    pub fn has_step(&self, step: &str) -> bool {
-        self.steps.iter().any(|name| name == step)
+    /// Проверяет направление, объявленное worker при запуске.
+    pub fn supports(&self, op: Op) -> bool {
+        self.directions.contains(&op)
     }
 
     pub async fn call(&self, call: Call<'_>) -> Result<Msgpack, CallError> {
@@ -124,7 +124,6 @@ impl Plugin {
         let mut fields = vec![
             ("id", Msgpack::from(id)),
             ("op", Msgpack::from(call.op.name())),
-            ("step", Msgpack::from(call.step)),
             ("input", call.input),
         ];
         if let Some(frame) = call.frame {
@@ -263,7 +262,7 @@ pub(super) fn connect(
             key,
             name: ready.name,
             version: ready.version,
-            steps: ready.steps,
+            directions: ready.directions,
             timeout,
             outbox,
             pending,
@@ -278,7 +277,7 @@ pub(super) fn connect(
 struct Ready {
     name: String,
     version: String,
-    steps: Vec<String>,
+    directions: Vec<Op>,
 }
 
 async fn read_loop(
@@ -355,19 +354,23 @@ fn parse_ready(message: &Msgpack) -> Result<Ready, String> {
             .map(str::to_owned)
             .ok_or_else(|| format!("`ready` has no string `{name}`"))
     };
-    let steps = field(message, "steps")
+    let directions = field(message, "directions")
         .as_array()
-        .and_then(|steps| {
-            steps
+        .and_then(|values| {
+            values
                 .iter()
-                .map(|step| step.as_str().map(str::to_owned))
+                .map(|value| match value.as_str() {
+                    Some("input") => Some(Op::Input),
+                    Some("output") => Some(Op::Output),
+                    _ => None,
+                })
                 .collect::<Option<Vec<_>>>()
         })
-        .ok_or("`ready` has no list of step names")?;
+        .ok_or("`ready` has no valid list of directions")?;
     Ok(Ready {
         name: text("name")?,
         version: text("version")?,
-        steps,
+        directions,
     })
 }
 
@@ -453,13 +456,12 @@ mod tests {
             ("protocol", protocol.into()),
             ("name", "envelope".into()),
             ("version", "1.0.0".into()),
-            ("steps", Msgpack::Array(vec!["envelope".into()])),
-            ("functions", Msgpack::Array(Vec::new())),
+            ("directions", Msgpack::Array(vec!["input".into()])),
         ]
     }
 
     #[tokio::test]
-    async fn the_handshake_reads_the_plugins_name_and_steps() {
+    async fn the_handshake_reads_the_workers_name_and_directions() {
         let (handshake, _reader, mut fake) = start(Duration::from_secs(1));
         let hello = fake.next().await;
         assert_eq!(field(&hello, "kind").as_str(), Some("hello"));
@@ -467,7 +469,7 @@ mod tests {
         fake.send("ready", ready(PROTOCOL)).await;
         let plugin = handshake.await.unwrap();
         assert_eq!(plugin.label(), "env: envelope@1.0.0");
-        assert!(plugin.has_step("envelope") && !plugin.has_step("frame"));
+        assert!(plugin.supports(Op::Input) && !plugin.supports(Op::Output));
     }
 
     #[tokio::test]
@@ -492,8 +494,7 @@ mod tests {
         fake.send("ready", ready(PROTOCOL)).await;
         let plugin = handshake.await.unwrap();
         let call = |input: Msgpack| Call {
-            op: Op::Decode,
-            step: "envelope",
+            op: Op::Input,
             input,
             frame: Some(Frame::Binary),
             connection: None,
@@ -529,8 +530,7 @@ mod tests {
             session: "s-1".into(),
         };
         let call = |input: &str| Call {
-            op: Op::Decode,
-            step: "envelope",
+            op: Op::Input,
             input: input.into(),
             frame: Some(Frame::Binary),
             connection: Some(&connection),
@@ -612,8 +612,7 @@ mod tests {
         assert_eq!(field(&answer, "value").as_str(), Some("hi"));
 
         let call = plugin.call(Call {
-            op: Op::Encode,
-            step: "envelope",
+            op: Op::Output,
             input: Msgpack::Nil,
             frame: None,
             connection: None,

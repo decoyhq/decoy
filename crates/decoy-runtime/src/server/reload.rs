@@ -15,7 +15,7 @@ pub struct Reloader {
     pub(super) max_body_bytes: Arc<AtomicUsize>,
     pub(super) listeners: Arc<ListenerFields>,
     pub(super) plugins: crate::plugins::Plugins,
-    /// The `plugins:` the processes started with; a reload doesn't restart them.
+    /// The Transformer workers started with; a reload doesn't restart them.
     pub(super) plugin_configs: Arc<BTreeMap<String, crate::config::PluginConfig>>,
     /// One reload at a time (`/reload` and `--watch`).
     pub(super) running: Arc<tokio::sync::Mutex<()>>,
