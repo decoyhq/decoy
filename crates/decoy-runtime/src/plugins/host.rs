@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use rmpv::Value as Msgpack;
 use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncWrite, BufReader};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 
 use super::wire::{self, field, message};
 use crate::time::format_duration;
@@ -88,6 +88,10 @@ pub trait Host: Send + Sync + 'static {
 /// The task reading a plugin's stdout; it ends with why, if the plugin broke the protocol.
 pub(super) type Reader = tokio::task::JoinHandle<Result<(), String>>;
 
+// Control messages share the FIFO, but never wait for a call slot during cleanup.
+const CALL_SLOTS: usize = 4;
+type Outbox = mpsc::UnboundedSender<(Msgpack, Option<OwnedSemaphorePermit>)>;
+
 type Pending = Mutex<HashMap<u64, oneshot::Sender<Result<Msgpack, CallError>>>>;
 
 /// A plugin that answered `ready`.
@@ -99,8 +103,9 @@ pub struct Plugin {
     pub version: String,
     directions: Vec<Op>,
     timeout: Duration,
-    outbox: mpsc::UnboundedSender<Msgpack>,
+    outbox: Outbox,
     pending: Arc<Pending>,
+    call_slots: Arc<Semaphore>,
     next_id: AtomicU64,
 }
 
@@ -117,11 +122,6 @@ impl Plugin {
 
     pub async fn call(&self, call: Call<'_>) -> Result<Msgpack, CallError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let (reply, result) = oneshot::channel();
-        self.pending
-            .lock()
-            .expect("plugin calls lock")
-            .insert(id, reply);
         let mut fields = vec![
             ("id", Msgpack::from(id)),
             ("op", Msgpack::from(call.op.name())),
@@ -148,33 +148,41 @@ impl Plugin {
         // Over the limit, the plugin would end on a protocol error, and Decoy with it.
         let size = wire::encoded_len(&call);
         if size > wire::MAX_MESSAGE {
-            self.forget(id);
             return Err(CallError::TooLarge(size));
         }
-        if self.outbox.send(call).is_err() {
+        let exchange = async {
+            let slot = self
+                .call_slots
+                .clone()
+                .acquire_owned()
+                .await
+                .expect("call slots stay open");
+            let (reply, result) = oneshot::channel();
+            self.pending
+                .lock()
+                .expect("plugin calls lock")
+                .insert(id, reply);
+            self.outbox
+                .send((call, Some(slot)))
+                .map_err(|_| CallError::Gone)?;
+            result.await.unwrap_or(Err(CallError::Gone))
+        };
+        let outcome = tokio::time::timeout(self.timeout, exchange).await;
+        if !matches!(outcome, Ok(Ok(_))) {
             self.forget(id);
-            return Err(CallError::Gone);
         }
-        match tokio::time::timeout(self.timeout, result).await {
-            Ok(Ok(result)) => result,
-            Ok(Err(_)) => Err(CallError::Gone),
-            Err(_) => {
-                // A late result finds no entry and is dropped.
-                self.forget(id);
-                Err(CallError::Timeout(self.timeout))
-            }
-        }
+        outcome.unwrap_or(Err(CallError::Timeout(self.timeout)))
     }
 
     /// Lets the plugin drop what it keeps for `connection`.
     pub fn close(&self, connection: &str) {
         let _ = self
             .outbox
-            .send(message("close", [("connection", connection.into())]));
+            .send((message("close", [("connection", connection.into())]), None));
     }
 
     pub(super) fn shutdown(&self) {
-        let _ = self.outbox.send(message("shutdown", []));
+        let _ = self.outbox.send((message("shutdown", []), None));
     }
 
     fn forget(&self, id: u64) {
@@ -232,9 +240,9 @@ pub(super) fn connect(
     host: Arc<dyn Host>,
     stderr: Arc<Stderr>,
 ) -> (impl Future<Output = Result<Arc<Plugin>, String>>, Reader) {
-    let (outbox, mut outgoing) = mpsc::unbounded_channel::<Msgpack>();
+    let (outbox, mut outgoing) = mpsc::unbounded_channel();
     tokio::spawn(async move {
-        while let Some(message) = outgoing.recv().await {
+        while let Some((message, _slot)) = outgoing.recv().await {
             if wire::write(&mut stdin, &message).await.is_err() {
                 return;
             }
@@ -251,9 +259,12 @@ pub(super) fn connect(
     ));
     let key = key.to_owned();
     let decoy = env!("CARGO_PKG_VERSION");
-    let _ = outbox.send(message(
-        "hello",
-        [("protocol", PROTOCOL.into()), ("decoy", decoy.into())],
+    let _ = outbox.send((
+        message(
+            "hello",
+            [("protocol", PROTOCOL.into()), ("decoy", decoy.into())],
+        ),
+        None,
     ));
     let handshake = async move {
         let ready = readied
@@ -267,6 +278,7 @@ pub(super) fn connect(
             timeout,
             outbox,
             pending,
+            call_slots: Arc::new(Semaphore::new(CALL_SLOTS)),
             next_id: AtomicU64::new(1),
         };
         let _ = stderr.label.set(plugin.label());
@@ -283,7 +295,7 @@ struct Ready {
 
 async fn read_loop(
     mut stdout: impl AsyncRead + Unpin,
-    outbox: mpsc::UnboundedSender<Msgpack>,
+    outbox: Outbox,
     pending: Arc<Pending>,
     host: Arc<dyn Host>,
     ready: oneshot::Sender<Result<Ready, String>>,
@@ -311,7 +323,9 @@ async fn read_loop(
                 }
             }
             Some("host") => {
-                let id = field(&message, "id").clone();
+                let Some(id) = field(&message, "id").as_u64() else {
+                    break Err("`host` without an integer `id`".to_owned());
+                };
                 let op = field(&message, "op").as_str().unwrap_or_default();
                 let args = field(&message, "args")
                     .as_array()
@@ -320,7 +334,19 @@ async fn read_loop(
                     Ok(value) => message_with(id, [("ok", true.into()), ("value", value)]),
                     Err(error) => message_with(id, [("ok", false.into()), ("error", error.into())]),
                 };
-                let _ = outbox.send(answer);
+                let size = wire::encoded_len(&answer);
+                let answer = if size > wire::MAX_MESSAGE {
+                    message_with(
+                        id,
+                        [
+                            ("ok", false.into()),
+                            ("error", CallError::TooLarge(size).to_string().into()),
+                        ],
+                    )
+                } else {
+                    answer
+                };
+                let _ = outbox.send((answer, None));
             }
             Some(other) => break Err(format!("unknown message kind `{other}`")),
             None => unreachable!("wire::read checks `kind`"),
@@ -338,8 +364,11 @@ async fn read_loop(
     result
 }
 
-fn message_with(id: Msgpack, fields: [(&'static str, Msgpack); 2]) -> Msgpack {
-    message("hostResult", std::iter::once(("id", id)).chain(fields))
+fn message_with(id: u64, fields: [(&'static str, Msgpack); 2]) -> Msgpack {
+    message(
+        "hostResult",
+        std::iter::once(("id", id.into())).chain(fields),
+    )
 }
 
 fn parse_ready(message: &Msgpack) -> Result<Ready, String> {
@@ -402,6 +431,7 @@ mod tests {
     impl Host for Echo {
         fn call(&self, op: &str, args: &[Msgpack]) -> Result<Msgpack, String> {
             match op {
+                "large" => Ok(Msgpack::Binary(vec![0; wire::MAX_MESSAGE])),
                 "echo" => Ok(args.first().cloned().unwrap_or(Msgpack::Nil)),
                 _ => Err(format!("unknown host call {op}")),
             }
@@ -520,6 +550,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_stalled_writer_keeps_only_a_bounded_number_of_calls() {
+        let timeout = Duration::from_millis(10);
+        let (handshake, _reader, mut fake) = start(timeout);
+        fake.next().await;
+        fake.send("ready", ready(PROTOCOL)).await;
+        let plugin = handshake.await.unwrap();
+        for _ in 0..CALL_SLOTS + 2 {
+            let call = Call {
+                op: Op::Input,
+                input: Msgpack::Binary(vec![0; 128 * 1024]),
+                frame: None,
+                connection: None,
+            };
+            assert_eq!(plugin.call(call).await, Err(CallError::Timeout(timeout)));
+        }
+        plugin.close("done");
+        for _ in 0..CALL_SLOTS {
+            assert_eq!(field(&fake.next().await, "kind").as_str(), Some("call"));
+        }
+        assert_eq!(field(&fake.next().await, "kind").as_str(), Some("close"));
+    }
+
+    #[tokio::test]
     async fn calls_get_their_own_results_misses_errors_and_timeouts() {
         let (handshake, _reader, mut fake) = start(Duration::from_millis(200));
         fake.next().await;
@@ -597,6 +650,18 @@ mod tests {
         fake.next().await;
         fake.send("ready", ready(PROTOCOL)).await;
         let plugin = handshake.await.unwrap();
+
+        fake.send("host", vec![("id", 6.into()), ("op", "large".into())])
+            .await;
+        let error = fake.next().await;
+        assert_eq!(field(&error, "id").as_u64(), Some(6));
+        assert_eq!(field(&error, "ok").as_bool(), Some(false));
+        assert!(
+            field(&error, "error")
+                .as_str()
+                .unwrap()
+                .contains("message limit")
+        );
 
         fake.send(
             "host",
