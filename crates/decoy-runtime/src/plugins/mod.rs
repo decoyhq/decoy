@@ -16,6 +16,7 @@ use prost_reflect::DescriptorPool;
 use thiserror::Error;
 use tokio::process::Command;
 use tokio::sync::mpsc;
+use tokio::task::JoinSet;
 
 use crate::config::PluginConfig;
 pub use host::{Call, CallConnection, CallError, Frame, Op, Plugin};
@@ -82,7 +83,7 @@ impl Plugins {
 #[derive(Debug)]
 pub struct Supervisor {
     exits: mpsc::UnboundedReceiver<PluginError>,
-    stops: Vec<tokio::task::JoinHandle<()>>,
+    stops: JoinSet<()>,
     plugins: Plugins,
 }
 
@@ -96,17 +97,13 @@ impl Supervisor {
     }
 
     /// Asks every plugin to exit, and kills those still running after [`SHUTDOWN_GRACE`].
-    pub async fn shutdown(self) {
+    pub async fn shutdown(mut self) {
         for plugin in self.plugins.iter() {
             plugin.shutdown();
         }
-        let aborts: Vec<_> = self.stops.iter().map(|stop| stop.abort_handle()).collect();
-        let all = futures_util::future::join_all(self.stops);
-        if tokio::time::timeout(SHUTDOWN_GRACE, all).await.is_err() {
-            // Each watch owns its child; aborting it drops the child, which kills it.
-            for abort in aborts {
-                abort.abort();
-            }
+        let wait = async { while self.stops.join_next().await.is_some() {} };
+        if tokio::time::timeout(SHUTDOWN_GRACE, wait).await.is_err() {
+            self.stops.shutdown().await;
         }
     }
 }
@@ -126,12 +123,12 @@ pub async fn start(
     )
     .await;
     let mut by_key = BTreeMap::new();
-    let mut stops = Vec::new();
+    let mut stops = JoinSet::new();
     for started in started {
         // Dropping the rest kills them (`kill_on_drop`).
         let (plugin, stop) = started?;
         by_key.insert(plugin.key.clone(), plugin);
-        stops.push(stop);
+        stops.spawn(stop);
     }
     let plugins = Plugins {
         by_key: Arc::new(by_key),
@@ -153,7 +150,7 @@ async fn spawn(
     host: Arc<ProtoHost>,
     events: crate::events::Sender,
     exited: mpsc::UnboundedSender<PluginError>,
-) -> Result<(Arc<Plugin>, tokio::task::JoinHandle<()>), PluginError> {
+) -> Result<(Arc<Plugin>, impl Future<Output = ()> + use<>), PluginError> {
     let mut child = Command::new(&config.command[0])
         .args(&config.command[1..])
         .current_dir(&config.dir)
@@ -212,7 +209,7 @@ async fn spawn(
     };
     let label = plugin.label();
     // Owns the child: dropping this task (on shutdown) kills it.
-    let watch = tokio::spawn(async move {
+    let watch = async move {
         let how = tokio::select! {
             status = child.wait() => exit_status(status),
             ended = reader => match ended {
@@ -236,7 +233,7 @@ async fn spawn(
             how,
             tail: stderr.tail(),
         });
-    });
+    };
     Ok((plugin, watch))
 }
 
@@ -244,5 +241,47 @@ fn exit_status(status: std::io::Result<std::process::ExitStatus>) -> String {
     match status {
         Ok(status) => format!("exited ({status})"),
         Err(error) => format!("can't be watched: {error}"),
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn failing_startup_stops_workers_that_already_answered_ready() {
+        let dir = tempfile::tempdir().unwrap();
+        let ready = wire::message(
+            "ready",
+            [
+                ("protocol", 1.into()),
+                ("name", "test".into()),
+                ("version", "1".into()),
+                ("directions", rmpv::Value::Array(vec!["input".into()])),
+            ],
+        );
+        let mut bytes = Vec::new();
+        wire::write(&mut bytes, &ready).await.unwrap();
+        std::fs::write(dir.path().join("ready.bin"), bytes).unwrap();
+
+        let worker = |script: &str| PluginConfig {
+            command: vec!["sh".into(), "-c".into(), script.into()],
+            dir: dir.path().to_path_buf(),
+            timeout: Duration::from_secs(1),
+        };
+        let configs = BTreeMap::from([
+            (
+                "broken".to_owned(),
+                worker("while [ ! -f ready ]; do sleep 0.01; done; exit 1"),
+            ),
+            (
+                "healthy".to_owned(),
+                worker("cat ready.bin; touch ready; sleep 0.3; touch survived"),
+            ),
+        ]);
+
+        assert!(start(&configs, &crate::events::channel()).await.is_err());
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert!(!dir.path().join("survived").exists());
     }
 }
