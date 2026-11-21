@@ -1,14 +1,14 @@
-# PRD — WebSocket transformers
+# PRD — Transport transformers
 
 Status: Draft for review
 
 ## Problem Statement
 
-I want to mock WebSocket applications whose messages need to change shape before Case matching or after a Behavior is rendered. A message might need JSON normalization, compression, or an application-specific envelope. I want to configure these transformations in one place, reuse them across Routes, and use either a persistent SDK worker or a small command where it fits. WebSocket messages can arrive or be sent independently, so the API should describe direction relative to Decoy.
+I want to mock applications whose transport payloads need to change shape before Case matching or after a Behavior is rendered. A payload might need JSON normalization, compression, or an application-specific envelope. I want to configure these transformations in one place, reuse them across Routes, and use either a persistent SDK worker or a small command. WebSocket messages can arrive or be sent independently, and SSE only sends events. The API needs to express direction relative to Decoy across transports.
 
 ## Solution
 
-Define named Transformers and ordered Pipelines in `decoy.yaml`. A Route selects a Pipeline by name. Its `input` runs before Decoy builds the Message envelope for Case matching. Its `output` runs after Decoy renders the Behavior message, or when the Control API sends a message that bypasses Cases. Both lists run top to bottom.
+Define named Transformers and ordered Pipelines in `decoy.yaml`. A Route selects a Pipeline by name. Where a transport transforms incoming payloads, `input` runs before Case matching. `output` runs after Decoy renders the Behavior payload and also applies to Control API sends where the transport supports them. Both lists run top to bottom. Each transport defines what enters and leaves the shared Pipeline.
 
 A Transformer uses a persistent SDK worker or one-shot commands. A Pipeline can compose steps from both modes. Use `input` and `output` in configuration, the SDK, and the language-neutral worker protocol.
 
@@ -31,7 +31,9 @@ A Transformer uses a persistent SDK worker or one-shot commands. A Pipeline can 
 15. As a mock author, I want diagnostics when a transformation fails, so that I can locate the failing Pipeline step.
 16. As a tester, I want Behavior messages and Control API pushes to use the same output Pipeline, so that both reach the client in its expected format.
 17. As a tester, I want failures to stay within the affected message or connection where applicable, so that I can distinguish a transform failure from a Case miss.
-18. As a tester, I want ordinary WebSocket Routes to keep their transport defaults when they omit a Pipeline, so that existing fixtures still work.
+18. As a tester, I want Routes to keep their transport defaults when they omit a Pipeline, so that existing fixtures still work.
+19. As an SSE Route author, I want to transform outgoing event data, so that subscribers receive the expected text.
+20. As a Route author, I want to reuse a Transformer across transports with compatible payloads, so that I can keep shared transformation logic in one place.
 
 ## Implementation Decisions
 
@@ -58,28 +60,33 @@ pipelines:
     output: [approvals, compression]
 ```
 
-### Proposed first release
+### Proposed runtime contract
 
-- Ship WebSocket support with the SDK and opt-in one-shot commands. Each named worker definition exposes one Pipeline step with either or both directions. The same worker process serves its configured directions. A reference to a Transformer must support the direction that uses it.
-- For WebSocket output, a terminal worker may return text or bytes, which select the matching frame kind. A terminal command returns bytes, which become a binary WebSocket message. A terminal input command must emit JSON. Document conversion between typed worker values and byte-oriented commands at intermediate boundaries.
-- Run the output Pipeline once per recipient connection when sending a message. For the Control API, `delivered` counts queue acceptance. If transformation fails after queueing, Decoy reports the failure and skips the frame. This would remove the extra encode preflight present in the worker prototype.
+- Each named worker definition exposes one Pipeline step with either or both directions. The same worker process serves its configured directions. One-shot commands are opt-in. A reference to a Transformer must support the direction that uses it.
+- Document conversion between typed worker values and byte-oriented commands at intermediate boundaries. Each transport specifies the payload accepted at both ends of its Pipeline.
+- Run the output Pipeline once per recipient connection when sending a message. For the Control API, `delivered` counts queue acceptance. If transformation fails after queueing, Decoy reports the failure and skips the message. This would remove the extra encode preflight present in the worker prototype.
 - Settle command timeout and output limits, and decide whether startup checks invoke commands, before implementation. Preserve a distinct failure diagnostic for transform errors and a Case miss for an unmatched decoded message.
+
+### Transport integration
+
+- **WebSocket.** `input` runs on an incoming message payload before the Message envelope is built. A terminal input command emits JSON for Case matching. On `output`, terminal worker text or bytes select the frame kind. A terminal command emits a binary message.
+- **SSE.** The event stream uses `output` on each event's `data`. The transport handles text framing and the `event`, `id`, and `retry` fields. Define how a terminal command's bytes become event text when integrating the SSE transport. [#218](https://github.com/decoyhq/decoy/issues/218)
+- **Other transports.** Reuse the same Pipeline configuration and SDK contract when adding an integration. Define its payload boundaries and supported directions there. The HTTP and gRPC defaults stay as they are.
 
 ## Testing Decisions
 
-- Prefer the existing end-to-end seam: launch Decoy, configure a real WebSocket Route, connect a client, and drive the Control API. Assert observable messages, frame kinds, and diagnostics. Use the live socket fixtures from [#406](https://github.com/decoyhq/decoy/pull/406) and the approval and telemetry flows from [#414](https://github.com/decoyhq/decoy/pull/414) as prior art.
+- Test through a running Decoy and real transport clients. For WebSocket, assert received messages, frame kinds, and diagnostics. Use the live socket fixtures from [#406](https://github.com/decoyhq/decoy/pull/406) and the approval and telemetry flows from [#414](https://github.com/decoyhq/decoy/pull/414) as prior art. With the SSE integration, assert that a subscriber receives transformed event data with its event metadata intact.
 - Exercise worker-only, command-only, and mixed Pipelines. Use non-commuting operations in a mixed Pipeline to prove each list's order. Include a plain JSON transformation alongside binary examples.
-- Verify a Behavior and a Control API push go through the same output Pipeline. Cover per-connection worker state, Session isolation, a command failure, and WebSocket transport defaults when a Route omits a direction or Pipeline.
+- Verify a Behavior and a Control API push go through the same output Pipeline. Cover per-connection worker state, Session isolation, a command failure, and transport defaults when a Route omits a direction or Pipeline.
 - Verify the published worker contract with an SDK-free worker over a real WebSocket. Use the interoperability fixture from [#412](https://github.com/decoyhq/decoy/pull/412).
 - Use config loading tests for invalid references and direction mismatches. Keep throughput measurements reproducible with the same workload across modes, as in [#411](https://github.com/decoyhq/decoy/pull/411).
 
 ## Out of Scope
 
-- SSE runtime support and the mapping from transformed output to SSE `data`. The directional config can extend to SSE in the transport milestone.
-- Changes to the default gRPC Pipeline, new built-in transformations, plugin-defined template functions, and changes to Route, Case, Behavior, Collection, or Session semantics.
+- Implementing the SSE transport itself. Its output Pipeline integration is covered here and depends on the transport milestone.
+- Changes to default HTTP or gRPC behavior, new built-in transformations, plugin-defined template functions, and changes to Route, Case, Behavior, Collection, or Session semantics.
 
 ## Further Notes
 
 - Treat the open PR stack as draft work. [#402](https://github.com/decoyhq/decoy/pull/402) through [#406](https://github.com/decoyhq/decoy/pull/406) provide the design, SDK, host, runtime, and test starting points. [#411](https://github.com/decoyhq/decoy/pull/411) through [#414](https://github.com/decoyhq/decoy/pull/414) provide command experiments, measurements, an SDK-free worker, centralized config, and application examples. Rework the stack against this PRD.
 - Amend [ADR 0002](../adr/0002-pipeline-steps-and-plugin-workers.md) when the decision is accepted. It currently specifies one list with reversed outbound order. This PRD proposes separate lists with explicit order and an additional one-shot execution mode. Keep the gRPC built-ins boundary proposed in [ADR 0004 in PR #402](https://github.com/decoyhq/decoy/pull/402). Update its WebSocket wording when it lands.
-- SSE is tracked by [#218](https://github.com/decoyhq/decoy/issues/218).
