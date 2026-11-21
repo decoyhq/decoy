@@ -9,7 +9,7 @@ serving an HTTP request and switching its response. For a complete project, brow
 - [Contributing](../CONTRIBUTING.md) covers the toolchain, local checks, and releases.
 - [Glossary](../CONTEXT.md) defines the terms used in code, issues, and documentation.
 - [Architectural decisions](adr/README.md) record choices the project has accepted and why.
-- [Documentation guidelines](../CONTRIBUTING.md#where-documentation-goes) explain where to publish a spec and when to write an ADR. Use the [format outlines](../CONTRIBUTING.md#formats-by-document-type) when writing or revising a document.
+- [Documentation guidelines](../CONTRIBUTING.md#where-documentation-goes) explain where to publish a spec and when to write an ADR. Use the [copyable templates](maintainers/document-templates.md) when writing or revising a document.
 - [Plugin wire protocol](reference/plugin-protocol.md) specifies the worker messages for SDK authors.
 
 ## For maintainers
