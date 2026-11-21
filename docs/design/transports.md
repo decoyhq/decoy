@@ -54,7 +54,7 @@ WebSocket and SSE use the following fields for outgoing payloads:
 | `ws`      | `path`, `query`     | each inbound message, or the open (`on: connect`) | `message` | `messages`      | `close`                                |
 | `sse`     | `path` (GET)        | the subscribing request                           | —         | `messages`      | per item `event`, `id`, `retry`; `end` |
 
-The examples use `messages` for WebSocket and SSE. gRPC server streaming uses `stream`.
+WebSocket and SSE use `messages`. gRPC server streaming uses `stream`. Items in both lists use `payload` and can set their own `delay`.
 
 ## 2. Config: protos and pipelines
 
@@ -190,12 +190,12 @@ cases:
     behaviors:
       progress:
         stream:
-          - { message: { id: a-1, state: PENDING } }
-          - { message: { id: a-1, state: APPROVED }, delay: 500ms }
+          - { payload: { id: a-1, state: PENDING } }
+          - { payload: { id: a-1, state: APPROVED }, delay: 500ms }
         status: OK # ends the call; `status: ABORTED` ends it with an error
 ```
 
-Today this list is `stream:`; `messages:` is the name after the Q11 rename.
+Use `payload` for each `stream` item.
 
 With `status`, the call ends after the list. Without it, the call stays open after the list and
 each Control API `send` (§9) to the Route from the call's Session is another response message,
@@ -548,7 +548,7 @@ the s-2 socket.
 | Q8  | `__decoy_session` query fallback for browsers outside Playwright? | **Deferred** until non-Playwright runners (Cypress, Selenium) are in scope.                                                                             |
 | Q9  | Glossary: "Request envelope" / "Message envelope".                | **Decided:** adopt both in `CONTEXT.md`; rename `RequestContext` → `RequestEnvelope` (#240).                                                            |
 | Q10 | Server-first WS messages without a test?                          | **Decided:** an `on: connect` Case: no `match`, at most one per Route, Behavior chosen by Selection. WebSocket only for now.                            |
-| Q11 | One name for outbound payloads across transports?                 | **Decided:** WebSocket and SSE use `messages` items with `payload` and optional `delay`. gRPC keeps its existing `stream`.                              |
+| Q11 | One name for outbound payloads across transports?                 | **Decided:** WebSocket and SSE use `messages`. gRPC uses `stream`. Items in both lists use `payload` and optional `delay`.                              |
 | Q12 | Two WS sockets on one path, told apart by query?                  | **Decided:** `query` in a `ws` Route's `match`; more `query` keys wins, an equal tie fails at load.                                                     |
 | Q13 | Which pipeline steps ship with Decoy?                             | **Decided:** gRPC defaults to `grpc-frame` and `protobuf`. Application Transformers use workers or commands.                                            |
 | Q14 | Frames that carry no type marker at all?                          | **Decided:** the plugin's job; Decoy never guesses a proto type.                                                                                        |
