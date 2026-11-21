@@ -13,6 +13,7 @@ pub mod expression;
 pub mod grpc;
 pub mod http;
 pub mod matching;
+mod pipeline;
 pub mod plugins;
 pub mod protos;
 pub mod request;

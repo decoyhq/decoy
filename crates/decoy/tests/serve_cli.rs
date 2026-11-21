@@ -225,6 +225,201 @@ cases:
     upstream.join().unwrap();
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn http_pipeline_forwards_transformed_bytes_and_transforms_the_upstream_reply() {
+    let (upstream_url, captured, upstream) = spawn_upstream_with_response(
+        b"HTTP/1.1 202 Accepted\r\ncontent-type: application/json\r\ncontent-encoding: custom\r\netag: abc\r\ncontent-digest: old\r\ncontent-length: 8\r\n\r\naccepted",
+    );
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "users.yaml",
+        format!(
+            r#"
+id: users
+transport: http
+pipeline: uppercase
+match: {{ method: POST, path: /users }}
+cases:
+  fallback:
+    behaviors:
+      forward: {{ kind: passthrough, target: {{ baseUrl: {upstream_url} }} }}
+  object:
+    match: {{ body: {{ sku: abc }} }}
+    behaviors:
+      bad: {{ status: 400 }}
+"#
+        ),
+    );
+    fixture
+        .write_collections("- id: default\n  routes: [users:fallback:forward, users:object:bad]");
+    fixture.write_config(
+        r#"
+routes: routes
+collections: collections.yaml
+port: 0
+transformers:
+  upper:
+    input: [sh, -c, "echo called >> calls; tr a-z A-Z"]
+    output: [sh, -c, "tr a-z A-Z; printf '!'"]
+pipelines:
+  uppercase: { input: [upper], output: [upper] }
+"#,
+    );
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let port = server.port("port");
+    let response = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{port}/users"))
+        .header("Content-Type", "application/json")
+        .header("Content-Digest", "old")
+        .body(r#"{ "sku" : "abc" }"#)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 202);
+    for name in ["content-encoding", "etag", "content-digest"] {
+        assert!(response.headers().get(name).is_none(), "{name}");
+    }
+    assert_eq!(response.text().await.unwrap(), "ACCEPTED!");
+    let sent = captured.recv().unwrap();
+    assert_eq!(sent.body, r#"{"SKU":"ABC"}"#);
+    assert!(!sent.headers.contains_key("content-digest"));
+    assert_eq!(
+        fs::read_to_string(fixture.temp.path().join("calls")).unwrap(),
+        "called\n"
+    );
+    upstream.join().unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn http_route_miss_tries_the_next_route_with_the_original_json() {
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "high.yaml",
+        r#"
+id: high
+transport: http
+pipeline: replace
+match: { method: POST, path: /orders }
+cases:
+  abc:
+    match: { body: { sku: abc } }
+    behaviors:
+      bad: { status: 400 }
+"#,
+    );
+    fixture.write_route(
+        "low.yaml",
+        r#"
+id: low
+transport: http
+match: { method: POST, path: /orders }
+cases:
+  abc:
+    match: { body: { sku: abc } }
+    behaviors:
+      ok: { body: '${ body.sku }' }
+"#,
+    );
+    fixture.write_collections("- id: default\n  routes: [low:abc:ok, high:abc:bad]");
+    fixture.write_config(
+        r#"
+routes: routes
+collections: collections.yaml
+port: 0
+transformers:
+  replace:
+    input: [sh, -c, 'cat > seen; if grep -q fail seen; then exit 1; fi; printf xyz']
+pipelines:
+  replace: { input: [replace] }
+"#,
+    );
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let port = server.port("port");
+    let response = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{port}/orders"))
+        .header("Content-Type", "application/vnd.orders+json; charset=utf-8")
+        .body(r#"{ "sku" : "abc" }"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.text().await.unwrap(), "abc");
+    assert_eq!(
+        fs::read_to_string(fixture.temp.path().join("seen")).unwrap(),
+        r#"{"sku":"abc"}"#
+    );
+
+    let failure = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{port}/orders"))
+        .json(&serde_json::json!({"sku": "abc", "fail": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(failure.status(), 500);
+    assert!(
+        failure
+            .text()
+            .await
+            .unwrap()
+            .contains("transformer `replace` input failed")
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn bodyless_passthrough_skips_output_and_keeps_headers_for_unchanged_input() {
+    let (target, received, upstream) =
+        spawn_upstream_with_response(b"HTTP/1.1 204 No Content\r\netag: kept\r\n\r\n");
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "users.yaml",
+        format!(
+            r#"
+id: users
+transport: http
+pipeline: encoded
+match: {{ method: POST, path: /users }}
+cases:
+  any:
+    behaviors:
+      real: {{ kind: passthrough, target: {{ baseUrl: {target} }} }}
+"#
+        ),
+    );
+    fixture.write_collections("- id: local\n  routes: [users:any:real]");
+    fixture.write_config(
+        r#"
+routes: routes
+collections: collections.yaml
+port: 0
+transformers:
+  encoded: { input: [cat], output: [sh, -c, "exit 1"] }
+pipelines:
+  encoded: { input: [encoded], output: [encoded] }
+"#,
+    );
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let response = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{}/users", server.port("port")))
+        .header("Content-Type", "application/json")
+        .header("Content-Encoding", "custom")
+        .header("Content-Digest", "unchanged")
+        .body("encoded bytes")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 204);
+    assert_eq!(response.headers()["etag"], "kept");
+    let sent = received.recv().unwrap();
+    assert_eq!(sent.body, "encoded bytes");
+    assert_eq!(sent.headers["content-encoding"], "custom");
+    assert_eq!(sent.headers["content-digest"], "unchanged");
+    upstream.join().unwrap();
+}
+
 #[tokio::test]
 async fn serve_uses_cli_global_passthrough_target_for_selected_passthrough() {
     let (upstream_url, captured, upstream) = spawn_upstream();
@@ -963,6 +1158,16 @@ fn spawn_upstream() -> (
     mpsc::Receiver<CapturedRequest>,
     thread::JoinHandle<()>,
 ) {
+    spawn_upstream_with_response(b"HTTP/1.1 202 Accepted\r\ncontent-type: text/plain\r\nx-upstream: yes\r\ncontent-length: 8\r\n\r\naccepted")
+}
+
+fn spawn_upstream_with_response(
+    response: &'static [u8],
+) -> (
+    String,
+    mpsc::Receiver<CapturedRequest>,
+    thread::JoinHandle<()>,
+) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let (tx, rx) = mpsc::channel();
@@ -1017,11 +1222,7 @@ fn spawn_upstream() -> (
         })
         .unwrap();
 
-        stream
-            .write_all(
-                b"HTTP/1.1 202 Accepted\r\ncontent-type: text/plain\r\nx-upstream: yes\r\ncontent-length: 8\r\n\r\naccepted",
-            )
-            .unwrap();
+        stream.write_all(response).unwrap();
     });
 
     (format!("http://{addr}"), rx, handle)

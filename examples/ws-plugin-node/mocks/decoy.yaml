@@ -16,7 +16,7 @@ transformers:
     output: [gzip, -c]
 
 pipelines:
-  approvals-ws:
+  typed-approvals:
     input: [env]
     output: [env]
   compressed-approvals:

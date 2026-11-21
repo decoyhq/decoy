@@ -1,5 +1,6 @@
 - id: happy-path
   routes:
+    - approvals-post:watch:approved
     - approvals-live:hello:ping
     - approvals-live:watch:approved
     - compressed-approvals:hello:ping

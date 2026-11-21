@@ -1,0 +1,13 @@
+id: approvals-post
+transport: http
+match: { method: POST, path: /approvals }
+pipeline: typed-approvals
+cases:
+  watch:
+    match:
+      body: { type: approvals.v1.WatchRequest, data: { ids: [a-1] } }
+    behaviors:
+      approved:
+        headers: { content-type: application/msgpack }
+        body:
+          { type: approvals.v1.Approval, data: { id: '${ body.data.ids[0] }', state: APPROVED } }

@@ -5,13 +5,14 @@ use bytes::Bytes;
 use super::forward::{
     ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough, target_url,
 };
+use super::pipeline::{PreparedRoute, mock_output, passthrough_output};
 use super::resolve::{HttpRequest, ResolveOutcome};
 use crate::collections::Activation;
-use crate::engine::Catalog;
+use crate::engine::{Catalog, MissDiagnostic};
 use crate::events::{Match, Outcome};
 use crate::http::{BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan};
 use crate::request::RequestEnvelope;
-use crate::schema::HttpMethod;
+use crate::schema::{Behavior, HttpMethod};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpExecutionRequest {
@@ -65,13 +66,37 @@ impl Catalog {
             ),
         };
 
-        match self.resolve_http_with_overrides(
-            collection_id,
-            &resolve_request,
-            overrides,
-            &request.metadata,
-            explain,
-        ) {
+        let mut prepared = BTreeMap::new();
+        let selection = self
+            .select_http(
+                collection_id,
+                overrides,
+                &resolve_request,
+                &request.metadata,
+                explain,
+                &mut prepared,
+            )
+            .await;
+        let (resolved, render_failed) = match selection {
+            Ok(resolved) => resolved,
+            Err(reason) => {
+                let response = transform_failure(&reason);
+                return (
+                    HttpExecutionOutcome::Response {
+                        activation: None,
+                        response,
+                    },
+                    explain.then(|| {
+                        Outcome::Miss(MissDiagnostic {
+                            collection: collection_id.to_owned(),
+                            reason,
+                            candidates: Vec::new(),
+                        })
+                    }),
+                );
+            }
+        };
+        match resolved {
             ResolveOutcome::Matched {
                 activation,
                 path_params,
@@ -89,14 +114,40 @@ impl Catalog {
                     conditions: conditions.clone(),
                     path_params,
                 });
-                match plan {
-                    ResponsePlan::Response(response) => (
-                        HttpExecutionOutcome::Response {
-                            activation: Some(activation),
-                            response: response.into(),
-                        },
-                        matched.map(Outcome::Hit),
+                let (input, output) = match prepared.remove(&activation.route) {
+                    Some(PreparedRoute { input, pipeline }) => (
+                        input.ok().flatten(),
+                        pipeline.has_output().then_some(pipeline),
                     ),
+                    None => (None, None),
+                };
+                match plan {
+                    ResponsePlan::Response(plan) => {
+                        let response = if let Some(output) =
+                            output.as_ref().filter(|_| !render_failed)
+                        {
+                            let behavior = &self.routes[&activation.route].cases[&activation.case]
+                                .behaviors[&activation.behavior];
+                            let explicit_type = matches!(behavior, Behavior::Response(response) if response.headers.keys().any(|key| key.eq_ignore_ascii_case("content-type")));
+                            mock_output(output, plan, explicit_type)
+                                .await
+                                .unwrap_or_else(|error| {
+                                    transform_failure(&format!(
+                                        "route `{}` output: {error}",
+                                        activation.route
+                                    ))
+                                })
+                        } else {
+                            plan.into()
+                        };
+                        (
+                            HttpExecutionOutcome::Response {
+                                activation: Some(activation),
+                                response,
+                            },
+                            matched.map(Outcome::Hit),
+                        )
+                    }
                     ResponsePlan::Passthrough(plan) => {
                         let upstream_url =
                             plan.base_url
@@ -107,23 +158,52 @@ impl Catalog {
                                         .ok()
                                         .map(String::from)
                                 });
+                        let (headers, body) = match input {
+                            Some(envelope) => (envelope.headers, envelope.raw_body),
+                            None => (request.headers, request.body),
+                        };
+                        let is_head = request.method == HttpMethod::Head;
                         let source = forward_passthrough(
                             &plan,
                             ForwardRequest {
                                 method: request.method,
                                 path_and_query: request.path_and_query,
-                                headers: request.headers,
-                                body: request.body,
+                                headers,
+                                body,
                             },
                         )
                         .await;
 
                         let upstream_status = source.as_ref().ok().map(|response| response.status);
                         let outcome = match source {
-                            Ok(response) => HttpExecutionOutcome::Response {
-                                activation: Some(activation),
-                                response,
-                            },
+                            Ok(response) => {
+                                let body_allowed = !is_head
+                                    && !matches!(response.status, 100..=199 | 204 | 205 | 304);
+                                let response = if let Some(output) =
+                                    output.as_ref().filter(|_| body_allowed)
+                                {
+                                    passthrough_output(
+                                        output,
+                                        response,
+                                        self.runtime
+                                            .max_body_bytes
+                                            .unwrap_or(crate::config::DEFAULT_MAX_BODY_BYTES),
+                                    )
+                                    .await
+                                    .unwrap_or_else(|error| {
+                                        transform_failure(&format!(
+                                            "route `{}` output: {error}",
+                                            activation.route
+                                        ))
+                                    })
+                                } else {
+                                    response
+                                };
+                                HttpExecutionOutcome::Response {
+                                    activation: Some(activation),
+                                    response,
+                                }
+                            }
                             Err(source) => {
                                 HttpExecutionOutcome::ForwardingError { activation, source }
                             }
@@ -148,6 +228,76 @@ impl Catalog {
             ),
         }
     }
+
+    /// Run input I/O only when resolution reaches that Route. The diagnostic pass on a miss
+    /// reuses the prepared inputs so a stateful Transformer runs at most once per Route.
+    pub(super) async fn select_http(
+        &self,
+        collection: &str,
+        overrides: &[Activation],
+        request: &HttpRequest,
+        metadata: &RequestMetadata,
+        mut explain: bool,
+        prepared: &mut BTreeMap<String, PreparedRoute>,
+    ) -> Result<(ResolveOutcome<'_>, bool), String> {
+        loop {
+            let mut candidates = explain.then(Vec::new);
+            let mut entries = match self.activations(collection, overrides) {
+                Ok(entries) => entries.rev(),
+                Err(error) => {
+                    return Ok((
+                        ResolveOutcome::Miss(MissDiagnostic {
+                            collection: collection.into(),
+                            reason: error.to_string(),
+                            candidates: vec![],
+                        }),
+                        false,
+                    ));
+                }
+            };
+            let mut pending = None;
+            loop {
+                let remaining = pending.take().into_iter().chain(&mut entries);
+                match self.resolve_candidates(
+                    remaining,
+                    request,
+                    metadata,
+                    prepared,
+                    &mut candidates,
+                ) {
+                    Ok(Some(hit)) => return Ok(hit),
+                    Ok(None) => break,
+                    Err((route, activation)) => {
+                        let input = PreparedRoute::prepare(route, &self.runtime, &request.envelope)
+                            .await
+                            .map_err(|reason| format!("route `{}` input: {reason}", route.id))?;
+                        prepared.insert(route.id.clone(), input);
+                        pending = Some(activation);
+                    }
+                }
+            }
+            if let Some(candidates) = candidates {
+                return Ok((
+                    ResolveOutcome::Miss(MissDiagnostic {
+                        collection: collection.into(),
+                        reason: "no active route case matched request".into(),
+                        candidates,
+                    }),
+                    false,
+                ));
+            }
+            explain = true;
+        }
+    }
+}
+
+fn transform_failure(reason: &str) -> ForwardResponse {
+    HttpResponsePlan {
+        status: 500,
+        headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
+        body: Some(BodyPlan::Json(serde_json::json!({ "error": reason }))),
+    }
+    .into()
 }
 
 impl From<crate::http::HttpResponsePlan> for ForwardResponse {

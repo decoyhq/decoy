@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline'
 import { fileURLToPath } from 'node:url'
 import protobuf from 'protobufjs'
 
-let decoyUrl: string
+export let decoyUrl: string
 const exampleDir = fileURLToPath(new URL('..', import.meta.url))
 
 /** The example's protos, to build and read payloads the way the app would. */

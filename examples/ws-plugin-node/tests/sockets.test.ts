@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
 import { gzipSync, gunzipSync } from 'node:zlib'
 import { decode, encode } from '@msgpack/msgpack'
-import { Socket, control, decodeProto, encodeProto, send, startDecoy } from './decoy.ts'
+import { Socket, control, decoyUrl, decodeProto, encodeProto, send, startDecoy } from './decoy.ts'
 
 let stop: (() => Promise<void>) | undefined
 const sockets: Socket[] = []
@@ -57,6 +57,21 @@ void test('typed envelopes: JSON text on connect, protobuf replies in binary fra
     data: { id: 'a-1', state: 'PENDING' },
   })
   assert.deepEqual(readEnvelope(await approvals.binary()), {
+    type: 'approvals.v1.Approval',
+    data: { id: 'a-1', state: 'APPROVED' },
+  })
+})
+
+void test('the HTTP Route uses the same typed envelope as the WebSocket Route', async () => {
+  const response = await fetch(`${decoyUrl}/approvals`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/msgpack' },
+    body: Buffer.from(envelope('approvals.v1.WatchRequest', { ids: ['a-1'] })),
+  })
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('content-type'), 'application/msgpack')
+  assert.deepEqual(readEnvelope(new Uint8Array(await response.arrayBuffer())), {
     type: 'approvals.v1.Approval',
     data: { id: 'a-1', state: 'APPROVED' },
   })

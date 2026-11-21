@@ -102,7 +102,7 @@ pub fn load_catalog_from_files(
     let collections_file = collections_file.as_ref();
 
     for name in runtime.pipelines.keys() {
-        crate::ws::pipeline::WsPipeline::named(&runtime, name).map_err(|reason| {
+        crate::pipeline::Pipeline::named(&runtime, name).map_err(|reason| {
             StartupError::new(StartupDiagnosticKind::Schema, routes_dir, reason)
         })?;
     }
@@ -264,7 +264,7 @@ fn decode_route(path: &Path, input: &str, runtime: &RuntimeConfig) -> Result<Rou
         )
     })?;
     route.validate().map_err(|error| route_error(path, error))?;
-    crate::ws::pipeline::WsPipeline::of(&route, runtime)
+    crate::pipeline::Pipeline::of(&route, runtime)
         .map_err(|reason| StartupError::new(StartupDiagnosticKind::Schema, path, reason))?;
     Ok(route)
 }
@@ -434,6 +434,30 @@ mod tests {
             );
             assert!(matches!(result, Err(error) if error.to_string().contains(expected)));
         }
+    }
+
+    #[test]
+    fn http_route_can_select_a_named_pipeline_but_cannot_use_grpc_builtins() {
+        let input = format!("{}\npipeline: normalize\n", route_yaml("get"));
+        let mut runtime = RuntimeConfig::default();
+        runtime
+            .pipelines
+            .insert("normalize".into(), Default::default());
+        let path = Path::new("get.yaml");
+        assert!(decode_route(path, &input, &runtime).is_ok());
+        runtime
+            .pipelines
+            .get_mut("normalize")
+            .unwrap()
+            .input
+            .push("grpc-frame".into());
+        let error = decode_route(path, &input, &runtime)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("grpc-frame") && error.contains("gRPC"),
+            "{error}"
+        );
     }
 
     fn write(path: &std::path::Path, contents: &str) {

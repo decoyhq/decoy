@@ -24,8 +24,9 @@ most 16 MiB; a longer length ends the plugin as a protocol error. Decoy never se
 ## Values
 
 Values are msgpack. Wire bytes are msgpack `bin`; everything else is the JSON data model (nil, bool,
-integer, float, str, array, map with str keys). What a pipeline hands to Cases must be JSON: a `bin`
-or a non-str map key in it is a plugin error.
+integer, float, str, array, map with str keys). Each transport defines how the final value becomes a Case input or a wire payload.
+See the [HTTP](../guide/routes.md#http-body-pipelines), [gRPC](../guide/grpc.md#pipelines),
+and [WebSocket](../guide/websocket.md#transformers) guides.
 
 ## Messages
 
@@ -57,9 +58,9 @@ Decoy writes `hello` first. The worker answers `ready` with the directions it pr
   concurrently. Decoy sends a connection's next call only after the previous one answered or timed
   out, so a step that keeps state per connection sees its messages in order unless one timed out.
   After a timeout the late call may still run, even after the connection's `close`.
-- `connection` is `{ id, route, session }`, absent for `check`. WebSocket `input` also carries `frame` (`"text"` or `"binary"`).
+- WebSocket calls carry `connection: { id, route, session }`. HTTP, gRPC, and startup checks omit it. WebSocket `input` also carries `frame` (`"text"` or `"binary"`).
 - `input` runs before Case matching. On WebSocket the first step gets the frame payload as `bin`. Each later step gets the previous step's result. The final result must be suitable for the transport's Message envelope.
-- `output` runs on the rendered Behavior payload or a Control API push. Each later step gets the previous step's result. WebSocket sends a final `str` as text or `bin` as binary.
+- `output` runs on the rendered Behavior payload, an HTTP Passthrough response body, or a Control API push. Each later step gets the previous step's result. WebSocket sends a final `str` as text or `bin` as binary.
 - `check` optionally validates a startup literal for the first worker in the output direction when that worker receives the untransformed value. A worker without a `check` callback answers `ok: true`.
 - A `miss` result on `input` records a Case miss for the frame. A `miss` result on `output` is a transform error.
 - Set the plugin's `timeout` in `ms` or `s`. The default is `5s`. Decoy reports a plugin error when the timeout expires and ignores any later `result`.

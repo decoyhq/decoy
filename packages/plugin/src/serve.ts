@@ -56,7 +56,7 @@ export function serve(plugin: Plugin, io: Io = processIo): void {
   const context = (message: WireMessage): Context => {
     const connection = message.connection as Connection | undefined
 
-    // A call without a connection (startup `check`) gets a fresh state that nobody keeps.
+    // Calls without a connection get a fresh state.
     let state = connection && states.get(connection.id)
     if (!state) {
       state = new Map()

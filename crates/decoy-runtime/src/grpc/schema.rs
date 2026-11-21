@@ -69,6 +69,25 @@ pub fn validate_pipeline(steps: &[PipelineStep]) -> Result<(), String> {
 /// string (error); `metadata` for trailers. No HTTP fields. Without a `protobuf` step (`decoded`
 /// false), a success `message` is base64 bytes instead of a mapping.
 pub fn validate_response(response: &ResponseBehavior, decoded: bool) -> Result<(), String> {
+    validate_response_shape(response, Some(decoded))
+}
+
+pub(crate) fn validate_response_for_pipeline(
+    response: &ResponseBehavior,
+    route: &Route,
+) -> Result<(), String> {
+    if route.pipeline_name.is_some() {
+        validate_response_shape(response, None)
+    } else {
+        validate_response(response, route.decodes_protobuf())
+    }
+}
+
+// A named Pipeline defines its own logical response type.
+fn validate_response_shape(
+    response: &ResponseBehavior,
+    decoded: Option<bool>,
+) -> Result<(), String> {
     if response.body.is_some() || !response.headers.is_empty() {
         return Err("gRPC Behaviors use `message` and `metadata`, not `body` and `headers`".into());
     }
@@ -101,7 +120,7 @@ pub fn validate_response(response: &ResponseBehavior, decoded: bool) -> Result<(
             return Err(format!("metadata name `{name}` is reserved by gRPC"));
         }
     }
-    if !decoded {
+    if decoded == Some(false) {
         match (&response.message, status_kind(response)) {
             (Some(Value::String(text)), StatusKind::Ok) if !text.contains("${") => {
                 BASE64
@@ -117,10 +136,12 @@ pub fn validate_response(response: &ResponseBehavior, decoded: bool) -> Result<(
         }
     }
     match (&response.message, status_kind(response)) {
+        (Some(_), StatusKind::Ok | StatusKind::Templated) if decoded.is_none() => {}
         (None, _)
         | (Some(Value::String(_)), StatusKind::Error | StatusKind::Templated)
         | (Some(Value::Object(_)), StatusKind::Ok | StatusKind::Templated) => {}
-        (Some(Value::String(text)), StatusKind::Ok) if !decoded || text.contains("${") => {}
+        (Some(Value::String(text)), StatusKind::Ok)
+            if decoded == Some(false) || text.contains("${") => {}
         (Some(_), StatusKind::Error) => {
             return Err("an error status takes a string `message`".into());
         }
@@ -130,13 +151,16 @@ pub fn validate_response(response: &ResponseBehavior, decoded: bool) -> Result<(
         let path = format!("stream[{index}].payload");
         match &item.message {
             Value::String(text) if text.contains("${") => {}
-            Value::String(text) if !decoded => {
+            _ if decoded.is_none() => {}
+            Value::String(text) if decoded == Some(false) => {
                 BASE64
                     .decode(text)
                     .map_err(|error| format!("`{path}` must be base64 bytes: {error}"))?;
             }
-            Value::Object(_) if decoded => {}
-            _ if decoded => return Err(format!("`{path}` must be a mapping of response fields")),
+            Value::Object(_) if decoded == Some(true) => {}
+            _ if decoded == Some(true) => {
+                return Err(format!("`{path}` must be a mapping of response fields"));
+            }
             _ => return Err(format!("`{path}` is base64 bytes, not a mapping")),
         }
         validate_value(&item.message)?;
@@ -196,7 +220,7 @@ pub fn check_route(route: &Route, pool: &DescriptorPool) -> Result<(), String> {
         ));
     }
 
-    // Literals are protobuf JSON only where a `protobuf` step runs (Q3).
+    // Named Transformers may change the logical shape before matching and before encoding.
     let decoded = route.decodes_protobuf();
 
     for (case_id, case) in &route.cases {
@@ -843,7 +867,7 @@ cases:
         .unwrap_err()
         .to_string();
         assert!(
-            plugin.contains("gRPC Routes take only `grpc-frame` and `protobuf` for now"),
+            plugin.contains("an inline gRPC step list takes only `grpc-frame` and `protobuf`"),
             "{plugin}"
         );
 
@@ -853,7 +877,7 @@ cases:
         .unwrap_err()
         .to_string();
         assert!(
-            http.contains("HTTP Routes do not take a `pipeline` yet"),
+            http.contains("HTTP Routes select a named Pipeline"),
             "{http}"
         );
     }

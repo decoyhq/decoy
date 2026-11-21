@@ -23,8 +23,8 @@ pub struct Route {
     pub route_match: RouteMatch,
     pub cases: BTreeMap<String, Case>,
     pub passthrough: Option<PassthroughTarget>,
-    /// Steps that turn request bytes into the envelope's JSON and back (ADR 0002). `None` uses the
-    /// transport default: `[grpc-frame, protobuf]` for gRPC, none for WebSocket.
+    /// Inline built-in gRPC steps. With neither an inline nor a named Pipeline, gRPC uses
+    /// `[grpc-frame, protobuf]` and other transports use their usual body handling.
     pub pipeline: Option<Vec<PipelineStep>>,
     /// Name of a Pipeline defined in the Decoy config.
     pub pipeline_name: Option<String>,
@@ -123,10 +123,10 @@ impl TryFrom<RawRoute> for Route {
                         .map(|name| match name.as_str() {
                             "grpc-frame" => Ok(PipelineStep::GrpcFrame),
                             "protobuf" => Ok(PipelineStep::Protobuf),
-                            _ if name.contains('/') => {
-                                Err("gRPC Routes take only `grpc-frame` and `protobuf` for now"
-                                    .to_owned())
-                            }
+                            _ if name.contains('/') => Err(
+                                "an inline gRPC step list takes only `grpc-frame` and `protobuf`"
+                                    .to_owned(),
+                            ),
                             _ => Err(format!("unknown pipeline step `{name}`")),
                         })
                         .collect::<Result<_, _>>()
@@ -182,23 +182,29 @@ impl Route {
     /// Checks that the Pipeline has the form required by the Route transport.
     fn validate_pipeline(&self) -> Result<(), String> {
         match (&self.transport, &self.pipeline_name, &self.pipeline) {
-            (Transport::Ws, _, None) | (_, None, None) => Ok(()),
-            (Transport::Ws, _, Some(_)) => {
-                Err("WebSocket Routes select a named Pipeline".to_owned())
+            (_, _, None) => Ok(()),
+            (_, Some(_), Some(_)) => {
+                Err("a Route cannot have both built-in steps and a named Pipeline".to_owned())
             }
             (Transport::Grpc, None, Some(steps)) => crate::grpc::schema::validate_pipeline(steps),
-            (Transport::Grpc, Some(_), _) => {
-                Err("gRPC Routes take built-in Pipeline steps".to_owned())
+            (Transport::Ws, None, Some(_)) => {
+                Err("WebSocket Routes select a named Pipeline".to_owned())
             }
-            (Transport::Http, _, _) => Err("HTTP Routes do not take a `pipeline` yet".to_owned()),
+            (Transport::Http, None, Some(_)) => {
+                Err("HTTP Routes select a named Pipeline".to_owned())
+            }
         }
     }
 
-    /// Whether the envelope's `message` is protobuf JSON (the default) rather than raw bytes.
+    /// Whether the default or inline gRPC Pipeline guarantees a protobuf JSON message.
+    /// Named Pipelines define their own envelope values.
     pub fn decodes_protobuf(&self) -> bool {
-        self.pipeline
-            .as_ref()
-            .is_none_or(|steps| steps.contains(&PipelineStep::Protobuf))
+        self.transport == Transport::Grpc
+            && self.pipeline_name.is_none()
+            && self
+                .pipeline
+                .as_ref()
+                .is_none_or(|steps| steps.contains(&PipelineStep::Protobuf))
     }
 
     pub fn validate(&self) -> Result<(), ValidationError> {
@@ -279,7 +285,7 @@ impl Route {
                         crate::template::validate_response(response)
                     }
                     (Transport::Grpc, Behavior::Response(response)) => {
-                        crate::grpc::schema::validate_response(response, self.decodes_protobuf())
+                        crate::grpc::schema::validate_response_for_pipeline(response, self)
                     }
                     (Transport::Ws, Behavior::Response(response)) => {
                         crate::ws::schema::validate_response(response)

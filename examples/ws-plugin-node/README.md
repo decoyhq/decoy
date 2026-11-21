@@ -2,7 +2,8 @@
 
 Two binary socket formats, each mocked through a plugin step. Laid out like a user's repo: the
 plugins are packages (`acme/`, standing in for npm packages), configured in the user's own plugin
-files (`plugins/`), which `mocks/decoy.yaml` runs.
+files (`plugins/`), which `mocks/decoy.yaml` runs. The HTTP Route `POST /approvals` shares
+the typed-envelope Pipeline with the WebSocket Route at `/ws/approvals`.
 
 ```sh
 pnpm --filter ./examples/ws-plugin-node test:e2e

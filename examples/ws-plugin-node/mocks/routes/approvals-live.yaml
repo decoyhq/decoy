@@ -2,7 +2,7 @@
 id: approvals-live
 transport: ws
 match: { path: /ws/approvals }
-pipeline: approvals-ws
+pipeline: typed-approvals
 cases:
   hello:
     on: connect

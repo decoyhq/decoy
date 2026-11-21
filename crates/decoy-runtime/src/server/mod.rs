@@ -77,7 +77,7 @@ pub async fn serve(
     let (plugins, supervisor) = crate::plugins::start(&config.plugins, &events).await?;
     let startup = load(&config, &plugins)?;
     plugins.set_protos(startup.catalog.runtime().protos.clone());
-    crate::ws::pipeline::check_routes(&startup.catalog)
+    crate::pipeline::check_routes(&startup.catalog)
         .await
         .map_err(crate::plugins::PluginError::Check)?;
     let controller =
@@ -177,6 +177,7 @@ fn load(config: &ServeConfig, plugins: &crate::plugins::Plugins) -> Result<Start
         &config.routes,
         &config.collections,
         RuntimeConfig {
+            max_body_bytes: Some(config.max_body_bytes),
             passthrough: config
                 .passthrough_base_url
                 .clone()

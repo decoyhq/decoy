@@ -97,7 +97,13 @@ protos:
   roots: [../proto, ../proto/v1/keyboards, ../proto/v2/my-entity]
 ```
 
-Define reusable `transformers` and named `pipelines` here. Routes select a Pipeline by name.
+## Transformers and Pipelines
+
+HTTP, gRPC, and WebSocket Routes select a named Pipeline with `pipeline: <name>`.
+Define each Transformer once and reference it in any compatible Pipeline. Both lists
+run from top to bottom. A worker supplies typed values. A command reads stdin and writes
+bytes to stdout. In a named Pipeline, an explicitly configured Transformer with the same
+name as a gRPC built-in takes precedence.
 
 ```yaml
 transformers:
@@ -111,6 +117,9 @@ pipelines:
     input: [gzip, approvals]
     output: [approvals, gzip]
 ```
+
+See the [HTTP](routes.md#http-body-pipelines), [gRPC](grpc.md#pipelines), and
+[WebSocket](websocket.md) guides for the values each transport passes to its steps.
 
 Paths in the file resolve relative to the file; flag paths resolve relative to the working
 directory. Unknown keys in the config, Routes or Collections, unreadable files, invalid Routes or Collections, duplicate Route or Collection ids,
