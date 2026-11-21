@@ -34,7 +34,7 @@ What changes per transport is the `match` address, the **envelope** that Cases a
 and the extras next to the outbound payload.
 
 Every transport works the same way: something comes in, a Case matches it, its Behavior answers.
-Separately, a test can push to a live connection at any moment (Control API `send`, section 9).
+Separately, a test can push to a live connection at any moment (Control API `send`, section 8).
 
 ```
 inbound (request / message / connection opened) → Case → Behavior → outbound
@@ -198,7 +198,7 @@ cases:
 Use `payload` for each `stream` item.
 
 With `status`, the call ends after the list. Without it, the call stays open after the list and
-each Control API `send` (§9) to the Route from the call's Session is another response message,
+each Control API `send` (§8) to the Route from the call's Session is another response message,
 until the client cancels.
 
 **Client streaming:** the Case sees all request messages once the client finishes sending.
@@ -256,7 +256,7 @@ cases:
     on: connect # runs once, when the socket opens
     behaviors:
       ping: { message: ping }
-      silent: { messages: [] } # stay quiet; the test sends ping (section 9)
+      silent: { messages: [] } # stay quiet; the test sends ping (section 8)
       unauthorized:
         message: { type: error, reason: unauthorized }
         close: { code: 4001, reason: unauthorized }
@@ -316,7 +316,7 @@ page sends { type: nope }                            → no Case: nothing sent, 
 page opens /subscribe?service=unknown                → no ws Route: handled as an HTTP GET (501 miss)
 ```
 
-Tests change which Behaviors run, or push messages themselves (section 9):
+Tests change which Behaviors run, or push messages themselves (section 8):
 
 ```ts
 test('works when both services are up', async ({ page }) => {
@@ -376,25 +376,7 @@ test('friend goes offline', async ({ page, decoy }) => {
   or the test calls `send`. An upgrade no `ws` Route matches (or one a repeated query key ties) is handled as an HTTP GET:
   an HTTP Route on that path answers it, otherwise the HTTP miss (501).
 
-## 7. WebSocket Transformers
-
-A WebSocket Route can transform application payloads before matching or after rendering. In the
-approvals example, `gzip` handles the outer compression and the approvals worker handles the
-MessagePack envelope and the protobuf schema selected by its topic. The worker uses Decoy's loaded
-protobuf schemas through the SDK. Cases and Behaviors use the application fields.
-
-Workers are persistent processes. `definePlugin` takes `input` and `output` callbacks. A worker can
-keep per-connection state and use WebSocket frame metadata. See the [worker protocol](plugin-protocol.md)
-for the language-neutral handshake, framing, data types, and host calls. Worker calls can return a
-miss on input or report a transform failure. A worker process exiting stops Decoy.
-
-One-shot commands run with the configured argv in the directory of `decoy.yaml`. The command reads
-stdin to EOF, writes its result to stdout, and uses stderr for logs. A nonzero exit fails the
-transform. Decoy passes bytes to the next command as-is and serializes structured values as
-UTF-8 JSON for stdin. A command's stdout remains bytes when passed to another step. A terminal WebSocket input command emits JSON for the Message envelope. The last output
-worker selects text or binary by its return value. A terminal output command sends a binary frame.
-
-## 8. Server-Sent Events
+## 7. Server-Sent Events
 
 ```yaml
 id: approval-events
@@ -418,7 +400,7 @@ cases:
 - **`payload`:** the SSE `data` field. An optional `output` Pipeline transforms it before text framing. `event`, `id` and `retry` map to the SSE fields of the same name.
 - **Unmatched GET:** the HTTP miss (501).
 
-## 9. Pushing from a test: Control API `send`
+## 8. Pushing from a test: Control API `send`
 
 Long-lived connections need test-driven messages, for example "the client waits for the server's
 first message and the test decides when it comes", or "trigger a UI update now". The other way
@@ -497,7 +479,7 @@ test('page reconnects after the server drops it', async ({ page, decoy }) => {
   requests use `route.continue({ url: <decoy url>, headers })` instead, which streams. That needs
   the same protocol on both sides: http app → http Decoy, https app → https Decoy (TLS, #241) (**Q7**).
 
-## 10. Sessions on long-lived connections
+## 9. Sessions on long-lived connections
 
 - **Non-browser clients** (backend services, gRPC tests): send `x-mock-session` on the upgrade or
   call, as with HTTP.
@@ -534,7 +516,7 @@ s-2 socket: open → hello:ping → "ping" · { id: 1, type: get-status } → st
 `send` is scoped the same way: `(await decoy.connection('friend-socket')).send(...)` in worker 2 reaches only
 the s-2 socket.
 
-## 11. Open questions
+## 10. Open questions
 
 | #   | question                                                          | recommendation                                                                                                                                          |
 | --- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
