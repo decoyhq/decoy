@@ -41,20 +41,20 @@ inbound (request / message / connection opened) → Case → Behavior → outbou
 test → Control API send                                            → outbound (no Case)
 ```
 
-The outbound payload has the same two keys everywhere (HTTP keeps its own word, `body`):
+WebSocket and SSE use the following fields for outgoing payloads:
 
 - `message`: one payload.
-- `messages`: a list of `{ message, delay? }` items, sent in order, each after its own `delay`.
+- `messages`: a list of `{ payload, delay? }` items, sent in order.
+- A Behavior-level `delay` starts the whole Behavior after that wait. An item delay adds a wait before that item. The first item waits for both delays when both are present. See the [WebSocket Routes PRD](websocket-routes-prd.md).
 
 | transport | Route `match`       | unit a Case answers                               | one reply | several replies | extras                                 |
 | --------- | ------------------- | ------------------------------------------------- | --------- | --------------- | -------------------------------------- |
 | `http`    | `method`, `path`    | one request                                       | `body`    | —               | `status`, `headers` / passthrough      |
-| `grpc`    | `service`, `method` | one call (unary), or each message                 | `message` | `messages`      | `status`, `metadata`                   |
+| `grpc`    | `service`, `method` | one call (unary), or each message                 | `message` | `stream`        | `status`, `metadata`                   |
 | `ws`      | `path`, `query`     | each inbound message, or the open (`on: connect`) | `message` | `messages`      | `close`                                |
 | `sse`     | `path` (GET)        | the subscribing request                           | —         | `messages`      | per item `event`, `id`, `retry`; `end` |
 
-`stream`, `send` and `events` were earlier names for `messages` (**Q11**). gRPC Routes still take
-`stream` until that rename lands; the gRPC examples below use the target name.
+WebSocket and SSE use `messages`. gRPC server streaming uses `stream`. Items in both lists use `payload` and can set their own `delay`.
 
 ## 2. Config: protos and pipelines
 
@@ -69,24 +69,26 @@ protos:
   roots: [../proto] # import paths; every .proto under them is compiled at startup
   # descriptorSets: [build/api.binpb]   # alternative for hard-to-compile setups
 
-pipelines: # named, reusable step lists (ADR 0002)
+transformers:
+  approvals:
+    worker: [node, ./plugins/approvals.ts]
+  gzip:
+    input: [gzip, -dc]
+    output: [gzip, -c]
+
+pipelines:
   approvals-ws:
-    - msgpack # bytes ⇄ { type, data }
-    - protobuf:
-        field: data # decode envelope.data …
-        typeFrom: type # … as the proto message named by envelope.type
+    input: [gzip, approvals]
+    output: [approvals, gzip]
 ```
 
-Inbound data runs the steps top to bottom; outbound data runs them in reverse. A Route uses
-`pipeline: approvals-ws` or an inline list. Defaults are per transport: gRPC Routes get
-`[grpc-frame, protobuf]` (message types from `service`/`method`), HTTP keeps the JSON-by-content-type
-body, WebSocket and SSE get none. A Route's explicit `pipeline` **replaces** the default entirely, in
-the order written, e.g. `[msgpack, grpc-frame, protobuf]` for gRPC-framed protobuf inside msgpack
-(**Q2**). Outside a gRPC Route, `protobuf` names its message type (`message:` or `typeFrom:`).
+A Route selects a named Pipeline with `pipeline: approvals-ws`. Each direction runs in the order
+written. A Transformer reference selects the worker callback or command for that direction. A
+direction with no steps uses its transport default.
 
-**What exists today.** Only gRPC Routes run pipelines, with `grpc-frame` and an option-less
-`protobuf` (typed by the method, last step). Other steps and named `pipelines:` are design only;
-`ws` Routes take no `pipeline` yet.
+The gRPC default remains `[grpc-frame, protobuf]`, typed by `service` and `method`. HTTP still uses
+its usual body handling. WebSocket without an input Pipeline parses JSON text when possible, keeps
+other text as a string, and records a miss for binary frames. See the [Transport transformers PRD](transport-transformers-prd.md).
 
 On a single port, one entry handler dispatches per request: `/__decoy__/*` → Control API,
 `content-type: application/grpc*` → gRPC, everything else → HTTP (so REST over HTTP/2 works).
@@ -187,13 +189,13 @@ cases:
   any:
     behaviors:
       progress:
-        messages:
-          - { message: { id: a-1, state: PENDING } }
-          - { message: { id: a-1, state: APPROVED }, delay: 500ms }
+        stream:
+          - { payload: { id: a-1, state: PENDING } }
+          - { payload: { id: a-1, state: APPROVED }, delay: 500ms }
         status: OK # ends the call; `status: ABORTED` ends it with an error
 ```
 
-Today this list is `stream:`; `messages:` is the name after the Q11 rename.
+Use `payload` for each `stream` item.
 
 With `status`, the call ends after the list. Without it, the call stays open after the list and
 each Control API `send` (§9) to the Route from the call's Session is another response message,
@@ -268,8 +270,8 @@ cases:
     behaviors:
       updates:
         messages:
-          - { message: { id: '${ message.id }', type: subscribed, topic: '${ message.topic }' } }
-          - { message: { type: update, topic: '${ message.topic }', count: 1 }, delay: 1s }
+          - { payload: { id: '${ message.id }', type: subscribed, topic: '${ message.topic }' } }
+          - { payload: { type: update, topic: '${ message.topic }', count: 1 }, delay: 1s }
 ```
 
 ```yaml
@@ -352,11 +354,12 @@ test('friend goes offline', async ({ page, decoy }) => {
   has no `match` and its envelope has no `message`; templates still see the upgrade request
   (`${ query.service }`). At most one per Route. Its Behavior is chosen like any other, so
   Collections and `useRoute` turn it on, off or into a rejection (**Q10**).
-- **Outbound:** `message` or `messages`. A `message` that is an object or array is sent as JSON text
-  unless a pipeline encodes it.
-- **Scheduling:** each item goes out `delay` after the one before it; the first counts from the
-  inbound message (or the open). Behaviors don't queue behind each other: if the page sends B while A's Behavior still has a
-  delayed item, B's replies go out on their own timers and interleave with A's (**Q16**).
+- **Outbound:** `message` or `messages`. Without a pipeline, an object or array is sent as JSON text
+  and a string as text. With one, the last step decides the frame kind: it returns a string (text
+  frame) or bytes (binary frame), so one plugin can speak JSON control text next to binary data.
+- **Scheduling:** within one Behavior, items go out in order, each `delay` after the one before it
+  (section 1). Behaviors don't queue behind each other: if the page sends B while A's Behavior still
+  has a delayed item, B's replies go out on their own timers and interleave with A's (**Q16**).
 - **Repeating:** an item with `every: 30s` repeats until the connection closes; the first send is
   one interval in (add `delay` to shift it). Follow-up slice, not the core one (**Q17**).
 - **Closing:** the connection normally stays open for the whole test. `close: { code, reason }`
@@ -373,33 +376,23 @@ test('friend goes offline', async ({ page, decoy }) => {
   or the test calls `send`. An upgrade no `ws` Route matches (or one a repeated query key ties) is handled as an HTTP GET:
   an HTTP Route on that path answers it, otherwise the HTTP miss (501).
 
-## 7. WebSocket + msgpack envelope + protobuf payload
+## 7. Transformers
 
-Frames are msgpack maps `{ type: "approvals.v1.Approval", data: <protobuf bytes> }`. With the
-`approvals-ws` pipeline from section 2, Cases and Behaviors only ever see JSON:
+Transformers process application payloads before Case matching or after Behavior rendering. Each
+transport defines its Pipeline boundaries. In the WebSocket approvals example, `gzip` handles the outer compression and the approvals worker handles the
+MessagePack envelope and the protobuf schema selected by its topic. The worker uses Decoy's loaded
+protobuf schemas through the SDK. Cases and Behaviors use the application fields.
 
-```yaml
-id: approvals-live
-transport: ws
-match: { path: /ws/approvals }
-pipeline: approvals-ws
-cases:
-  watch:
-    match:
-      message: { type: approvals.v1.WatchRequest, data: { ids: [a-1] } }
-    behaviors:
-      approved:
-        messages:
-          - message:
-              type: approvals.v1.Approval
-              data: { id: a-1, state: APPROVED }
-            delay: 200ms
-```
+Workers are persistent processes. `definePlugin` takes `input` and `output` callbacks. A worker can
+keep per-connection state and use WebSocket frame metadata. See the [worker protocol](plugin-protocol.md)
+for the language-neutral handshake, framing, data types, and host calls. Worker calls can return a
+miss on input or report a transform failure. A worker process exiting stops Decoy.
 
-Inbound: msgpack decodes the frame to `{ type, data: <bytes> }`, then protobuf decodes `data` as
-`WatchRequest` (named by `type`). Outbound runs in reverse: protobuf encodes `data` as `Approval`,
-then msgpack encodes the map. If the wire format differs (an extra header, compression,
-encryption), a plugin step slots into the same list (ADR 0002).
+One-shot commands run with the configured argv in the directory of `decoy.yaml`. The command reads
+stdin to EOF, writes its result to stdout, and uses stderr for logs. A nonzero exit fails the
+transform. Decoy passes bytes to the next command as-is and serializes structured values as
+UTF-8 JSON for stdin. A command's stdout remains bytes when passed to another step. On WebSocket, a terminal input command emits JSON for the Message envelope. The last output
+worker selects text or binary by its return value. A terminal output command sends a binary frame.
 
 ## 8. Server-Sent Events
 
@@ -413,8 +406,8 @@ cases:
     behaviors:
       progress:
         messages:
-          - { event: status, message: { id: '${ pathParams.id }', state: PENDING } }
-          - { event: status, message: { state: APPROVED }, id: '2', delay: 1s }
+          - { event: status, payload: { id: '${ pathParams.id }', state: PENDING } }
+          - { event: status, payload: { state: APPROVED }, id: '2', delay: 1s }
         # stream stays open afterwards; `end: true` closes it
       keep-quiet:
         messages: [] # open stream; the test pushes events with `send`
@@ -422,8 +415,7 @@ cases:
 
 - **Envelope:** the request fields `{ path, pathParams, query, headers, cookies }`, so Cases can
   match the subscription like any GET.
-- **`message`:** the SSE `data` field. An object or array is serialized as JSON, a string is sent
-  as-is. `event`, `id` and `retry` map to the SSE fields of the same name.
+- **`payload`:** the SSE `data` field. An optional `output` Pipeline transforms it before text framing. `event`, `id` and `retry` map to the SSE fields of the same name.
 - **Unmatched GET:** the HTTP miss (501).
 
 ## 9. Pushing from a test: Control API `send`
@@ -443,18 +435,22 @@ content-type: application/json
 - **Who receives it:** every live connection of that Route **in that Session**, and nobody else.
   It skips Cases: the message goes straight out, through the Route's pipeline. For SSE, `message`
   is the `data` and the body may add `event`, `id` and `retry`, as in a `messages` item.
-- **Response:** `200 { "delivered": <n> }`. `404` for an unknown Route, `409` for a Route that isn't
+- **Response:** `200 { "delivered": <n> }`, the connections that queued the message. `404` for an unknown Route, `409` for a Route that isn't
   ws/sse/streaming gRPC.
 - **No live connection:** the call waits for one up to `timeout` (milliseconds, default 5000,
   capped at 5 minutes), then delivers. On timeout it fails with `408`: something is wrong with the
   test or app (**Q5**).
 - **Slow reader:** each connection queues up to 64 unread messages. One whose queue is full skips
   the message and doesn't count in `delivered`; with every one full, `send` waits as above.
+- **Transform failure:** the output Pipeline runs once per recipient when the message is sent. If
+  it fails, Decoy reports the error and skips the frame. `delivered` counts the connections that
+  queued the message.
 
 The other Control API verbs on live connections are scoped the same way (Route + Session):
 
-- **`POST /__decoy__/control/close`** `{ route, code?, reason? }` closes the Session's connections on
-  the Route, to test reconnect or error UI. `200 { "closed": <n> }` (**Q18**).
+- **`POST /__decoy__/control/close`** `{ route, code?, reason? }` (follow-up slice) closes the
+  Session's connections on the Route, to test reconnect or error UI. `200 { "closed": <n> }`
+  (**Q18**).
 - **`POST /__decoy__/control/wait`** waits inside Decoy and returns when the condition holds, or
   `408` after `timeout` (default 5000) (**Q19**):
   - `{ route, connected: true }` (built): until the Session has a live connection on the Route that
@@ -470,32 +466,20 @@ The other Control API verbs on live connections are scoped the same way (Route +
 ### Playwright
 
 ```ts
-test('shows the approval as soon as the server pushes it', async ({ page, decoy }) => {
-  await page.goto('/approvals/a-1')
-  const live = await decoy.connection('approvals-live') // waits for the page's socket in this Session
-  await live.send({ type: 'approvals.v1.Approval', data: { id: 'a-1', state: 'APPROVED' } })
-  await expect(page.getByRole('status')).toHaveText('Approved')
+test('shows the update as soon as the server pushes it', async ({ page, decoy }) => {
+  await page.goto('/')
+  const friend = await decoy.connection('friend-socket') // waits for the page's socket in this Session
+  await friend.send({ type: 'update', topic: 'news', count: 5 })
+  await expect(page.getByText('news: 5')).toBeVisible()
 })
 ```
 
 - `decoy.connection(route, { timeout })` resolves once this test's Session has a live connection
-  on the Route. `.send(message)`, `.close({ code, reason })`,
-  `.waitForMessage(match, { timeout })` and `.settled()` call the Control API.
+  on the Route. `.send(message)` and `.close({ code, reason })` call the Control API.
 - **Reconnects:** a client's new socket is a new connection. Its `on: connect` Case runs with the
   Selection active at that moment, and a new `decoy.connection(route)` resolves to it (**Q20**).
 
 ```ts
-test('page answers the server ping and then subscribes', async ({ page, decoy }) => {
-  await decoy.useCollection('manual-start') // on: connect Behaviors send nothing
-  await page.goto('/')
-  const friend = await decoy.connection('friend-socket')
-  await friend.send('ping')
-  const status = await friend.waitForMessage({ type: 'get-status' }) // what the page sent
-  expect(status.id).toBeDefined()
-  await friend.settled() // every scheduled reply has gone out
-  await expect(page.getByText('Friend: online')).toBeVisible()
-})
-
 test('page reconnects after the server drops it', async ({ page, decoy }) => {
   await page.goto('/')
   const friend = await decoy.connection('friend-socket')
@@ -564,10 +548,16 @@ the s-2 socket.
 | Q8  | `__decoy_session` query fallback for browsers outside Playwright? | **Deferred** until non-Playwright runners (Cypress, Selenium) are in scope.                                                                             |
 | Q9  | Glossary: "Request envelope" / "Message envelope".                | **Decided:** adopt both in `CONTEXT.md`; rename `RequestContext` → `RequestEnvelope` (#240).                                                            |
 | Q10 | Server-first WS messages without a test?                          | **Decided:** an `on: connect` Case: no `match`, at most one per Route, Behavior chosen by Selection. WebSocket only for now.                            |
-| Q11 | One name for outbound payloads across transports?                 | **Decided:** `message` (one) and `messages` (list of `{ message, delay }`); HTTP keeps `body`. Replaces `stream` (gRPC), `send` (WS), `events` (SSE).   |
+| Q11 | One name for outbound payloads across transports?                 | **Decided:** WebSocket and SSE use `messages`. gRPC uses `stream`. Items in both lists use `payload` and optional `delay`.                              |
 | Q12 | Two WS sockets on one path, told apart by query?                  | **Decided:** `query` in a `ws` Route's `match`; more `query` keys wins, an equal tie fails at load.                                                     |
-| Q16 | A message arrives while another Behavior has delayed items?       | **Decided:** interleave; each Behavior's items run on their own timers. Order holds only within one Behavior.                                           |
+| Q13 | Which pipeline steps ship with Decoy?                             | **Decided:** gRPC defaults to `grpc-frame` and `protobuf`. Application Transformers use workers or commands.                                            |
+| Q14 | Frames that carry no type marker at all?                          | **Decided:** the plugin's job; Decoy never guesses a proto type.                                                                                        |
+| Q15 | Plain JSON and binary on one socket?                              | **Decided:** the plugin sees `ctx.frame` inbound and picks the kind outbound (string → text, bytes → binary). No `frame` key in config or `send`.       |
+| Q16 | A message arrives while another Behavior has delayed items?       | **Decided:** interleave; each Behavior's items run on their own timers, in order, each `delay` after the previous one.                                  |
 | Q17 | Repeating messages (heartbeat)?                                   | **Decided:** `every` on a `messages` item, until close. Follow-up slice.                                                                                |
 | Q18 | Closing a socket from config or from a test?                      | **Decided:** Behavior `close` after its messages; Control API `close` verb. Both cancel pending items. No HTTP-status rejection of upgrades for now.    |
-| Q19 | Waiting on what the client sent, or until Decoy is done?          | **Decided:** Control API `wait` (`message` match or `settled`), matched inside Decoy; Playwright `waitForMessage` / `settled`. Follow-up slice.         |
+| Q19 | Waiting on what the client sent, or until Decoy is done?          | **Deferred:** `waitForMessage` / `settled` have open questions (consume rules, history bound, `every`). Not in the first slices.                        |
 | Q20 | A client reconnects: same or new connection?                      | **Decided:** new connection; `on: connect` runs again with the current Selection.                                                                       |
+| Q21 | Plugin per-call timeout?                                          | **Decided:** 5s default, `timeout:` per plugin. A timeout is a plugin error, not a MISS.                                                                |
+| Q22 | The plugin process exits?                                         | **Decided:** Decoy logs exit code and stderr tail, then exits non-zero. No restart for now; `restart:` could be added later without breaking anything.  |
+| Q23 | Encode or plugin failure on a live connection?                    | **Decided:** report the transform error and skip the frame. The socket stays open. Control API `send` counts queue acceptance.                          |
