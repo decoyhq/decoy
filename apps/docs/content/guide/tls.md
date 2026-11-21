@@ -39,6 +39,6 @@ Connect to `localhost` (or `127.0.0.1`), the names the generated cert covers.
 
 ## Example
 
-[`examples/tls-bff-node`](../../examples/tls-bff-node) is a Node BFF that calls a payments API over
+[`examples/tls-bff-node`](../../../../examples/tls-bff-node) is a Node BFF that calls a payments API over
 https, a legacy CRM over plain http, and an Inventory gRPC service over TLS, all mocked by one Decoy,
 with one Session switching all three.

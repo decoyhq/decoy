@@ -1,4 +1,5 @@
 packages:
+  - 'apps/*'
   - 'packages/*'
   - 'examples/*'
   # Stand-in third-party plugin packages the ws-plugin-node example depends on.

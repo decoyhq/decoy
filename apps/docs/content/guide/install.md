@@ -25,16 +25,16 @@ Upgrade in place with `decoy upgrade`. It re-runs the Latest install script into
 running binary, unless the running version is already Latest or a newer pre-release. To move to
 another version, run that release's install script with `DECOY_INSTALL_DIR` set instead. npm installs refuse and point you to npm instead.
 
-## npm (JS/TS projects)
+## Install in a JavaScript or TypeScript project
+
+Add `@decoyhq/cli` as a development dependency in your project directory.
 
 ```sh
 npm i -D @decoyhq/cli
-npx decoy --version
 ```
 
 `@decoyhq/cli` installs only the binary for your platform (linux x64/arm64, macOS x64/arm64, Windows
-x64) through an optional dependency. No install scripts run. Pre-releases are on the `next` tag:
-`npm i -D @decoyhq/cli@next`.
+x64) through an optional dependency. No install scripts run. For a pre-release, use `@decoyhq/cli@next` as the package name.
 
 ## GitHub Releases
 
@@ -47,7 +47,6 @@ than musl's allocator but holds more memory (about 30 MB idle).
 
 ```sh
 cargo build --release -p decoy
-./target/release/decoy --version
 ```
 
 To make `@decoyhq/cli` run a source build, set `DECOY_BINARY_PATH=/path/to/decoy`.

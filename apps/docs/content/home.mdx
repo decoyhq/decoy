@@ -1,0 +1,36 @@
+---
+pageType: custom
+title: Decoy
+description: Mock HTTP, gRPC, and WebSocket services locally. Switch responses while your app is running.
+---
+
+import { RequestDemo } from '../theme/RequestDemo'
+
+<main className="decoy-home">
+<section className="home-hero">
+<div className="hero-copy">
+
+# Mock APIs on your machine.
+
+Serve HTTP, gRPC, and WebSocket mocks with Decoy. Define responses in YAML, then switch between them while your app is running.
+
+<div className="home-actions">
+<a className="start-link" href="./docs/quickstart/">Quick start <span aria-hidden="true">→</span></a>
+<a href="./docs/">Read the docs</a>
+</div>
+</div>
+
+<RequestDemo />
+
+</section>
+<section className="home-guides">
+
+## Explore the manual
+
+<div className="guide-links">
+<a href="./docs/routes/"><strong>Write a mock <span aria-hidden="true">↗</span></strong><span>Match a request by path, headers, or body and choose what Decoy returns.</span></a>
+<a href="./docs/sessions-and-control/"><strong>Control a test <span aria-hidden="true">↗</span></strong><span>Give each test its own Session and switch Collections from your runner.</span></a>
+<a href="./docs/config/"><strong>Configure Decoy <span aria-hidden="true">↗</span></strong><span>Look up CLI flags, YAML settings, listener addresses, and defaults.</span></a>
+</div>
+</section>
+</main>

@@ -1,6 +1,6 @@
 # Decoy documentation
 
-Start with the [user guide](guide/README.md). The [quickstart](guide/quickstart.md) walks through
+Start with the [user guide](../apps/docs/content/index.md). The [quickstart](../apps/docs/content/quickstart.mdx) walks through
 serving an HTTP request and switching its response. For a complete project, browse the
 [runnable examples](../examples/README.md).
 
@@ -10,7 +10,7 @@ serving an HTTP request and switching its response. For a complete project, brow
 - [Glossary](../CONTEXT.md) defines the terms used in code, issues, and documentation.
 - [Architectural decisions](adr/README.md) record choices the project has accepted and why.
 - [Documentation guidelines](../CONTRIBUTING.md#where-documentation-goes) explain where to publish a spec and when to write an ADR. Use the [copyable templates](maintainers/document-templates.md) when writing or revising a document.
-- [Plugin wire protocol](reference/plugin-protocol.md) specifies the worker messages for SDK authors.
+- [Transformer worker protocol](reference/plugin-protocol.md) specifies the worker messages for SDK authors.
 
 ## For maintainers
 

@@ -19,4 +19,4 @@ The test starts Decoy with `cargo run -p decoy -- serve --config mocks/decoy.yam
 | useRoute                         | One Session overrides `approvals-get:pending` to `approved`.                                                                                 |
 | unmapped call                    | A method no Route serves fails closed with `UNIMPLEMENTED` and `x-mock-miss: true`.                                                          |
 
-See the [gRPC guide](../../docs/guide/grpc.md).
+See the [gRPC guide](../../apps/docs/content/guide/grpc.md).

@@ -2,7 +2,7 @@
 
 The normative dictionary for Decoy. When a term below is used in code, docs, or discussion, it
 means _exactly_ this — one line per term, plus the synonyms to avoid. The prose explanation of how
-the terms fit together lives in the [user guide](docs/guide/README.md). Name = `decoy`; packages publish scoped as
+the terms fit together lives in the [user guide](apps/docs/content/index.md). Name = `decoy`; packages publish scoped as
 `@decoyhq/*`, CLI bin `decoy`.
 
 ## Language
@@ -97,7 +97,7 @@ _Avoid_: "context", "request object".
 **Message envelope**:
 The request envelope's counterpart for one inbound message on a long-lived connection (WebSocket,
 SSE subscription, streaming gRPC): the decoded message plus the connection's path, query, headers,
-and cookies. See the [WebSocket guide](docs/guide/websocket.md#behaviors).
+and cookies. See the [WebSocket guide](apps/docs/content/guide/websocket.md#behaviors).
 _Avoid_: "context", "frame" (a frame is the wire unit before the pipeline decodes it).
 
 **Template context**:
@@ -106,8 +106,7 @@ identity, and bindings captured while matching the Route and Case.
 _Avoid_: exposing arbitrary internals such as logs, route definitions, environment, or server state.
 
 **Standard function**:
-A built-in portable function available to matching/template expressions. **Plugins** may add
-named functions later.
+A built-in portable function available to matching/template expressions.
 _Avoid_: "helper", "custom JS function" for portable semantics.
 
 ### Invariants
@@ -139,7 +138,7 @@ _Avoid_: "admin", "manager".
 **Control API**:
 The cross-process mirror of the **Controller** plus catalog/read-model inspection, and `wait` (for a
 live **Connection**) and `send` (to it). Resolution, recording, other Connection controls (close,
-wait for a message), and plugin capabilities are roadmap/experimental until intentionally frozen.
+wait for a message), and worker capabilities are roadmap/experimental until intentionally frozen.
 _Avoid_: letting UI-only endpoints become the public adapter contract accidentally.
 
 **Router**:
@@ -162,12 +161,8 @@ An ordered series of **Pipeline steps** between transport payloads and the value
 _Avoid_: implicit step ordering.
 
 **Transformer**:
-A named definition for one reusable input or output transformation. A Transformer uses a persistent worker or commands for its supported directions.
+A named, reusable transformation that takes one value and produces another in a Pipeline. It can change the contents, the format, or both. A Transformer uses a persistent worker or commands for its supported directions.
 
 **Pipeline step**:
 One use of a Transformer in a Pipeline direction, or one of the built-in gRPC transforms.
 _Avoid_: "codec stage", "middleware".
-
-**Plugin**:
-A persistent external Transformer worker. The worker formats data and can be written with the SDK or any implementation of the worker protocol.
-_Avoid_: "hook", "extension" for this concept.

@@ -13,20 +13,24 @@ port: 8080
 decoy serve --config mocks/decoy.yaml
 ```
 
-| file key             | flag                     | default                                           |
-| -------------------- | ------------------------ | ------------------------------------------------- |
-| `routes`             | `--routes <dir>`         | required                                          |
-| `collections`        | `--collections <file>`   | required                                          |
-| `port`               | `--port <port>`          | `8080`                                            |
-| `host`               | `--host <host>`          | `localhost` (`127.0.0.1` and `::1`)               |
-| `listeners`          | none                     | none                                              |
-| `collection`         | `--collection <id>`      | first Collection in the file                      |
-| `passthroughBaseUrl` | `--passthrough-base-url` | none (see [Passthrough](routes.md))               |
-| `protos`             | none                     | none                                              |
-| `tls`                | none                     | none (plain http)                                 |
-| `maxBodyBytes`       | none                     | `33554432` (32 MiB)                               |
-| `transformers`       | none                     | none (see [WebSocket](websocket.md#transformers)) |
-| `pipelines`          | none                     | none                                              |
+## Settings and defaults
+
+| file key                                      | flag                     | default                             |
+| --------------------------------------------- | ------------------------ | ----------------------------------- |
+| `routes`                                      | `--routes <dir>`         | required                            |
+| `collections`                                 | `--collections <file>`   | required                            |
+| `port`                                        | `--port <port>`          | `8080`                              |
+| `host`                                        | `--host <host>`          | `localhost` (`127.0.0.1` and `::1`) |
+| `listeners`                                   | none                     | none                                |
+| `collection`                                  | `--collection <id>`      | first Collection in the file        |
+| `passthroughBaseUrl`                          | `--passthrough-base-url` | none (see [Passthrough](routes.md)) |
+| `protos`                                      | none                     | none                                |
+| `tls`                                         | none                     | none (plain http)                   |
+| `maxBodyBytes`                                | none                     | `33554432` (32 MiB)                 |
+| [`transformers`](#transformers-and-pipelines) | none                     | none                                |
+| [`pipelines`](#transformers-and-pipelines)    | none                     | none                                |
+
+## Ports and listeners
 
 `listeners` opens extra named listeners. Each serves the same Routes, Sessions, and Control API as
 `port`, so a gRPC client and an HTTP client can use different ports but share one Session:
@@ -43,6 +47,8 @@ clients work whichever one `localhost` resolves to for them. An IP binds just th
 (`0.0.0.0` for every interface, e.g. inside Docker); another name binds every address it resolves
 to. A listener can set its own: `{ port: 9000, host: 0.0.0.0 }`. `--host` replaces the top-level
 `host` and the main listener's. Ports must be unique across listeners, whatever their host.
+
+## TLS certificates
 
 `tls` serves every listener over HTTPS with your cert and key (PEM). ALPN picks HTTP/2 or HTTP/1.1
 per connection, so gRPC over TLS works on the same port. A listener given as `{ port, tls: false }`
@@ -71,6 +77,8 @@ reused, so trust it once (`NODE_EXTRA_CA_CERTS=mocks/.decoy/ca.pem`, grpc-js
 tls: auto
 ```
 
+## Protobuf schemas
+
 `protos` loads protobuf schemas for gRPC:
 
 ```yaml
@@ -97,26 +105,17 @@ protos:
   roots: [../proto, ../proto/v1/keyboards, ../proto/v2/my-entity]
 ```
 
-Define reusable `transformers` and named `pipelines` here. Routes select a Pipeline by name.
-
-```yaml
-transformers:
-  approvals:
-    worker: [node, ../plugins/approvals.ts]
-  gzip:
-    input: [gzip, -dc]
-    output: [gzip, -c]
-pipelines:
-  approvals-feed:
-    input: [gzip, approvals]
-    output: [approvals, gzip]
-```
+## Startup validation
 
 Paths in the file resolve relative to the file; flag paths resolve relative to the working
 directory. Unknown keys in the config, Routes or Collections, unreadable files, invalid Routes or Collections, duplicate Route or Collection ids,
 a port used twice or already taken, missing proto roots, a proto `files` pattern that matches nothing, protos that don't compile, unreadable or mismatched TLS cert/key, an unreadable `.decoy/` CA, an unknown
-startup Collection, a plugin that doesn't start, an unknown Transformer or unsupported Pipeline direction, and an outbound
-literal a plugin's `check` rejects all fail at startup with a diagnostic.
+startup Collection, a worker that doesn't start, an unknown Transformer or unsupported Pipeline direction, and an outbound
+literal a worker's `check` rejects all fail at startup with a diagnostic.
+
+## Transformers and Pipelines
+
+Use the [Pipeline configuration guide](transformer-pipelines.md) to define reusable steps in `decoy.yaml` and select them on a Route.
 
 ## Reloading
 

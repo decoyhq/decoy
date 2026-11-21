@@ -1,8 +1,8 @@
-# @decoyhq/plugin
+# Transformer SDK for TypeScript
 
-Write Decoy plugin steps in TypeScript. A plugin turns an app's own wire format (msgpack envelopes,
-binary headers in front of protobuf, compression) into the JSON that Cases match and Behaviors
-render, and back. See the [WebSocket Transformer guide](https://github.com/decoyhq/decoy/blob/main/docs/guide/websocket.md#transformers) for configuration.
+Use the SDK to write a Transformer that takes a value and returns the value the next Pipeline step needs. A worker can reshape an object, turn bytes into text, or produce bytes in a format your application understands.
+
+The example below handles two WebSocket payload formats: JSON text and binary MessagePack envelopes containing protobuf data. See the [Pipeline guide](../../apps/docs/content/guide/transformer-pipelines.md) for configuration.
 
 ```ts
 // plugins/envelope.ts
@@ -40,16 +40,16 @@ pipelines:
     output: [env]
 ```
 
-- `definePlugin` returns the plugin, and serves it over stdin/stdout when Decoy started the process
+- `definePlugin` returns the worker definition, and serves it over stdin/stdout when Decoy started the process
   (`DECOY_PLUGIN=1`). A unit test can import the file and call `input` directly.
 - A package can export a factory that takes typed options and returns `definePlugin(...)`; users
-  call it from their own plugin file.
+  call it from their own worker file.
 - `miss(reason)` in `input` skips the frame: Decoy logs the reason and keeps the socket open. Any
-  other throw is a plugin error, shown with the Transformer, Behavior and value that failed.
+  other throw is a transformation error, shown with the Transformer, Behavior and value that failed.
 - `ctx.frame` is `'text'` or `'binary'` on WebSocket input; `ctx.connection` is `{ id, route, session }`;
   `ctx.state` is a `Map` kept per connection.
 - `ctx.protobuf.has/decode/encode` use the protos Decoy already compiled.
 - `console.log` goes to stderr while serving, since stdout carries the protocol. Decoy prints each
-  stderr line with the plugin's name.
+  stderr line with the worker's name.
 
 To implement a worker in another language, see the [wire protocol](https://github.com/decoyhq/decoy/blob/main/docs/reference/plugin-protocol.md).

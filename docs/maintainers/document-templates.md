@@ -47,7 +47,7 @@ Use `README.md`. See [Decoy](../../README.md).
 
 ## Documentation index
 
-Use `README.md` in the directory it indexes. See [Guide index](../guide/README.md).
+Use `README.md` in the directory it indexes. See [Guide index](../../apps/docs/content/index.md).
 
 ```markdown
 # <Subject>
@@ -65,7 +65,7 @@ Start with <first task and link>.
 
 ## Tutorial or quickstart
 
-Use `docs/guide/`. See [First mock](../guide/quickstart.md).
+Use `apps/docs/content/`. See [First mock](../../apps/docs/content/quickstart.mdx).
 
 ```markdown
 # <Outcome to achieve>
@@ -88,7 +88,7 @@ In <working directory>, create <filename> with <contents>.
 
 ## Task or integration guide
 
-Use `docs/guide/`. See [Playwright](../guide/playwright.md).
+Use `apps/docs/content/`. See [Playwright](../../apps/docs/content/guide/playwright.md).
 
 ```markdown
 # <Task or integration>
@@ -111,7 +111,7 @@ Use this when <reader goal>. You need <prerequisites>.
 
 ## Product reference
 
-Use `docs/guide/`. See [Configuration](../guide/config.md).
+Use `apps/docs/content/`. See [Configuration](../../apps/docs/content/guide/config.md).
 
 ```markdown
 # <Command, schema, or API>
@@ -133,7 +133,7 @@ Use `docs/guide/`. See [Configuration](../guide/config.md).
 
 ## Implementation contract
 
-Use `docs/reference/`. See [Plugin protocol](../reference/plugin-protocol.md).
+Use `docs/reference/`. See [Transformer worker protocol](../reference/plugin-protocol.md).
 
 ```markdown
 # <Protocol name and version>
@@ -159,7 +159,7 @@ Use `docs/reference/`. See [Plugin protocol](../reference/plugin-protocol.md).
 
 ## Package README
 
-Use `packages/<name>/README.md`. See [Plugin SDK](../../packages/plugin/README.md).
+Use `packages/<name>/README.md`. See [Transformer SDK](../../packages/plugin/README.md).
 
 ```markdown
 # <Package name>

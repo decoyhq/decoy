@@ -193,4 +193,4 @@ Without `protobuf`, the Route sees and answers raw bytes: `message` is a base64 
 pipeline: [grpc-frame] # message is base64 bytes, e.g. `message: CgNhLTE=`
 ```
 
-See [`examples/grpc-node`](../../examples/grpc-node) for a runnable Node client.
+See [`examples/grpc-node`](../../../../examples/grpc-node) for a runnable Node client.

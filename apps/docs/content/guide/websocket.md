@@ -107,7 +107,7 @@ dropped.
 A socket keeps the Session it opened with (`x-mock-session` on the upgrade). `useCollection` and
 `useRoute` apply to its next message. An `on: connect` change applies to the Session's next socket.
 Browsers can't set headers on `new WebSocket()`; under Playwright, the fixture's bridge adds it (see
-[Playwright WebSockets](playwright.md#websockets)).
+[Playwright WebSockets](playwright/websockets.md)).
 
 ## Pushing from a test
 
@@ -121,28 +121,20 @@ curl -X POST localhost:8080/__decoy__/control/send \
   -d '{"route":"friend-socket","message":"ping"}'
 ```
 
-The [ws-node example](../../examples/ws-node) runs all of the above against a real client.
+The [ws-node example](../../../../examples/ws-node) runs all of the above against a real client.
 
 ## Transformers
 
-Set `pipeline: <name>` on a Route to select its Pipeline from [decoy.yaml](config.md). Decoy runs
+Set `pipeline: <name>` on a WebSocket Route to select a [named Pipeline from your configuration](transformer-pipelines.md). Decoy runs
 `input` before matching Cases and `output` after rendering a Behavior or when sending a Control API
 message. Both directions run in the order listed.
 
-Use a [worker](../../packages/plugin) for per-connection state or protobuf host calls. Use a
-one-shot command for an executable such as `gzip`. A command reads stdin to EOF and returns bytes
-on stdout. Terminal input commands return JSON for Case matching. On output, worker strings become
-text frames and bytes become binary frames.
+On input, a command used as the last step must return JSON for Case matching. On output,
+worker strings become text frames and bytes become binary frames.
 
 The Control API `send` counts messages queued for delivery. The output Pipeline runs once per
 recipient connection. If it fails, Decoy logs the Transformer and skips that frame.
 
-Decoy validates referenced Transformers and directions when loading Routes. A worker can also
-check the authored output literal at startup when it is the first output step. Restart Decoy to
-apply worker config changes.
-
-Other languages can implement the [worker protocol](../reference/plugin-protocol.md).
-
-A one-shot Transformer command has 5 seconds to finish. Decoy fails the transform if stdout exceeds 16 MiB or stderr exceeds 64 KiB. During a transform, each socket can buffer up to 64 subsequent data frames totaling at most 16 MiB. Across all sockets, the process budgets 64 MiB for read-ahead, charged in whole KiB with a minimum of 1 KiB per frame. Exceeding a read-ahead limit closes the socket requesting more space. Up to eight one-shot commands can run across all connections. When all slots are busy, the next command fails the transform before spawning.
+During a transform, each socket can buffer up to 64 subsequent data frames totaling at most 16 MiB. Across all sockets, the process budgets 64 MiB for read-ahead, charged in whole KiB with a minimum of 1 KiB per frame. Exceeding a read-ahead limit closes the socket requesting more space.
 
 Open sockets keep the Pipeline selected at upgrade. Protobuf host calls use the currently loaded descriptors, including after a reload. WebSocket request events capture the rendered Behavior reply before output transforms and delays. A captured reply can therefore differ from the frames that reach the client.
