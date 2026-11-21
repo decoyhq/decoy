@@ -1,7 +1,8 @@
 # Plugin wire protocol, version 1
 
-This spec defines the worker protocol for the Decoy runtime and the `@decoyhq/plugin` SDK. The
-[Transport Transformers PRD](transport-transformers-prd.md) describes how to configure workers.
+Status: **spec** for the plugin host in `decoy-runtime` and the `@decoyhq/plugin` SDK. What plugins
+are for and how users configure them: `docs/design/transports.md` §7 and ADR 0004. This note is for
+someone writing an SDK in another language.
 
 ## Process
 
