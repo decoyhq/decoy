@@ -506,6 +506,31 @@ cases:
     }
 
     #[tokio::test]
+    async fn numeric_status_template_checks_the_rendered_code_on_each_call() {
+        let catalog = catalog(
+            "  any:\n    behaviors:\n      pick: { status: '${ to_number(message.id) }' }\n",
+            "get:any:pick",
+        );
+        for (id, status) in [("5", 5), ("17", INTERNAL), ("unknown", INTERNAL)] {
+            let response = catalog
+                .execute_grpc(
+                    "default",
+                    &[],
+                    request(&catalog, json!({ "id": id })),
+                    false,
+                )
+                .await
+                .response;
+            assert_eq!(response.status, status);
+            if status == INTERNAL {
+                assert!(response.status_message.contains("not a gRPC status name"));
+            } else {
+                assert!(response.status_message.is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn undecodable_requests_are_invalid_arguments() {
         let catalog = catalog(
             "  any:\n    behaviors:\n      ok: { message: {} }\n",

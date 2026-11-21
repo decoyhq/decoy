@@ -108,7 +108,7 @@ async fn push(pool: &DescriptorPool, frame: Vec<u8>) {
         };
         streams.push(stream);
     }
-    bench("push 64 KiB to 16 gRPC streams", 512, async || {
+    let mut deliver = async |verify_payload: bool| {
         let count = connections
             .send(
                 "default",
@@ -124,8 +124,16 @@ async fn push(pool: &DescriptorPool, frame: Vec<u8>) {
             let Some(StreamPart::Message(bytes)) = stream.next().await else {
                 panic!("expected message")
             };
-            assert_eq!(black_box(bytes).len(), frame.len());
+            if verify_payload {
+                assert_eq!(bytes, frame);
+            } else {
+                assert_eq!(black_box(bytes).len(), frame.len());
+            }
         }
+    };
+    deliver(true).await;
+    bench("push 64 KiB to 16 gRPC streams", 512, async || {
+        deliver(false).await;
     })
     .await;
 }
