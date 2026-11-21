@@ -39,6 +39,7 @@ time = "0.3"
 hyper-util = { version = "0.1", features = ["server-auto", "server-graceful", "service", "tokio"] }
 notify = "8"
 rmpv = "1"
+serde-saphyr = { version = "2", default-features = false, features = ["deserialize"] }
 
 [dev-dependencies]
 pretty_assertions = "1"

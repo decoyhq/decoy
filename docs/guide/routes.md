@@ -34,6 +34,25 @@ cases:
 Decoy loads every `.yaml`/`.yml` file under the routes directory, recursively, so you can group
 files in folders. Duplicate Route ids fail startup.
 
+## Reuse a mapping with YAML anchors
+
+In a Route file, a Collections file, or `decoy.yaml`, mark a mapping with `&name` and
+merge it elsewhere in the same file with `<<: *name`. Here both Behaviors return the same body:
+
+```yaml
+behaviors:
+  ok: &ok
+    status: 200
+    body: { saved: true }
+  created:
+    <<: *ok
+    status: 201
+```
+
+Keys written directly in the mapping take precedence, wherever they appear. To merge several
+mappings, use `<<: [*first, *second]`. When both supply the same key, the first wins. Merging
+is shallow, so setting `body` on `created` replaces the whole inherited body.
+
 ## Case match
 
 A Case with no `match` matches every request to its Route. Otherwise `match` is a mapping of
