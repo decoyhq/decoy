@@ -2,7 +2,7 @@
 
 Write Decoy plugin steps in TypeScript. A plugin turns an app's own wire format (msgpack envelopes,
 binary headers in front of protobuf, compression) into the JSON that Cases match and Behaviors
-render, and back. Background: `docs/design/transports.md` §7.
+render, and back. See the [Transport Transformers PRD](../../docs/design/transport-transformers-prd.md).
 
 ```ts
 // plugins/envelope.ts
