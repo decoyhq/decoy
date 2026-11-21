@@ -31,19 +31,19 @@ or a non-str map key in it is a plugin error.
 
 Decoy → plugin:
 
-| kind         | fields                                                                             |
-| ------------ | ---------------------------------------------------------------------------------- |
-| `hello`      | `protocol: 1`, `decoy: "<version>"`                                                |
+| kind         | fields                                                                    |
+| ------------ | ------------------------------------------------------------------------- |
+| `hello`      | `protocol: 1`, `decoy: "<version>"`                                       |
 | `call`       | `id`, `op` (`input`, `output`, `check`), `input`, `frame?`, `connection?` |
-| `hostResult` | `id` (of the plugin's `host`), `ok: true, value` or `ok: false, error`             |
-| `close`      | `connection` (an id): drop the state kept for it                                   |
-| `shutdown`   | (none): exit now                                                                   |
+| `hostResult` | `id` (of the plugin's `host`), `ok: true, value` or `ok: false, error`    |
+| `close`      | `connection` (an id): drop the state kept for it                          |
+| `shutdown`   | (none): exit now                                                          |
 
 Plugin → Decoy:
 
 | kind     | fields                                                                                       |
 | -------- | -------------------------------------------------------------------------------------------- |
-| `ready`  | `protocol: 1`, `name`, `version`, `directions: [<input or output>]`                         |
+| `ready`  | `protocol: 1`, `name`, `version`, `directions: [<input or output>]`                          |
 | `result` | `id` (of the `call`); `ok: true, value`, or `ok: false, miss`, or `ok: false, error, stack?` |
 | `host`   | `id` (the plugin's own counter), `op`, `args: []`                                            |
 

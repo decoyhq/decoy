@@ -38,7 +38,12 @@ export function serve(plugin: Plugin, io: Io = processIo): void {
     new Promise<unknown>((resolve, reject) => {
       const id = nextHostId++
       hostCalls.set(id, { resolve, reject })
-      send({ kind: 'host', id, op, args })
+      try {
+        send({ kind: 'host', id, op, args })
+      } catch (error) {
+        hostCalls.delete(id)
+        reject(error instanceof Error ? error : new Error(String(error)))
+      }
     })
 
   // Decoy's compiled protos, reached through host calls.

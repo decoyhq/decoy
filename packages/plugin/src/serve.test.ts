@@ -3,7 +3,7 @@ import { PassThrough } from 'node:stream'
 import { describe, expect, test } from '@rstest/core'
 import { definePlugin, miss, type Plugin } from './index'
 import { serve } from './serve'
-import { read, type WireMessage, write } from './wire'
+import { MAX_MESSAGE, read, type WireMessage, write } from './wire'
 
 /** Serves `plugin` on in-memory pipes; `next()` resolves with its next message to Decoy. */
 function start(plugin: Plugin) {
@@ -186,6 +186,25 @@ describe('serve', () => {
       ok: false,
       error: 'users.v1.User not found',
     })
+  })
+
+  test('preserves JSON fields named __proto__', async () => {
+    const plugin = start(envelope)
+    const value: unknown = JSON.parse('{"__proto__":{"field":1},"_keep":2}')
+    plugin.send({ kind: 'call', id: 1, op: 'input', input: value })
+    expect(await plugin.next()).toEqual({ kind: 'result', id: 1, ok: true, value })
+  })
+
+  test('reports a result over the protocol limit and stays ready', async () => {
+    const plugin = start({
+      name: 'large',
+      version: '1',
+      output: (value) => (value === 'large' ? new Uint8Array(MAX_MESSAGE) : value),
+    })
+    plugin.send({ kind: 'call', id: 1, op: 'output', input: 'large' })
+    expect(await plugin.next()).toMatchObject({ id: 1, ok: false })
+    plugin.send({ kind: 'call', id: 2, op: 'output', input: 'small' })
+    expect(await plugin.next()).toEqual({ kind: 'result', id: 2, ok: true, value: 'small' })
   })
 
   test('exits on shutdown, and when Decoy closes its stdin', () => {

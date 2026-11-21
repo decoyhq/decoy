@@ -10,6 +10,9 @@ export const MAX_MESSAGE = 16 * 1024 * 1024
 /** Writes `message` as a 4-byte big-endian length, then its msgpack bytes. */
 export function write(out: Writable, message: WireMessage): void {
   const body = encode(message)
+  if (body.length > MAX_MESSAGE) {
+    throw new Error(`message of ${body.length} bytes is over the ${MAX_MESSAGE} byte limit`)
+  }
 
   const head = Buffer.alloc(4)
   head.writeUInt32BE(body.length)
@@ -42,13 +45,61 @@ export function read(
       const body = buffer.subarray(4, 4 + length)
       buffer = buffer.subarray(4 + length)
 
-      const message = decode(body)
-      if (typeof message !== 'object' || message === null || !('kind' in message)) {
+      let message: unknown
+      try {
+        message = decodeMessage(body)
+      } catch (error) {
+        onError(error instanceof Error ? error : new Error(String(error)))
+        return
+      }
+      if (!isWireMessage(message)) {
         onError(new Error('message is not a map with a `kind`'))
         return
       }
 
-      onMessage(message as WireMessage)
+      onMessage(message)
     }
   })
+}
+
+/** Сохраняет допустимые ключи JSON, не изменяя прототипы объектов. */
+function decodeMessage(body: Uint8Array): unknown {
+  try {
+    return decode(body)
+  } catch (error) {
+    if (!(error instanceof Error) || error.message !== 'The key __proto__ is not allowed') {
+      throw error
+    }
+  }
+
+  const utf8 = new TextDecoder('utf-8', { ignoreBOM: true })
+  const value = decode(body, {
+    keyDecoder: {
+      canBeCached: () => true,
+      decode: (bytes, offset, length) => '_' + utf8.decode(bytes.subarray(offset, offset + length)),
+    },
+  })
+  return restoreKeys(value)
+}
+
+/** Снимает префикс с ключей и создаёт собственные свойства даже для `__proto__`. */
+function restoreKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(restoreKeys)
+  if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) {
+    return value
+  }
+
+  return Object.fromEntries(
+    Object.entries(value).map(([key, entry]) => [
+      key.startsWith('_') ? key.slice(1) : key,
+      restoreKeys(entry),
+    ]),
+  )
+}
+
+/** Проверяет обязательное поле сообщения протокола. */
+function isWireMessage(value: unknown): value is WireMessage {
+  return (
+    typeof value === 'object' && value !== null && 'kind' in value && typeof value.kind === 'string'
+  )
 }
