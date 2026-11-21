@@ -23,7 +23,7 @@ use crate::connections::{Connections, Registration};
 use crate::engine::Controller;
 use crate::plugins::{CallConnection, Frame};
 use crate::schema::WsClose;
-use crate::ws::pipeline::{Encoded, WsPipeline, preview};
+use crate::ws::pipeline::{Codec, Encoded, WsPipeline};
 use crate::ws::{Inbound, WsConnection, WsReply};
 
 /// Frames a connection's replies may have waiting for the socket.
@@ -50,6 +50,7 @@ pub(super) async fn accept(
     connections: Connections,
     session: String,
     connection: WsConnection,
+    catalog: &crate::engine::Catalog,
     request: Request<Body>,
 ) -> Response<Body> {
     let (mut parts, _) = request.into_parts();
@@ -59,7 +60,6 @@ pub(super) async fn accept(
     };
     // Fixed for the connection's life, like its Route; a reload applies to new sockets.
     let pipeline = {
-        let catalog = controller.read().await.catalog();
         catalog.route(&connection.route).and_then(|route| {
             WsPipeline::of(route, catalog.runtime()).expect("Route Pipeline is validated at load")
         })
@@ -116,87 +116,6 @@ enum Step {
 type Sink = SplitSink<WebSocket, Message>;
 type Stream = SplitStream<WebSocket>;
 
-/// Turns frames into messages and back: as text, or through the Route's Pipeline.
-struct Codec {
-    pipeline: Option<WsPipeline>,
-    call: CallConnection,
-}
-
-impl Codec {
-    /// The inbound message a frame stands for; `None` after a plugin error (logged).
-    async fn decode<'a>(&self, frame: Frame, payload: &'a [u8]) -> Option<Inbound<'a>> {
-        let Some(pipeline) = self
-            .pipeline
-            .as_ref()
-            .filter(|pipeline| pipeline.has_input())
-        else {
-            return Some(match frame {
-                Frame::Binary => Inbound::Binary(payload),
-                Frame::Text => {
-                    Inbound::Text(std::str::from_utf8(payload).expect("text frames are UTF-8"))
-                }
-            });
-        };
-        match pipeline.input(frame, payload, &self.call).await {
-            Ok(message) => Some(Inbound::Decoded(message)),
-            Err(error @ crate::ws::pipeline::PipelineError::Miss { .. }) => Some(Inbound::Missed {
-                payload,
-                reason: error.to_string(),
-            }),
-            Err(error) => {
-                crate::events::error(self.report(
-                    &error,
-                    "decoding a frame",
-                    &format!("frame: {}", preview(frame, payload)),
-                ));
-                None
-            }
-        }
-    }
-
-    /// The frame for `message`; `None` after a plugin error (logged).
-    async fn encode(&self, message: &Value, origin: &str) -> Option<Encoded> {
-        let Some(pipeline) = self
-            .pipeline
-            .as_ref()
-            .filter(|pipeline| pipeline.has_output())
-        else {
-            return Some(Encoded::Text(crate::ws::encode_text(message)));
-        };
-        match pipeline.output(message, &self.call).await {
-            Ok(encoded) => Some(encoded),
-            Err(error) => {
-                crate::events::error(self.report(&error, origin, &format!("message: {message}")));
-                None
-            }
-        }
-    }
-
-    /// One error event with what's needed to fix it: where, what failed, the value, the stack.
-    fn report(
-        &self,
-        error: &crate::ws::pipeline::PipelineError,
-        doing: &str,
-        value: &str,
-    ) -> String {
-        let CallConnection { id, route, session } = &self.call;
-        let stack = error.stack().map_or(String::new(), |stack| {
-            let lines: Vec<_> = stack.lines().map(|line| format!("\n    {line}")).collect();
-            format!("\n  stack:{}", lines.concat())
-        });
-        format!(
-            "ws `{route}` connection {id} (session {session}), {doing}: {error}\n  {value}{stack}"
-        )
-    }
-
-    /// Lets the plugins drop what they kept for this connection.
-    fn closed(&self) {
-        for plugin in self.pipeline.iter().flat_map(WsPipeline::plugins) {
-            plugin.close(&self.call.id);
-        }
-    }
-}
-
 async fn run(
     socket: WebSocket,
     codec: Codec,
@@ -205,27 +124,30 @@ async fn run(
     connection: WsConnection,
     registration: (Registration, mpsc::Receiver<Vec<u8>>),
 ) {
-    serve_socket(
-        socket,
-        &codec,
-        controller,
-        session,
-        connection,
-        registration,
-    )
-    .await;
+    let (mut sink, mut stream) = socket.split();
+    let (registration, pushed) = registration;
+    tokio::select! {
+        biased;
+        () = registration.shutdown() => {
+            close_socket(&mut sink, &mut stream, WsClose {
+                code: GOING_AWAY,
+                reason: "decoy is shutting down".into(),
+            }).await;
+        }
+        () = serve_socket(&mut sink, &mut stream, &codec, controller, session, connection, pushed) => {}
+    }
     codec.closed();
 }
 
 async fn serve_socket(
-    socket: WebSocket,
+    sink: &mut Sink,
+    stream: &mut Stream,
     codec: &Codec,
     controller: Arc<RwLock<Controller>>,
     session: String,
     connection: WsConnection,
-    (_registration, mut pushed): (Registration, mpsc::Receiver<Vec<u8>>),
+    mut pushed: mpsc::Receiver<Vec<u8>>,
 ) {
-    let (mut sink, mut stream) = socket.split();
     let mut queued = BufferedFrames::default();
     let (outbox, mut outgoing) = mpsc::channel(OUTBOX);
     // Dropped when the connection ends, which cancels every pending reply.
@@ -254,14 +176,14 @@ async fn serve_socket(
                 let (now, later) = split(reply);
                 let mut open = true;
                 for frame in now {
-                    open = open && send(&mut sink, &mut stream, &mut queued, codec, frame).await;
+                    open = open && send(sink, stream, &mut queued, codec, frame).await;
                 }
                 if let Some(later) = later {
                     replies.spawn(schedule(later, outbox.clone()));
                 }
                 open
             }
-            Step::Send(frame) => send(&mut sink, &mut stream, &mut queued, codec, frame).await,
+            Step::Send(frame) => send(sink, stream, &mut queued, codec, frame).await,
             Step::Skip => true,
             Step::End => {
                 let _ = sink.close().await;
@@ -272,26 +194,19 @@ async fn serve_socket(
             return;
         }
         step = tokio::select! {
-            inbound = next_frame(&mut stream, &mut queued) => match inbound {
-                Some(Ok(Message::Text(text))) => receive(Frame::Text, text.as_bytes(), &mut stream, &mut queued).await,
-                Some(Ok(Message::Binary(bytes))) => receive(Frame::Binary, &bytes, &mut stream, &mut queued).await,
+            inbound = next_frame(stream, &mut queued) => match inbound {
+                Some(Ok(Message::Text(text))) => receive(Frame::Text, text.as_bytes(), stream, &mut queued).await,
+                Some(Ok(Message::Binary(bytes))) => receive(Frame::Binary, &bytes, stream, &mut queued).await,
                 // The client closed; answer its close. Pending replies are dropped.
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => Step::End,
                 // Ping/pong are answered by the socket and never reach Cases.
                 Some(Ok(Message::Ping(_) | Message::Pong(_))) => Step::Skip,
             },
             Some(frame) = outgoing.recv() => Step::Send(frame),
-            message = pushed.recv() => Step::Send(match message {
-                Some(bytes) => Outgoing::Message {
-                    message: serde_json::from_slice(&bytes).expect("send queues JSON"),
-                    origin: Arc::from("control send"),
-                    sent: None,
-                },
-                // Connections closed on shutdown.
-                None => Outgoing::Close(WsClose {
-                    code: GOING_AWAY,
-                    reason: "decoy is shutting down".to_owned(),
-                }),
+            Some(bytes) = pushed.recv() => Step::Send(Outgoing::Message {
+                message: serde_json::from_slice(&bytes).expect("send queues JSON"),
+                origin: Arc::from("control send"),
+                sent: None,
             }),
             // Reap finished replies so the set doesn't grow on a long-lived socket.
             Some(_) = replies.join_next() => Step::Skip,
@@ -404,18 +319,22 @@ async fn send(
             open
         }
         Outgoing::Close(close) => {
-            let frame = CloseFrame {
-                code: close.code,
-                reason: close.reason.into(),
-            };
-            if sink.send(Message::Close(Some(frame))).await.is_ok() {
-                // Read until the client's close reply, so the socket isn't dropped with unread
-                // frames (the kernel would reset it and the close code be lost).
-                let reply = async { while let Some(Ok(_)) = stream.next().await {} };
-                let _ = tokio::time::timeout(CLOSE_REPLY, reply).await;
-            }
+            close_socket(sink, stream, close).await;
             false
         }
+    }
+}
+
+async fn close_socket(sink: &mut Sink, stream: &mut Stream, close: WsClose) {
+    let frame = CloseFrame {
+        code: close.code,
+        reason: close.reason.into(),
+    };
+    if sink.send(Message::Close(Some(frame))).await.is_ok() {
+        // Read until the client's close reply, so the socket isn't dropped with unread
+        // frames (the kernel would reset it and the close code be lost).
+        let reply = async { while let Some(Ok(_)) = stream.next().await {} };
+        let _ = tokio::time::timeout(CLOSE_REPLY, reply).await;
     }
 }
 

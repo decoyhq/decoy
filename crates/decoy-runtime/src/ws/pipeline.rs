@@ -1,5 +1,7 @@
 //! Преобразования между кадрами WebSocket и данными Cases и Behaviors.
 
+use super::Inbound;
+
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -7,7 +9,7 @@ use std::sync::Arc;
 
 use rmpv::Value as Msgpack;
 use serde_json::Value;
-use tokio::io::AsyncWriteExt as _;
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
 
 use crate::http::RuntimeConfig;
 use crate::plugins::value::{to_json, to_msgpack};
@@ -130,7 +132,7 @@ impl WsPipeline {
     }
 
     /// Преобразует кадр в JSON для Message envelope.
-    pub async fn input(
+    async fn input(
         &self,
         frame: Frame,
         payload: &[u8],
@@ -151,7 +153,7 @@ impl WsPipeline {
     }
 
     /// Преобразует отрисованный payload в исходящий кадр.
-    pub async fn output(
+    async fn output(
         &self,
         payload: &Value,
         connection: &CallConnection,
@@ -168,6 +170,82 @@ impl WsPipeline {
                 .ok_or_else(|| step.failed(Op::Output, "returned non-UTF-8 text")),
             Msgpack::Binary(bytes) => Ok(Encoded::Binary(bytes)),
             other => Err(step.failed(Op::Output, format!("expected text or bytes, got {other}"))),
+        }
+    }
+}
+
+/// Turns frames into messages and back: as text, or through the Route's Pipeline.
+pub(crate) struct Codec {
+    pub(crate) pipeline: Option<WsPipeline>,
+    pub(crate) call: CallConnection,
+}
+
+impl Codec {
+    /// The inbound message a frame stands for; `None` after a plugin error (logged).
+    pub(crate) async fn decode<'a>(&self, frame: Frame, payload: &'a [u8]) -> Option<Inbound<'a>> {
+        let Some(pipeline) = self
+            .pipeline
+            .as_ref()
+            .filter(|pipeline| pipeline.has_input())
+        else {
+            return Some(match frame {
+                Frame::Binary => Inbound::Binary(payload),
+                Frame::Text => {
+                    Inbound::Text(std::str::from_utf8(payload).expect("text frames are UTF-8"))
+                }
+            });
+        };
+        match pipeline.input(frame, payload, &self.call).await {
+            Ok(message) => Some(Inbound::Decoded(message)),
+            Err(error @ PipelineError::Miss { .. }) => Some(Inbound::Missed {
+                payload,
+                reason: error.to_string(),
+            }),
+            Err(error) => {
+                crate::events::error(self.report(
+                    &error,
+                    "decoding a frame",
+                    &format!("frame: {}", preview(frame, payload)),
+                ));
+                None
+            }
+        }
+    }
+
+    /// The frame for `message`; `None` after a plugin error (logged).
+    pub(crate) async fn encode(&self, message: &Value, origin: &str) -> Option<Encoded> {
+        let Some(pipeline) = self
+            .pipeline
+            .as_ref()
+            .filter(|pipeline| pipeline.has_output())
+        else {
+            return Some(Encoded::Text(crate::ws::encode_text(message)));
+        };
+        match pipeline.output(message, &self.call).await {
+            Ok(encoded) => Some(encoded),
+            Err(error) => {
+                crate::events::error(self.report(&error, origin, &format!("message: {message}")));
+                None
+            }
+        }
+    }
+
+    /// One error event with what's needed to fix it: where, what failed, the value, the stack.
+    fn report(&self, error: &PipelineError, doing: &str, value: &str) -> String {
+        let CallConnection { id, route, session } = &self.call;
+        let stack = error.stack().map_or(String::new(), |stack| {
+            let lines: Vec<_> = stack.lines().map(|line| format!("\n    {line}")).collect();
+            format!("\n  stack:{}", lines.concat())
+        });
+        format!(
+            "ws `{route}` connection {id} (session {session}), {doing}: {error}\n  {value}{stack}"
+        )
+    }
+
+    /// Lets the plugins drop what they kept for this connection.
+    pub(crate) fn closed(&self) {
+        for plugin in self.pipeline.iter().flat_map(WsPipeline::plugins) {
+            plugin.close(&self.call.id);
         }
     }
 }
@@ -286,28 +364,53 @@ async fn run_command(
         .spawn()
         .map_err(|error| format!("could not start `{}`: {error}", argv[0]))?;
     let mut stdin = child.stdin.take().expect("stdin is piped");
-    let (written, output) = tokio::join!(
-        async move { stdin.write_all(bytes).await },
-        child.wait_with_output(),
-    );
-    let output = output.map_err(|error| error.to_string())?;
-    if !output.status.success() {
+    let stdout = child.stdout.take().expect("stdout is piped");
+    let stderr = child.stderr.take().expect("stderr is piped");
+    let write_input = async move {
+        match stdin.write_all(bytes).await {
+            Err(error) if error.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+            result => result,
+        }
+    };
+    let collect = async {
+        tokio::try_join!(
+            write_input,
+            limited_output(stdout, "stdout", 16 * 1024 * 1024),
+            limited_output(stderr, "stderr", 64 * 1024),
+            child.wait()
+        )
+    };
+    let (_, stdout, stderr, status) =
+        tokio::time::timeout(crate::config::DEFAULT_PLUGIN_TIMEOUT, collect)
+            .await
+            .map_err(|_| format!("`{}` timed out after 5s", argv[0]))?
+            .map_err(|err| format!("`{}`: {err}", argv[0]))?;
+    if !status.success() {
         return Err(format!(
-            "`{}` {}: {}",
+            "`{}` {status}: {}",
             argv[0],
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
+            String::from_utf8_lossy(&stderr).trim()
         ));
     }
-    if let Err(error) = written
-        && error.kind() != std::io::ErrorKind::BrokenPipe
-    {
-        return Err(error.to_string());
+    if !stderr.is_empty() {
+        eprint!("{}: {}", argv[0], String::from_utf8_lossy(&stderr));
     }
-    if !output.stderr.is_empty() {
-        eprint!("{}: {}", argv[0], String::from_utf8_lossy(&output.stderr));
+    Ok(stdout)
+}
+
+async fn limited_output(
+    pipe: impl AsyncRead + Unpin,
+    name: &str,
+    limit: usize,
+) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    pipe.take(limit as u64 + 1).read_to_end(&mut bytes).await?;
+    if bytes.len() > limit {
+        return Err(std::io::Error::other(format!(
+            "{name} exceeds {limit} bytes"
+        )));
     }
-    Ok(output.stdout)
+    Ok(bytes)
 }
 
 /// `binary, 12 bytes: 0a 03 41 …` (the first 32), for error events.
@@ -369,4 +472,24 @@ async fn check_each(catalog: &crate::engine::Catalog) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn command_output_limit_accepts_exact_fit_and_rejects_overflow() {
+        assert_eq!(
+            limited_output(&b"abc"[..], "stdout", 3).await.unwrap(),
+            b"abc"
+        );
+        assert!(
+            limited_output(&b"abcd"[..], "stderr", 3)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("stderr exceeds 3 bytes")
+        );
+    }
 }

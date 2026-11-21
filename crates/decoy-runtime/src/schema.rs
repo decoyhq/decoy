@@ -431,37 +431,26 @@ impl WsClose {
 
 /// One message of a server-streaming answer, sent `delay` after the one before it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(try_from = "RawStreamItem", into = "RawStreamItem")]
+#[serde(from = "MessageItem", into = "MessageItem")]
 pub struct StreamItem {
     pub message: Value,
     pub delay: Option<Duration>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawStreamItem {
-    #[serde(rename = "payload")]
-    message: Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    delay: Option<Value>,
-}
-
-impl TryFrom<RawStreamItem> for StreamItem {
-    type Error = ValidationError;
-
-    fn try_from(raw: RawStreamItem) -> Result<Self, Self::Error> {
-        Ok(Self {
-            message: raw.message,
-            delay: raw.delay.as_ref().map(parse_delay).transpose()?,
-        })
+impl From<MessageItem> for StreamItem {
+    fn from(item: MessageItem) -> Self {
+        Self {
+            message: item.payload,
+            delay: item.delay,
+        }
     }
 }
 
-impl From<StreamItem> for RawStreamItem {
+impl From<StreamItem> for MessageItem {
     fn from(item: StreamItem) -> Self {
         Self {
-            message: item.message,
-            delay: item.delay.map(format_delay),
+            payload: item.message,
+            delay: item.delay,
         }
     }
 }

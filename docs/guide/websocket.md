@@ -142,3 +142,5 @@ check the authored output literal at startup when it is the first output step. R
 apply worker config changes.
 
 Other languages can implement the [worker protocol](../design/plugin-protocol.md).
+
+A one-shot Transformer command has 5 seconds to finish. Decoy fails the transform if stdout exceeds 16 MiB or stderr exceeds 64 KiB. During a transform, each socket can buffer up to 64 subsequent data frames totaling at most 16 MiB. Exceeding either read-ahead limit closes that socket.

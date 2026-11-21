@@ -56,13 +56,17 @@ async fn respond(
         let path_and_query = uri
             .path_and_query()
             .map_or(uri.path(), |path| path.as_str());
-        let connection = controller
-            .read()
-            .await
-            .catalog()
-            .ws_upgrade(path_and_query, &headers);
-        if let Some(connection) = connection {
-            return super::ws::accept(controller, connections, session, connection, request).await;
+        let catalog = controller.read().await.catalog();
+        if let Some(connection) = catalog.ws_upgrade(path_and_query, &headers) {
+            return super::ws::accept(
+                controller,
+                connections,
+                session,
+                connection,
+                &catalog,
+                request,
+            )
+            .await;
         }
     }
     let request_method = request.method().clone();

@@ -228,6 +228,37 @@ async fn back_to_back_messages_are_answered_in_order() {
     futures_util::future::join_all(bursts).await;
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn shutdown_cancels_an_active_transform() {
+    let route = FRIEND.replace("transport: ws", "transport: ws\npipeline: slow");
+    let temp = Server::mocks(&[("friend.yaml", &route), ("best-friend.yaml", BEST_FRIEND)]);
+    let marker = temp.path().join("started");
+    fs::write(temp.path().join("decoy.yaml"), "routes: routes\ncollections: collections.yaml\nport: 0\ntransformers:\n  slow: {output: [sh, -c, 'touch started && exec sleep 30']}\npipelines:\n  slow: {output: [slow]}\n").unwrap();
+    let server = Server::start_from(temp);
+    let mut socket = server.connect("/subscribe?service=friend", None).await;
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !marker.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        Command::new("kill")
+            .args(["-INT", &server.child.id().to_string()])
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), socket.close_code())
+            .await
+            .unwrap(),
+        CloseCode::Away
+    );
+}
+
 // Linux only: 400 sockets pass macOS's default limit of 256 open files.
 #[cfg(target_os = "linux")]
 #[tokio::test]
@@ -361,6 +392,10 @@ impl Server {
 
     async fn start() -> Self {
         let temp = Self::mocks(&[("friend.yaml", FRIEND), ("best-friend.yaml", BEST_FRIEND)]);
+        Self::start_from(temp)
+    }
+
+    fn start_from(temp: TempDir) -> Self {
         let mut child = Self::serve(&temp).spawn().unwrap();
         // Port 0 lets decoy pick the port; read it from `listening on`, then keep echoing stderr
         // so the pipe never fills.

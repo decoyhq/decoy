@@ -23,6 +23,7 @@ struct Inner {
     registered: Notify,
     /// Wakes [`Connections::all_ended`] as connections end.
     ended: Notify,
+    shutdown: tokio::sync::watch::Sender<bool>,
 }
 
 #[derive(Debug, Default)]
@@ -54,6 +55,13 @@ pub struct Registration {
     inner: Arc<Inner>,
     address: Address,
     id: u64,
+}
+
+impl Registration {
+    pub(crate) async fn shutdown(&self) {
+        let mut signal = self.inner.shutdown.subscribe();
+        let _ = signal.wait_for(|closed| *closed).await;
+    }
 }
 
 impl Connections {
@@ -161,6 +169,7 @@ impl Connections {
     pub fn close_all(&self) {
         let mut live = self.inner.live.lock().expect("connections lock");
         live.closed = true;
+        self.inner.shutdown.send_replace(true);
         live.by_address.clear();
         drop(live);
         // Waiting `send`s stop too, so they don't hold the drain either.
