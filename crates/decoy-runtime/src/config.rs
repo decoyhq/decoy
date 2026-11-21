@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::time::parse_duration;
+
 pub const DEFAULT_PORT: u16 = 8080;
 /// Larger request bodies get `413` (gRPC: `RESOURCE_EXHAUSTED`) instead of being buffered.
 pub const DEFAULT_MAX_BODY_BYTES: usize = 32 * 1024 * 1024;
@@ -35,6 +37,28 @@ pub struct ServeConfig {
     pub passthrough_base_url: Option<String>,
     pub protos: ProtoSources,
     pub max_body_bytes: usize,
+    /// Transformers configured with a persistent worker.
+    pub plugins: BTreeMap<String, PluginConfig>,
+}
+
+/// One plugin process (`docs/design/plugin-protocol.md`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginConfig {
+    pub command: Vec<String>,
+    /// Directory containing the Decoy config file.
+    pub dir: PathBuf,
+    /// Longest a call may take.
+    pub timeout: std::time::Duration,
+}
+
+/// A plugin call's timeout when its entry sets none.
+pub const DEFAULT_PLUGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PluginFile {
+    worker: Vec<String>,
+    timeout: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +190,8 @@ struct NativeConfigFile {
     passthrough_base_url: Option<String>,
     protos: Option<ProtoSources>,
     max_body_bytes: Option<usize>,
+    #[serde(default)]
+    transformers: BTreeMap<String, PluginFile>,
 }
 
 impl ServeConfig {
@@ -298,6 +324,13 @@ impl ServeConfig {
             .as_ref()
             .and_then(|config| config.max_body_bytes)
             .unwrap_or(DEFAULT_MAX_BODY_BYTES);
+        let plugins = file_config
+            .as_ref()
+            .map(|config| config.transformers.clone())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(key, plugin)| Ok((key.clone(), plugin_config(&key, plugin, &config_base)?)))
+            .collect::<Result<BTreeMap<_, _>, ConfigError>>()?;
         let protos = file_config
             .and_then(|config| config.protos)
             .map(|protos| ProtoSources {
@@ -329,8 +362,40 @@ impl ServeConfig {
             passthrough_base_url,
             protos,
             max_body_bytes,
+            plugins,
         })
     }
+}
+
+/// Validates the configuration for a persistent worker.
+fn plugin_config(key: &str, plugin: PluginFile, dir: &Path) -> Result<PluginConfig, ConfigError> {
+    let invalid = |reason: String| ConfigError::InvalidPlugin {
+        key: key.to_owned(),
+        reason,
+    };
+    if key.is_empty()
+        || !key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(invalid(
+            "a key takes only letters, digits, `-` and `_`".to_owned(),
+        ));
+    }
+    if plugin.worker.first().is_none_or(String::is_empty) {
+        return Err(invalid("`worker` needs an executable".to_owned()));
+    }
+    let timeout = match plugin.timeout {
+        None => DEFAULT_PLUGIN_TIMEOUT,
+        Some(text) => parse_duration(&text)
+            .filter(|timeout| !timeout.is_zero())
+            .ok_or_else(|| invalid(format!("`timeout: {text}` is not a duration like `5s`")))?,
+    };
+    Ok(PluginConfig {
+        command: plugin.worker,
+        dir: dir.to_path_buf(),
+        timeout,
+    })
 }
 
 fn read_config_file(path: &Path) -> Result<NativeConfigFile, ConfigError> {
@@ -394,6 +459,8 @@ pub enum ConfigError {
     InvalidPassthroughBaseUrl { name: &'static str, url: String },
     #[error("missing required serve {name}; pass --{name} or set it in --config")]
     MissingValue { name: &'static str },
+    #[error("plugin `{key}`: {reason}")]
+    InvalidPlugin { key: String, reason: String },
 }
 
 #[cfg(test)]
@@ -845,6 +912,42 @@ listeners:
         );
         fs::write(base.join("decoy.yaml"), "routes: r\ncollections: c.yaml\n").unwrap();
         assert_eq!(load(None).port.host, DEFAULT_HOST);
+    }
+
+    #[test]
+    fn plugin_timeouts_use_milliseconds_or_seconds() {
+        let dir = tempdir().unwrap();
+        let base = dir.path();
+        let path = base.join("decoy.yaml");
+        let load = |timeout| {
+            fs::write(
+                &path,
+                format!(
+                    "routes: r\ncollections: c.yaml\ntransformers:\n  demo:\n    worker: [node, worker.js]\n    timeout: {timeout}\n"
+                ),
+            )
+            .unwrap();
+            ServeConfig::from_options(
+                ServeCliOptions {
+                    config_file: Some(path.clone()),
+                    ..ServeCliOptions::default()
+                },
+                base,
+            )
+        };
+
+        for (value, millis) in [("500ms", 500), ("1.5s", 1_500)] {
+            assert_eq!(
+                load(value).unwrap().plugins["demo"].timeout,
+                std::time::Duration::from_millis(millis)
+            );
+        }
+        for value in ["1m", "0s"] {
+            assert!(matches!(
+                load(value),
+                Err(ConfigError::InvalidPlugin { .. })
+            ));
+        }
     }
 
     #[test]

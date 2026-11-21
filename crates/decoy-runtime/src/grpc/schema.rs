@@ -313,7 +313,7 @@ enum Form {
 
 /// The field walk gives paths for the common mistakes; a fully literal message is then parsed
 /// for real, which also catches oneof conflicts, bad base64, map keys, and well-known types.
-fn check_response_message(
+pub(crate) fn check_response_message(
     value: &Value,
     message: &MessageDescriptor,
     path: &str,

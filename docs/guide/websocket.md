@@ -86,7 +86,7 @@ Use `message` or `messages`, not both. Every string is templated against the mes
 
 The Behavior-level `delay` works with either `message` or `messages`. An item-level `delay`
 adds a wait before that item, measured from the previous send. On the first item, the two
-delays add up. Both fields accept a nonnegative integer in milliseconds or a duration string.
+delays add up. Both fields accept a nonnegative integer in milliseconds or a duration string with `ms` or `s`.
 
 ```yaml
 updates:

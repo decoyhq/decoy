@@ -62,8 +62,7 @@ Decoy writes `hello` first. The worker answers `ready` with the directions it pr
 - `output` runs on the rendered Behavior payload or a Control API push. Each later step gets the previous step's result. WebSocket sends a final `str` as text or `bin` as binary.
 - `check` optionally validates a startup literal for the first worker in the output direction when that worker receives the untransformed value. A worker without a `check` callback answers `ok: true`.
 - A `miss` result on `input` records a Case miss for the frame. A `miss` result on `output` is a transform error.
-- No `result` within the plugin's `timeout` (default 5 s) is a plugin error; a late `result` is
-  ignored.
+- Set the plugin's `timeout` in `ms` or `s`. The default is `5s`. Decoy reports a plugin error when the timeout expires and ignores any later `result`.
 
 ## Host calls
 
