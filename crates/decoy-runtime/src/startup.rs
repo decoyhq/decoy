@@ -256,7 +256,7 @@ fn normalize_for_sort(routes_dir: &Path, path: &Path) -> String {
 fn decode_route(path: &Path, input: &str, runtime: &RuntimeConfig) -> Result<Route, StartupError> {
     parse_yaml(path, input)?;
     // Decode from text, not the parsed value, so schema errors keep their line.
-    let route = serde_norway::from_str::<Route>(input).map_err(|error| {
+    let route = Route::decode_yaml(input).map_err(|error| {
         StartupError::with_source(
             StartupDiagnosticKind::Schema,
             source_from_yaml_error(path, &error),
@@ -271,7 +271,7 @@ fn decode_route(path: &Path, input: &str, runtime: &RuntimeConfig) -> Result<Rou
 
 fn decode_collections(path: &Path, input: &str) -> Result<Vec<Collection>, StartupError> {
     parse_yaml(path, input)?;
-    serde_norway::from_str::<Vec<Collection>>(input).map_err(|error| {
+    crate::yaml::from_str::<Vec<Collection>>(input).map_err(|error| {
         StartupError::with_source(
             StartupDiagnosticKind::Schema,
             source_from_yaml_error(path, &error),
@@ -282,6 +282,7 @@ fn decode_collections(path: &Path, input: &str) -> Result<Vec<Collection>, Start
 
 fn parse_yaml(path: &Path, input: &str) -> Result<YamlValue, StartupError> {
     serde_norway::from_str::<YamlValue>(input).map_err(|error| {
+        let error = crate::yaml::Error::from(error);
         StartupError::with_source(
             StartupDiagnosticKind::Parse,
             source_from_yaml_error(path, &error),
@@ -314,9 +315,9 @@ fn source_from_validation_error(path: &Path, error: &ValidationError) -> SourceL
     }
 }
 
-fn source_from_yaml_error(path: &Path, error: &serde_norway::Error) -> SourceLocation {
+fn source_from_yaml_error(path: &Path, error: &crate::yaml::Error) -> SourceLocation {
     let mut source = SourceLocation::path(path);
-    source.line = error.location().map(|location| location.line());
+    source.line = error.line();
     source
 }
 
@@ -378,7 +379,10 @@ fn validate_collection_references(
 
 #[cfg(test)]
 mod tests {
+    use super::decode_route;
+    use crate::{CollectionsFile, Route};
     use std::fs;
+    use std::path::Path;
 
     use pretty_assertions::assert_eq;
 
@@ -457,6 +461,84 @@ cases:
     - {address}
 "#
         )
+    }
+
+    #[test]
+    fn merge_keys_work_in_route_and_collections_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let routes = dir.path().join("routes");
+        let collections = dir.path().join("collections.yaml");
+        let route = r#"id: merged
+transport: http
+match: { method: GET, path: / }
+cases:
+  any:
+    behaviors:
+      base: &base { status: 200, body: first }
+      other: &other { body: second }
+      created:
+        status: 201
+        <<: [*base, *other]
+"#;
+        write(&routes.join("r.yaml"), route);
+        let choices =
+            "- &base { id: local, routes: [merged:any:created] }\n- { <<: *base, id: copied }";
+        write(&collections, choices);
+        load_catalog_from_files(&routes, &collections, RuntimeConfig::default(), None).unwrap();
+        let parsed = Route::from_yaml(route).unwrap();
+        let behavior = &parsed.cases["any"].behaviors["created"];
+        let crate::Behavior::Response(response) = behavior else {
+            panic!("expected response")
+        };
+        assert_eq!(response.body, Some(serde_json::json!("first")));
+        assert_eq!(response.status, Some(serde_json::json!(201)));
+        assert_eq!(
+            CollectionsFile::from_yaml(choices)
+                .unwrap()
+                .resolve("copied")
+                .unwrap()[0]
+                .address(),
+            "merged:any:created"
+        );
+    }
+
+    #[test]
+    fn merged_unknown_key_reports_its_source_line() {
+        let path = Path::new("routes/r.yaml");
+        let input = r#"id: r
+transport: http
+match: {method: GET, path: /}
+cases:
+  any:
+    behaviors:
+      source:
+        body: &base
+          status: 200
+          typo: true
+      copied:
+        <<: *base
+"#;
+        let err = decode_route(path, input, &RuntimeConfig::default()).unwrap_err();
+        assert_eq!(err.diagnostic.source.path, path);
+        assert_eq!(err.diagnostic.source.line, Some(10), "{err}");
+        assert!(err.to_string().contains("typo"), "{err}");
+    }
+
+    #[test]
+    fn merged_route_match_reports_the_unknown_field_line() {
+        let input = "id: r\ntransport: http\nmatch:\n  <<:\n    method: GET\n    path: /\n    bogus: field\ncases: {}";
+        let error =
+            decode_route(Path::new("r.yaml"), input, &RuntimeConfig::default()).unwrap_err();
+        assert_eq!(error.diagnostic.source.line, Some(7), "{error}");
+        assert!(error.to_string().contains("bogus"), "{error}");
+    }
+
+    #[test]
+    fn merged_collection_route_ref_reports_the_unknown_field_line() {
+        let input = "- id: local\n  routes:\n    - <<:\n        route: r\n        case: any\n        behavior: ok\n        typo: true";
+        let error = super::decode_collections(Path::new("c.yaml"), input).unwrap_err();
+        assert_eq!(error.diagnostic.source.line, Some(7), "{error}");
+        assert!(error.to_string().contains("typo"), "{error}");
     }
 
     /// Pins the YAML diagnostics users see (message and line) across YAML library swaps.

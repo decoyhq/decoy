@@ -24,6 +24,7 @@ mod time;
 pub mod tls;
 pub mod watch;
 pub mod ws;
+mod yaml;
 
 pub use collections::{Activation, Collection, CollectionRouteRef, CollectionsFile};
 pub use control_api::{

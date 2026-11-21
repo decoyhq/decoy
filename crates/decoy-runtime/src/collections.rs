@@ -31,8 +31,8 @@ impl Collection {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(untagged, deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
 pub enum CollectionRouteRef {
     Address(String),
     Structured {
@@ -40,6 +40,41 @@ pub enum CollectionRouteRef {
         case: String,
         behavior: String,
     },
+}
+
+impl<'de> Deserialize<'de> for CollectionRouteRef {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct RefVisitor;
+        impl<'de> serde::de::Visitor<'de> for RefVisitor {
+            type Value = CollectionRouteRef;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter
+                    .write_str("a Behavior address or a mapping with route, case, and behavior")
+            }
+
+            fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                Ok(CollectionRouteRef::Address(value.to_owned()))
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let Activation {
+                    route,
+                    case,
+                    behavior,
+                } = Activation::deserialize(serde::de::value::MapAccessDeserializer::new(map))?;
+                Ok(CollectionRouteRef::Structured {
+                    route,
+                    case,
+                    behavior,
+                })
+            }
+        }
+        deserializer.deserialize_any(RefVisitor)
+    }
 }
 
 impl CollectionRouteRef {
@@ -59,7 +94,8 @@ impl CollectionRouteRef {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Activation {
     pub route: String,
     pub case: String,
@@ -107,7 +143,7 @@ pub struct CollectionsFile {
 
 impl CollectionsFile {
     pub fn from_yaml(input: &str) -> Result<Self, CollectionError> {
-        let collections = serde_norway::from_str::<Vec<Collection>>(input)?;
+        let collections = crate::yaml::from_str::<Vec<Collection>>(input)?;
         Self::new(collections)
     }
 
@@ -191,7 +227,7 @@ impl CollectionsFile {
 #[derive(Debug, Error)]
 pub enum CollectionError {
     #[error("failed to parse collections yaml: {0}")]
-    Yaml(#[from] serde_norway::Error),
+    Yaml(#[from] crate::yaml::Error),
     #[error(transparent)]
     Validation(#[from] ValidationError),
     #[error("collection route address `{address}` must use route:case:behavior")]
@@ -404,7 +440,7 @@ mod tests {
             ("- id: child\n  extends: base\n", "extends"),
             (
                 "- id: local\n  routes:\n    - { route: a, case: b, behavior: c, delay: 1 }\n",
-                "did not match any variant",
+                "unknown field `delay`",
             ),
         ] {
             let error = CollectionsFile::from_yaml(yaml).unwrap_err().to_string();

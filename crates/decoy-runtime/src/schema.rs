@@ -139,8 +139,42 @@ impl TryFrom<RawRoute> for Route {
 }
 
 impl Route {
+    pub(crate) fn decode_yaml(input: &str) -> Result<Self, crate::yaml::Error> {
+        let result = crate::yaml::from_str(input);
+        let Err(crate::yaml::Error::Merge(error)) = &result else {
+            return result;
+        };
+        if error.location().is_some() {
+            return result;
+        }
+
+        // RawRoute buffers `match` until it knows the transport, which discards
+        // field positions. Replay just that mapping to locate a transport-specific error.
+        #[derive(Deserialize)]
+        struct Header {
+            transport: Transport,
+        }
+        #[derive(Deserialize)]
+        struct MatchField<M> {
+            #[serde(rename = "match")]
+            _matcher: M,
+        }
+        let Ok(Header { transport }) = crate::yaml::from_str(input) else {
+            return result;
+        };
+        let match_error = match transport {
+            Transport::Http => crate::yaml::from_str::<MatchField<HttpRouteMatch>>(input).err(),
+            Transport::Grpc => crate::yaml::from_str::<MatchField<GrpcRouteMatch>>(input).err(),
+            Transport::Ws => crate::yaml::from_str::<MatchField<WsRouteMatch>>(input).err(),
+        };
+        match match_error {
+            Some(error) => Err(error),
+            None => result,
+        }
+    }
+
     pub fn from_yaml(input: &str) -> Result<Self, ValidationError> {
-        let route: Self = serde_norway::from_str(input)?;
+        let route = Self::decode_yaml(input)?;
         route.validate()?;
         Ok(route)
     }
@@ -664,7 +698,7 @@ impl From<Behavior> for RawBehavior {
 #[derive(Debug, Error)]
 pub enum ValidationError {
     #[error("failed to parse route yaml: {0}")]
-    Yaml(#[from] serde_norway::Error),
+    Yaml(#[from] crate::yaml::Error),
     #[error("{kind} id `{id}` cannot be empty")]
     EmptyId { kind: &'static str, id: String },
     #[error(
