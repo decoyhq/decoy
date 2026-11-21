@@ -1,7 +1,7 @@
 //! Live long-lived connections (WebSocket, SSE, streaming gRPC), so the Control API `send` can
-//! push messages to them and `wait` can wait for one (`docs/design/transports.md` §9).
+//! push messages to them and `wait` can wait for one.
 //!
-//! A transport registers each connection with the Session it opened with (§10) and reads the
+//! A transport registers each connection with the Session it opened with and reads the
 //! messages pushed to it from the returned receiver. `send` encodes each message through the Route's
 //! Pipeline once, against the current Catalog; the registry carries those bytes.
 

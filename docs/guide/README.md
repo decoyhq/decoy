@@ -1,16 +1,25 @@
 # Decoy guide
 
-1. [Install](install.md)
-2. [Quickstart](quickstart.md)
-3. [Routes, Cases, and Behaviors](routes.md)
-4. [Collections](collections.md)
-5. [Sessions and the Control API](sessions-and-control.md)
-6. [Configuration](config.md)
-7. [Playwright](playwright.md)
-8. [Testplane](testplane.md)
-9. [gRPC](grpc.md)
-10. [WebSocket](websocket.md)
-11. [TLS](tls.md)
-12. [Terminal UI](tui.md)
+[Install Decoy](install.md), then follow the [HTTP quickstart](quickstart.md) to serve a response
+and switch it to a 404 without restarting the server.
 
-Terms follow the glossary in [`CONTEXT.md`](../../CONTEXT.md).
+## Write mocks
+
+- [HTTP Routes, Cases, and Behaviors](routes.md) covers request matching, response templates, delays, and Passthrough.
+- [Collections](collections.md) explains how to select Behaviors for a scenario and which Case wins when several match.
+- [gRPC](grpc.md) covers protobuf schemas, unary replies, errors, and server streaming.
+- [WebSocket](websocket.md) covers connections, incoming messages, timed replies, and closing a socket. Use [Transformers](websocket.md#transformers) for custom payload formats.
+
+## Run and inspect Decoy
+
+- [Configuration](config.md) lists CLI flags, config file keys, listener settings, and reload options.
+- [TLS](tls.md) explains how to serve HTTPS and trust the local certificate.
+- [Terminal UI](tui.md) shows how to inspect a request and change the active Collection.
+
+## Drive Decoy from tests
+
+- [Sessions and the Control API](sessions-and-control.md) explains how to isolate tests and change responses over HTTP.
+- [Playwright](playwright.md) and [Testplane](testplane.md) show how to route browser requests and switch Behaviors in a test.
+- [Runnable examples](../../examples/README.md) include complete test projects with their own mocks.
+
+See the [glossary](../../CONTEXT.md) for definitions of Decoy terms.

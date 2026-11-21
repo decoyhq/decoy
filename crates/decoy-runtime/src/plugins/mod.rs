@@ -1,5 +1,5 @@
 //! Plugin processes: started with Decoy, one per `transformers` worker, spoken to over stdin/stdout
-//! (`docs/design/plugin-protocol.md`). A plugin exiting stops Decoy; nothing restarts it
+//! (`docs/reference/plugin-protocol.md`). A plugin exiting stops Decoy; nothing restarts it
 //! (ADR 0004).
 
 mod host;

@@ -1,4 +1,4 @@
-//! Interactive terminal UI for bare `decoy` (design: `docs/design/tui.md`): the runtime's live
+//! Interactive terminal UI for bare `decoy`: the runtime's live
 //! log, an input box and a status bar, fullscreen in the alternate screen.
 
 mod app;

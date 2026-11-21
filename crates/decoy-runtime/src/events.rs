@@ -1,4 +1,4 @@
-//! The in-process event broadcast (design: `docs/design/tui.md`): one [`RequestEvent`] per
+//! The in-process event broadcast: one [`RequestEvent`] per
 //! finished HTTP request or unary gRPC call, per WebSocket message and answered open, a
 //! [`SessionEvent`] per Selection change, and a [`LogEvent`] per runtime warning or error (on
 //! stderr instead while nobody listens). Sending

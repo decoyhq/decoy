@@ -1,91 +1,28 @@
-# decoy
+# Decoy
 
-> A portable local mock tool: one native binary, YAML mocks, switchable scenarios.
+Decoy is a local mock server for HTTP, gRPC, and WebSocket clients. Describe your API in YAML,
+point your app at Decoy, and switch the same request from success to failure while the app is
+running. When a request misses, Decoy returns a diagnostic. Forwarding to an upstream requires
+an explicit Passthrough Behavior.
 
-Author mock **Routes** as YAML files, group their Behaviors into switchable **Collections**, and
-point your app or tests at `decoy`. Fail-closed by default: a request with no matching mock gets a
-diagnostic miss, never the real upstream.
+## Try it
 
-![The Decoy terminal UI: a live request log, switching Collections and opening a request's details](docs/assets/tui.gif)
+1. [Install Decoy](docs/guide/install.md) as a standalone binary or a dev dependency in your JS project.
+2. [Serve your first mock](docs/guide/quickstart.md). Make `GET /users/123` return Ada, then switch it to a 404.
+3. [Open the terminal UI](docs/guide/tui.md) to inspect requests and switch Collections interactively.
 
-## Status
+![Decoy's terminal UI showing the request log, Collection switcher, and request details](docs/assets/tui.gif)
 
-Alpha. The native Rust runtime (`crates/decoy-runtime`, binary in `crates/decoy`) serves HTTP today. Install with
-`npm i -D @decoyhq/cli` or `curl -fsSL
-https://github.com/decoyhq/decoy/releases/latest/download/install.sh | sh`; see
-[Install](docs/guide/install.md).
+## Use it in tests
 
-Full docs: **[the guide](docs/guide/README.md)**: install, Routes, Collections, Sessions, config,
-Playwright, Testplane.
+Parallel tests can share one Decoy server. Each test gets its own Session, so switching a Collection
+in one test leaves the others on their own scenarios. The [Playwright fixture](docs/guide/playwright.md)
+and [Testplane plugin](docs/guide/testplane.md) manage Sessions for you. Other clients can set the
+Session header and call the [Control API](docs/guide/sessions-and-control.md).
 
-## Quickstart
+Browse the [user guide](docs/guide/README.md) for configuration and transport details, or start
+with a [runnable example](examples/README.md).
 
-```sh
-cargo build --release -p decoy
-./target/release/decoy serve --routes mocks/routes --collections mocks/collections.yaml --port 8080
-```
+## Contributing
 
-`mocks/routes/users.yaml`:
-
-```yaml
-id: users-by-id
-transport: http
-match:
-  method: GET
-  path: /users/{id}
-cases:
-  user-123:
-    match:
-      pathParams:
-        id: '123'
-    behaviors:
-      success:
-        status: 200
-        body: { id: '123', name: Ada }
-      missing:
-        status: 404
-        body: not found
-```
-
-`mocks/collections.yaml` (the first Collection is the default):
-
-```yaml
-- id: happy-path
-  routes:
-    - users-by-id:user-123:success
-- id: user-missing
-  from: happy-path
-  routes:
-    - users-by-id:user-123:missing
-```
-
-Switch Scenarios at runtime through the Control API, per Session (`x-mock-session` header):
-
-```sh
-curl -X POST localhost:8080/__decoy__/control/useCollection -H 'content-type: application/json' -d '{"collection":"user-missing"}'
-curl -i localhost:8080/users/123   # 404
-curl -X POST localhost:8080/__decoy__/control/useCollection -H 'content-type: application/json' -d '{"collection":"happy-path"}'
-```
-
-Verbs: `useCollection`, `useRoute` (override one Behavior), `reset` (drop overrides), `endSession`
-(end the Session). See
-[`docs/design/native-control-api-shape.md`](docs/design/native-control-api-shape.md).
-
-## Roadmap
-
-Playwright fixture → alpha release (binaries, npm wrapper, docs site) → richer matching
-(query/headers/body, JMESPath, templating, delay) → gRPC → WebSocket/SSE → pipeline plugins.
-See [`docs/design/next-direction.md`](docs/design/next-direction.md).
-
-## Repository layout
-
-```
-crates/decoy/           `decoy` CLI (binary)
-crates/decoy-runtime/   native runtime library (engine + server)
-crates/decoy-tui/       interactive terminal UI (in progress)
-packages/               language wrappers (e.g. Playwright), coming next
-examples/               end-to-end user flows (`test:e2e`)
-docs/adr/               accepted decisions
-docs/design/            working design notes
-CONTEXT.md              glossary
-```
+For local builds and checks, see [Contributing](CONTRIBUTING.md). The [documentation index](docs/README.md) links to the glossary, design records, and maintainer runbook.

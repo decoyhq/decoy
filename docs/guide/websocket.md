@@ -141,7 +141,7 @@ Decoy validates referenced Transformers and directions when loading Routes. A wo
 check the authored output literal at startup when it is the first output step. Restart Decoy to
 apply worker config changes.
 
-Other languages can implement the [worker protocol](../design/plugin-protocol.md).
+Other languages can implement the [worker protocol](../reference/plugin-protocol.md).
 
 A one-shot Transformer command has 5 seconds to finish. Decoy fails the transform if stdout exceeds 16 MiB or stderr exceeds 64 KiB. During a transform, each socket can buffer up to 64 subsequent data frames totaling at most 16 MiB. Across all sockets, the process budgets 64 MiB for read-ahead, charged in whole KiB with a minimum of 1 KiB per frame. Exceeding a read-ahead limit closes the socket requesting more space. Up to eight one-shot commands can run across all connections. When all slots are busy, the next command fails the transform before spawning.
 

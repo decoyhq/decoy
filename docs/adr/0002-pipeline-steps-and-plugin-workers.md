@@ -1,45 +1,16 @@
-# 0002. One ordered pipeline, JMESPath logic, plugin workers
+# 0002. Transform wire data before matching Cases
 
-Date: 2026-10-17
+Accepted 2026-10-17. [ADR 0004](0004-built-in-steps-only-for-grpc.md) amends the ordering of steps,
+the set of built-ins, and how external transforms run.
 
-## Status
+A WebSocket frame can contain a msgpack envelope around a protobuf payload. Giving each encoding
+its own matcher or config field would make the order of decoding ambiguous and couple Case
+definitions to wire formats.
 
-Accepted for direction. Hosting details may change once the first plugin worker is prototyped.
-Amended by [ADR 0004](0004-built-in-steps-only-for-grpc.md): built-ins are limited to the gRPC default, and named Pipeline directions execute independently using worker or command Transformers. The original decisions below are retained for context.
+We chose an ordered Pipeline between the transport and the values a Case matches. Cases and
+Behavior templates use JMESPath over decoded data. A Plugin can run as a persistent external
+worker, so authors can use their language's libraries while Decoy keeps control of matching,
+Behavior selection, and Sessions.
 
-## Context
-
-Decoy must mock HTTP, gRPC, WebSocket, and SSE traffic, including proprietary combinations such as
-WebSocket frames carrying a msgpack envelope with protobuf payloads. Users author Cases against
-plain JSON-like data, so wire data must be decoded before matching and encoded after a Behavior.
-
-Earlier notes framed this as "codec plugins", with separate future concepts for message transforms
-and other stages. That risks a new config field, a new plugin kind, and an unclear order every time
-a new need appears.
-
-## Decision
-
-- **One extension concept: the pipeline.** A Route (or config default) declares an ordered
-  `pipeline` of steps. Inbound data runs the list in order; outbound data runs it reversed.
-  Ordering is always explicit.
-- **Built-in steps first** (amended by 0004: only `grpc-frame` and `protobuf`). `grpc-frame`, `protobuf`, `msgpack`, and `json` ship with Decoy.
-  `protobuf` decodes dynamically from user-provided proto roots (descriptor sets as an extra input);
-  no per-service plugin or code generation is required.
-- **JMESPath for logic.** Case predicates and Behavior templating use JMESPath expressions over the
-  decoded data, with Decoy standard functions.
-- **Plugins export steps and functions, nothing else.** A plugin may provide named pipeline steps
-  and named JMESPath functions. Built-in steps implement the same contract internally.
-- **Plugins are long-running external processes.** Declared in config (manifest + executable, any
-  language; amended by 0004: `command` only), started once with the runtime, called per message over stdio. Never one process per
-  request. Plugins format data; network access is out of scope for now.
-- **One Route shape for every transport.** `transport` + transport-specific `match`, Cases that
-  match decoded data, Behaviors that produce transport-specific outcomes. Collections, Sessions, and
-  Behavior addresses are unchanged.
-
-## Consequences
-
-- "Codec stage" and "message transform stage" collapse into **Pipeline step** in `CONTEXT.md`.
-- Built-in steps must work before the plugin worker contract is frozen (amended by 0004: the worker
-  contract comes first).
-- WASM may later be a second loader for the same step/function contract.
-- Custom matchers and custom Behavior kinds are not plugin extension points for now.
+The original design used one list of steps and ran it in reverse on output. ADR 0004 replaced
+that rule for named Pipelines because an outgoing message can need different transforms.

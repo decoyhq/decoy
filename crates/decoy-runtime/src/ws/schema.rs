@@ -1,4 +1,4 @@
-//! Load-time checks for WebSocket Routes (`docs/design/transports.md` §6).
+//! Load-time checks for WebSocket Routes.
 
 use crate::http::path::split_path;
 use crate::matching::ANY;

@@ -44,7 +44,7 @@ pub struct ServeConfig {
     pub commands: BTreeMap<String, CommandsConfig>,
 }
 
-/// One plugin process (`docs/design/plugin-protocol.md`).
+/// One plugin process (`docs/reference/plugin-protocol.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginConfig {
     pub command: Vec<String>,

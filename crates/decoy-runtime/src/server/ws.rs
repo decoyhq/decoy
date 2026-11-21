@@ -157,7 +157,7 @@ async fn serve_socket(
         view.execute_ws(&connection, inbound)
     };
     // Frames are decoded and messages encoded here, one at a time, so a connection's plugin
-    // calls run in order (`docs/design/plugin-protocol.md`).
+    // calls run in order (`docs/reference/plugin-protocol.md`).
     let receive =
         async |frame: Frame, payload: &[u8], stream: &mut Stream, queued: &mut BufferedFrames| {
             match while_connected(stream, queued, codec.decode(frame, payload)).await {
