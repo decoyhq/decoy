@@ -979,8 +979,9 @@ listeners:
     #[test]
     fn listener_can_merge_settings_from_the_main_port() {
         let dir = tempdir().unwrap();
-        fs::write(dir.path().join("decoy.yaml"), "routes: r\ncollections: c.yaml\nport: &main { port: 8000, host: 127.0.0.1 }\nlisteners: { second: { <<: *main, port: 8001 } }").unwrap();
+        fs::write(dir.path().join("decoy.yaml"), "routes: r\ncollections: c.yaml\nport: &main { port: 8000, host: 127.0.0.1 }\nlisteners: { second: { <<: *main, port: 8001 }, plain: 9000 }").unwrap();
         let config = load_raw(dir.path()).unwrap();
+        assert_eq!(config.listeners["plain"].port, 9000);
         assert_eq!(config.listeners["second"].port, 8001);
         assert_eq!(config.listeners["second"].host, "127.0.0.1");
     }
