@@ -390,7 +390,8 @@ miss on input or report a transform failure. A worker process exiting stops Deco
 
 One-shot commands run with the configured argv in the directory of `decoy.yaml`. The command reads
 stdin to EOF, writes its result to stdout, and uses stderr for logs. A nonzero exit fails the
-transform. A terminal WebSocket input command emits JSON for the Message envelope. The last output
+transform. Decoy passes bytes to the next command as-is and serializes structured values as
+UTF-8 JSON for stdin. A command's stdout remains bytes when passed to another step. A terminal WebSocket input command emits JSON for the Message envelope. The last output
 worker selects text or binary by its return value. A terminal output command sends a binary frame.
 
 ## 8. Server-Sent Events
