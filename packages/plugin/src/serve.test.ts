@@ -1,3 +1,4 @@
+import { ok } from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
 import { describe, expect, test } from '@rstest/core'
 import { definePlugin, miss, type Plugin } from './index'
@@ -46,31 +47,29 @@ const connection = { id: 'c-1', route: 'live', session: 's-1' }
 const envelope = definePlugin({
   name: 'envelope',
   version: '1.2.3',
-  steps: {
-    envelope: {
-      async decode(bytes, ctx) {
-        const text = new TextDecoder().decode(bytes)
+  async input(bytes, ctx) {
+    if (!(bytes instanceof Uint8Array)) return bytes
 
-        // A few frames that drive the edge cases.
-        if (text === 'nope') miss('not an envelope')
-        if (text === 'boom') throw new Error('bad frame')
-        if (text === 'proto') return ctx.protobuf.decode('users.v1.User', bytes)
+    const text = new TextDecoder().decode(bytes)
 
-        // Counts frames per connection, to show `ctx.state`.
-        const seen = ((ctx.state.get('seen') as number | undefined) ?? 0) + 1
-        ctx.state.set('seen', seen)
+    // A few frames that drive the edge cases.
+    if (text === 'nope') miss('not an envelope')
+    if (text === 'boom') throw new Error('bad frame')
+    if (text === 'proto') return ctx.protobuf.decode('users.v1.User', bytes)
 
-        return { text, frame: ctx.frame, seen, route: ctx.connection?.route }
-      },
-      encode(value) {
-        return typeof value === 'string' ? value : new TextEncoder().encode(JSON.stringify(value))
-      },
-    },
+    // Counts frames per connection, to show `ctx.state`.
+    const seen = ((ctx.state.get('seen') as number | undefined) ?? 0) + 1
+    ctx.state.set('seen', seen)
+
+    return { text, frame: ctx.frame, seen, route: ctx.connection?.route }
+  },
+  output(value) {
+    return typeof value === 'string' ? value : new TextEncoder().encode(JSON.stringify(value))
   },
 })
 
 describe('serve', () => {
-  test('answers hello with the protocol, its name and its steps', async () => {
+  test('answers hello with the protocol, its name and its directions', async () => {
     const plugin = start(envelope)
     plugin.send({ kind: 'hello', protocol: 1, decoy: '0.4.0' })
     expect(await plugin.next()).toEqual({
@@ -78,80 +77,81 @@ describe('serve', () => {
       protocol: 1,
       name: 'envelope',
       version: '1.2.3',
-      steps: ['envelope'],
-      functions: [],
+      directions: ['input', 'output'],
     })
   })
 
   test('runs calls with their frame, connection and per-connection state', async () => {
     const plugin = start(envelope)
-    const decode = (id: number, text: string, conn = connection) => {
+    const input = (id: number, text: string, conn = connection) => {
       plugin.send({
         kind: 'call',
         id,
-        op: 'decode',
-        step: 'envelope',
+        op: 'input',
         input: new TextEncoder().encode(text),
         frame: 'text',
         connection: conn,
       })
     }
-    decode(1, 'hi')
+    input(1, 'hi')
     expect(await plugin.next()).toEqual({
       kind: 'result',
       id: 1,
       ok: true,
       value: { text: 'hi', frame: 'text', seen: 1, route: 'live' },
     })
-    decode(2, 'again')
+    input(2, 'again')
     expect(await plugin.next()).toMatchObject({ id: 2, value: { seen: 2 } })
-    decode(3, 'other', { ...connection, id: 'c-2' })
+    input(3, 'other', { ...connection, id: 'c-2' })
     expect(await plugin.next()).toMatchObject({ id: 3, value: { seen: 1 } })
 
     plugin.send({ kind: 'close', connection: 'c-1' })
-    decode(4, 'reopened')
+    input(4, 'reopened')
     expect(await plugin.next()).toMatchObject({ id: 4, value: { seen: 1 } })
 
-    plugin.send({ kind: 'call', id: 5, op: 'encode', step: 'envelope', input: { a: 1 } })
+    plugin.send({ kind: 'call', id: 5, op: 'output', input: { a: 1 } })
     const encoded = await plugin.next()
     expect(encoded).toMatchObject({ kind: 'result', id: 5, ok: true })
-    expect(new TextDecoder().decode(encoded.value as Uint8Array)).toBe('{"a":1}')
+    ok(encoded.value instanceof Uint8Array)
+    expect(new TextDecoder().decode(encoded.value)).toBe('{"a":1}')
+
+    plugin.send({ kind: 'call', id: 6, op: 'input', input: { a: 1 } })
+    expect(await plugin.next()).toMatchObject({ id: 6, value: { a: 1 } })
   })
 
-  test('reports a miss, a thrown error with its stack, and an unknown step', async () => {
-    const plugin = start(envelope)
-    const call = (id: number, step: string, text: string) => {
+  test('reports a miss, a thrown error with its stack, and an unavailable direction', async () => {
+    const plugin = start({ name: envelope.name, version: envelope.version, input: envelope.input })
+    const call = (id: number, text: string) => {
       plugin.send({
         kind: 'call',
         id,
-        op: 'decode',
-        step,
+        op: 'input',
         input: new TextEncoder().encode(text),
         frame: 'binary',
       })
     }
-    call(1, 'envelope', 'nope')
+    call(1, 'nope')
     expect(await plugin.next()).toEqual({
       kind: 'result',
       id: 1,
       ok: false,
       miss: 'not an envelope',
     })
-    call(2, 'envelope', 'boom')
+    call(2, 'boom')
     const failed = await plugin.next()
     expect(failed).toMatchObject({ id: 2, ok: false, error: 'bad frame' })
     expect(failed.stack).toContain('bad frame')
-    call(3, 'missing', 'x')
+    plugin.send({ kind: 'call', id: 3, op: 'output', input: 'x' })
     expect(await plugin.next()).toMatchObject({
       id: 3,
       ok: false,
-      error: 'plugin envelope has no step `missing`',
+      error: 'plugin envelope does not provide output',
     })
   })
 
-  test('a step without check passes it', async () => {
+  test('a worker without check passes it', async () => {
     const plugin = start(envelope)
-    plugin.send({ kind: 'call', id: 1, op: 'check', step: 'envelope', input: { a: '${ x }' } })
+    plugin.send({ kind: 'call', id: 1, op: 'check', input: { a: '${ x }' } })
     expect(await plugin.next()).toEqual({ kind: 'result', id: 1, ok: true, value: null })
   })
 
@@ -161,8 +161,7 @@ describe('serve', () => {
     plugin.send({
       kind: 'call',
       id: 1,
-      op: 'decode',
-      step: 'envelope',
+      op: 'input',
       input: bytes,
       frame: 'binary',
     })
@@ -176,8 +175,7 @@ describe('serve', () => {
     plugin.send({
       kind: 'call',
       id: 2,
-      op: 'decode',
-      step: 'envelope',
+      op: 'input',
       input: bytes,
       frame: 'binary',
     })
@@ -211,6 +209,7 @@ describe('definePlugin', () => {
   test('returns the plugin without serving it outside Decoy', () => {
     expect(process.env.DECOY_PLUGIN).toBeUndefined()
     expect(envelope.name).toBe('envelope')
-    expect(Object.keys(envelope.steps)).toEqual(['envelope'])
+    expect(typeof envelope.input).toBe('function')
+    expect(typeof envelope.output).toBe('function')
   })
 })
