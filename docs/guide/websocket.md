@@ -79,10 +79,24 @@ Collections and Sessions work as for HTTP: `on: connect` Cases are entries like 
 | `message`  | one reply. A string goes out as-is; a mapping or list goes out as JSON text.                |
 | `messages` | a list of `{ message, delay? }` items, each sent `delay` after the one before.              |
 | `close`    | `{ code, reason }`: close the socket after the messages. `code` is `1000` or `3000`–`4999`. |
-| `delay`    | wait before the first message.                                                              |
+| `delay`    | initial wait, applied once before the Behavior sends anything.                              |
 
 Use `message` or `messages`, not both. Every string is templated against the message envelope:
 `{ path, pathParams, query, headers, cookies, message }`.
+
+The Behavior-level `delay` works with either `message` or `messages`. An item-level `delay`
+adds a wait before that item, measured from the previous send. On the first item, the two
+delays add up. Both fields accept a nonnegative integer in milliseconds or a duration string.
+
+```yaml
+updates:
+  delay: 1000
+  messages:
+    - { message: subscribed, delay: 250ms }
+    - { message: update, delay: 500ms }
+```
+
+Decoy sends `subscribed` after 1.25 seconds and `update` 0.5 seconds later.
 
 Each reply runs on its own timer. If a message arrives while an earlier reply still has delayed
 items, both go out as their timers fire, interleaved. When the socket closes, pending items are

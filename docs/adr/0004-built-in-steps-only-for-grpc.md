@@ -1,42 +1,22 @@
-# 0004. Built-in pipeline steps only for gRPC; other formats are plugins
+# 0004. Named Transformers and gRPC built-ins
 
 Date: 2026-10-22
 
 ## Status
 
-Accepted. Amends ADR 0002: its "Built-in steps first" bullet listed `msgpack` and `json` as well,
-its plugins were declared by "manifest + executable" (now `command` only), and it had built-in
-steps working before the plugin worker contract (now the reverse).
+Amends [ADR 0002](0002-pipeline-steps-and-plugin-workers.md). See the [Transport transformers PRD](../design/transport-transformers-prd.md).
 
 ## Context
 
-ADR 0002 planned `grpc-frame`, `protobuf`, `msgpack` and `json` as built-in steps. Designing
-WebSocket (#218, `docs/design/transports.md`) against real sockets showed that the binary formats
-apps put on a socket are app-specific: a msgpack map naming its proto type, a hand-rolled binary
-header in front of a protobuf payload, compression around either. Each one asked Decoy for more
-config: `protobuf` type options (`typeFrom`, `typeBy`, a `${ }` key), per-frame-kind pipelines, and
-a declarative `frame` step. That config grew with every new format and still couldn't describe the
-next one.
+WebSocket apps use application-specific framing, protobuf type selection, compression, and JSON normalization. A fixed list of codecs would require Decoy-specific configuration for each new combination. A single list also assumes input is the inverse of output.
 
 ## Decision
 
-- **Decoy ships only `grpc-frame` and `protobuf`**, as the gRPC default pipeline, typed by the
-  Route's `service`/`method`. No `json`, `msgpack`, or declarative framing step.
-- **Every other wire format is a plugin step** (ADR 0002 plugin workers). Plugins reach the protos
-  Decoy already compiled through SDK host calls, so they don't load `.proto` files themselves.
-- **Without a pipeline**, a WebSocket text frame is JSON when it parses and a string otherwise, and a
-  binary frame is a MISS. This is the transport's default, not a step.
-- **Frame kind belongs to the plugin:** it reads `text`/`binary` inbound and picks it outbound by
-  returning a string or bytes. Config has no `frame` key.
-- **Plugin failures are loud.** A failed call is an error event with everything needed to fix it;
-  the plugin process exiting stops Decoy. Decoy doesn't retry or restart.
+- Declare named `transformers` and `pipelines` in `decoy.yaml`. A Route selects a Pipeline. Each Pipeline has independently ordered `input` and `output` lists of Transformer references. Both lists run top to bottom.
+- Use workers for persistent transforms and commands for one-shot transforms. One worker provides the configured directions and can keep state per connection. The SDK and language-neutral protocol use `input` and `output`. A command reads bytes to EOF on stdin and writes the result to stdout.
+- Keep `grpc-frame` and `protobuf` as the built-in gRPC default typed by `service` and `method`. Put application-specific transforms in workers or commands. Workers can access Decoy's loaded protobuf schemas through host calls.
+- Each transport defines its Pipeline boundaries. For WebSocket output, worker strings become text frames and bytes become binary frames. A terminal command produces binary frames. A WebSocket Route without a Pipeline keeps its normal text handling.
 
 ## Consequences
 
-- Raw protobuf over WebSocket, which a built-in `protobuf` step with `in`/`out` could have covered,
-  needs a small plugin.
-- The plugin worker and the `@decoyhq/plugin` SDK must land before any binary WebSocket format can
-  be mocked. JSON and text sockets work without them.
-- Decoy's config surface stays fixed; formats grow in user code, where they can reuse the app's own
-  pack/unpack logic.
-- Built-in steps can still be added later if one format turns out common across many users.
+Routes can combine small commands with stateful workers without adding config syntax for a wire format. A list makes the order visible even when output transforms differ from input transforms. An SSE integration can use only `output`.
