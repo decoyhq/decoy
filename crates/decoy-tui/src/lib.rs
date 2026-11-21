@@ -70,7 +70,6 @@ pub async fn run(
         no_color: std::env::var_os("NO_COLOR").is_some_and(|value| !value.is_empty()),
         clock: log::local_clock,
     });
-    app.info(format!("decoy {}", env!("CARGO_PKG_VERSION")));
     for notice in &server.notices {
         app.info(notice.clone());
     }
@@ -80,6 +79,8 @@ pub async fn run(
     if let Some(watcher) = &watching {
         app.info(watcher.describe());
     }
+
+    app.startup_entries = app.log.len();
 
     let mut events = server.subscribe();
     let mut served = tokio::spawn(server.wait());

@@ -93,6 +93,8 @@ pub struct App {
     pub(crate) clock: fn(SystemTime) -> String,
 
     pub(crate) log: Log,
+    /// Startup notices precede the first interactive log entry.
+    pub(crate) startup_entries: usize,
     pub(crate) input: String,
     /// Submitted lines, oldest first, for ↑/↓.
     history: Vec<String>,
@@ -141,6 +143,7 @@ impl App {
             no_color: options.no_color,
             clock: options.clock,
             log: Log::default(),
+            startup_entries: 0,
             input: String::new(),
             history: Vec::new(),
             history_at: None,
