@@ -695,10 +695,21 @@ impl From<Behavior> for RawBehavior {
     }
 }
 
+impl From<crate::yaml::Error> for ValidationError {
+    fn from(error: crate::yaml::Error) -> Self {
+        match error {
+            crate::yaml::Error::Plain(error) => Self::Yaml(error),
+            crate::yaml::Error::Merge(error) => Self::MergedYaml(error),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ValidationError {
     #[error("failed to parse route yaml: {0}")]
-    Yaml(#[from] crate::yaml::Error),
+    Yaml(#[from] serde_norway::Error),
+    #[error("failed to parse route yaml: {0}")]
+    MergedYaml(#[source] Box<serde_saphyr::Error>),
     #[error("{kind} id `{id}` cannot be empty")]
     EmptyId { kind: &'static str, id: String },
     #[error(

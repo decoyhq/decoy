@@ -521,13 +521,17 @@ fn read_config_file(path: &Path) -> Result<NativeConfigFile, ConfigError> {
         path: path.to_path_buf(),
         source,
     })?;
-    crate::yaml::from_str(&input).map_err(|schema_error| ConfigError::ParseConfig {
-        path: path.to_path_buf(),
+    crate::yaml::from_str(&input).map_err(|schema_error| {
+        let path = path.to_path_buf();
         // A visitor may reject a field before reaching a syntax error later in its value.
-        source: serde_norway::from_str::<serde_norway::Value>(&input)
+        let error = serde_norway::from_str::<serde_norway::Value>(&input)
             .err()
             .map(crate::yaml::Error::from)
-            .unwrap_or(schema_error),
+            .unwrap_or(schema_error);
+        match error {
+            crate::yaml::Error::Plain(source) => ConfigError::ParseConfig { path, source },
+            crate::yaml::Error::Merge(source) => ConfigError::ParseMergedConfig { path, source },
+        }
     })
 }
 
@@ -567,7 +571,12 @@ pub enum ConfigError {
     #[error("failed to parse config `{}`: {source}", path.display())]
     ParseConfig {
         path: PathBuf,
-        source: crate::yaml::Error,
+        source: serde_norway::Error,
+    },
+    #[error("failed to parse config `{}`: {source}", path.display())]
+    ParseMergedConfig {
+        path: PathBuf,
+        source: Box<serde_saphyr::Error>,
     },
     #[error("`{second}` uses port {port}, already taken by `{first}`")]
     PortConflict {

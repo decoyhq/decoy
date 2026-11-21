@@ -2,7 +2,7 @@
 use serde::de::DeserializeOwned;
 
 #[derive(Debug, thiserror::Error)]
-pub enum Error {
+pub(crate) enum Error {
     #[error(transparent)]
     Plain(#[from] serde_norway::Error),
     #[error(transparent)]
@@ -13,11 +13,15 @@ impl Error {
     pub(crate) fn line(&self) -> Option<usize> {
         match self {
             Self::Plain(error) => error.location().map(|loc| loc.line()),
-            Self::Merge(error) => error
-                .locations()
-                .map(|loc| loc.defined_location.line() as usize),
+            Self::Merge(error) => merged_error_line(error),
         }
     }
+}
+
+pub(crate) fn merged_error_line(error: &serde_saphyr::Error) -> Option<usize> {
+    error
+        .locations()
+        .map(|loc| loc.defined_location.line() as usize)
 }
 
 fn has_merge_key(input: &str) -> bool {

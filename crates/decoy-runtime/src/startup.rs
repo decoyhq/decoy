@@ -259,7 +259,7 @@ fn decode_route(path: &Path, input: &str, runtime: &RuntimeConfig) -> Result<Rou
     let route = Route::decode_yaml(input).map_err(|error| {
         StartupError::with_source(
             StartupDiagnosticKind::Schema,
-            source_from_yaml_error(path, &error),
+            source_with_line(path, error.line()),
             format!("failed to decode route schema: {error}"),
         )
     })?;
@@ -274,7 +274,7 @@ fn decode_collections(path: &Path, input: &str) -> Result<Vec<Collection>, Start
     crate::yaml::from_str::<Vec<Collection>>(input).map_err(|error| {
         StartupError::with_source(
             StartupDiagnosticKind::Schema,
-            source_from_yaml_error(path, &error),
+            source_with_line(path, error.line()),
             format!("failed to decode collections schema: {error}"),
         )
     })
@@ -285,7 +285,7 @@ fn parse_yaml(path: &Path, input: &str) -> Result<YamlValue, StartupError> {
         let error = crate::yaml::Error::from(error);
         StartupError::with_source(
             StartupDiagnosticKind::Parse,
-            source_from_yaml_error(path, &error),
+            source_with_line(path, error.line()),
             error.to_string(),
         )
     })
@@ -301,7 +301,12 @@ fn route_error(path: &Path, error: ValidationError) -> StartupError {
 
 fn collection_error(path: &Path, error: CollectionError) -> StartupError {
     let source = match &error {
-        CollectionError::Yaml(error) => source_from_yaml_error(path, error),
+        CollectionError::Yaml(error) => {
+            source_with_line(path, error.location().map(|loc| loc.line()))
+        }
+        CollectionError::MergedYaml(error) => {
+            source_with_line(path, crate::yaml::merged_error_line(error))
+        }
         CollectionError::Validation(error) => source_from_validation_error(path, error),
         _ => SourceLocation::path(path),
     };
@@ -310,14 +315,19 @@ fn collection_error(path: &Path, error: CollectionError) -> StartupError {
 
 fn source_from_validation_error(path: &Path, error: &ValidationError) -> SourceLocation {
     match error {
-        ValidationError::Yaml(error) => source_from_yaml_error(path, error),
+        ValidationError::Yaml(error) => {
+            source_with_line(path, error.location().map(|loc| loc.line()))
+        }
+        ValidationError::MergedYaml(error) => {
+            source_with_line(path, crate::yaml::merged_error_line(error))
+        }
         _ => SourceLocation::path(path),
     }
 }
 
-fn source_from_yaml_error(path: &Path, error: &crate::yaml::Error) -> SourceLocation {
+fn source_with_line(path: &Path, line: Option<usize>) -> SourceLocation {
     let mut source = SourceLocation::path(path);
-    source.line = error.line();
+    source.line = line;
     source
 }
 
@@ -380,7 +390,7 @@ fn validate_collection_references(
 #[cfg(test)]
 mod tests {
     use super::decode_route;
-    use crate::{CollectionsFile, Route};
+
     use std::fs;
     use std::path::Path;
 
@@ -484,22 +494,23 @@ cases:
         let choices =
             "- &base { id: local, routes: [merged:any:created] }\n- { <<: *base, id: copied }";
         write(&collections, choices);
-        load_catalog_from_files(&routes, &collections, RuntimeConfig::default(), None).unwrap();
-        let parsed = Route::from_yaml(route).unwrap();
-        let behavior = &parsed.cases["any"].behaviors["created"];
+        let startup =
+            load_catalog_from_files(&routes, &collections, RuntimeConfig::default(), None).unwrap();
+        let activations: Vec<_> = startup
+            .catalog
+            .activations("copied", &[])
+            .unwrap()
+            .collect();
+        assert_eq!(activations.len(), 1);
+        let active = activations[0];
+        assert_eq!(active.address(), "merged:any:created");
+        let route = startup.catalog.route(&active.route).unwrap();
+        let behavior = &route.cases[&active.case].behaviors[&active.behavior];
         let crate::Behavior::Response(response) = behavior else {
             panic!("expected response")
         };
         assert_eq!(response.body, Some(serde_json::json!("first")));
         assert_eq!(response.status, Some(serde_json::json!(201)));
-        assert_eq!(
-            CollectionsFile::from_yaml(choices)
-                .unwrap()
-                .resolve("copied")
-                .unwrap()[0]
-                .address(),
-            "merged:any:created"
-        );
     }
 
     #[test]
@@ -518,6 +529,8 @@ cases:
       copied:
         <<: *base
 "#;
+        let (anchor_only, _) = input.split_once("      copied:").unwrap();
+        decode_route(path, anchor_only, &RuntimeConfig::default()).unwrap();
         let err = decode_route(path, input, &RuntimeConfig::default()).unwrap_err();
         assert_eq!(err.diagnostic.source.path, path);
         assert_eq!(err.diagnostic.source.line, Some(10), "{err}");

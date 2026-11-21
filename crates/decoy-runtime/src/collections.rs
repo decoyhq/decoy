@@ -224,10 +224,21 @@ impl CollectionsFile {
     }
 }
 
+impl From<crate::yaml::Error> for CollectionError {
+    fn from(error: crate::yaml::Error) -> Self {
+        match error {
+            crate::yaml::Error::Plain(error) => Self::Yaml(error),
+            crate::yaml::Error::Merge(error) => Self::MergedYaml(error),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum CollectionError {
     #[error("failed to parse collections yaml: {0}")]
-    Yaml(#[from] crate::yaml::Error),
+    Yaml(#[from] serde_norway::Error),
+    #[error("failed to parse collections yaml: {0}")]
+    MergedYaml(#[source] Box<serde_saphyr::Error>),
     #[error(transparent)]
     Validation(#[from] ValidationError),
     #[error("collection route address `{address}` must use route:case:behavior")]
