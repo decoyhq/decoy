@@ -31,6 +31,13 @@ const KINDS: Kind[] = ['REQUEST', 'REPLY', 'ERROR', 'EVENT']
 const text = new TextEncoder()
 const utf8 = new TextDecoder()
 
+function unsigned(value: number, maximum: number, field: string): number {
+  if (!Number.isInteger(value) || value < 0 || value > maximum) {
+    throw new Error(`binaryRpc: ${field} must be an integer from 0 through ${maximum}`)
+  }
+  return value
+}
+
 export function binaryRpc({ topics, kinds = {} }: BinaryRpcOptions) {
   const codes: Record<Kind, number> = { REQUEST: 1, REPLY: 2, ERROR: 3, EVENT: 4, ...kinds }
 
@@ -81,7 +88,8 @@ export function binaryRpc({ topics, kinds = {} }: BinaryRpcOptions) {
       const body = bytes.subarray(topicEnd + 4)
 
       if (kind === 'ERROR') {
-        const code = body.length >= 2 ? new DataView(body.buffer, body.byteOffset).getUint16(0) : 0
+        if (body.length < 2) miss('ERROR frame ends before its code')
+        const code = new DataView(body.buffer, body.byteOffset).getUint16(0)
         return { kind, topic, id, error: { code, reason: utf8.decode(body.subarray(2)) } }
       }
 
@@ -100,14 +108,19 @@ export function binaryRpc({ topics, kinds = {} }: BinaryRpcOptions) {
       if (id === undefined && value.kind === 'EVENT') {
         // Per-connection state: each socket numbers its events 1, 2, …
         id = ((ctx.state.get('events') as number | undefined) ?? 0) + 1
-        ctx.state.set('events', id)
       }
 
+      const wireId = unsigned(id ?? 0, 0xffffffff, 'id')
+      const topic = text.encode(value.topic)
+      unsigned(topic.length, 0xffff, 'topic length')
       let body: Uint8Array
       if (value.kind === 'ERROR') {
         const reason = text.encode(value.error?.reason ?? '')
         body = new Uint8Array(2 + reason.length)
-        new DataView(body.buffer).setUint16(0, value.error?.code ?? 0)
+        new DataView(body.buffer).setUint16(
+          0,
+          unsigned(value.error?.code ?? 0, 0xffff, 'error code'),
+        )
         body.set(reason, 2)
       } else {
         const type = typeOf(value)
@@ -115,16 +128,16 @@ export function binaryRpc({ topics, kinds = {} }: BinaryRpcOptions) {
         body = await ctx.protobuf.encode(type, value.payload ?? {})
       }
 
-      const topic = text.encode(value.topic)
       const frame = new Uint8Array(3 + topic.length + 4 + body.length)
       const view = new DataView(frame.buffer)
 
       frame[0] = codes[value.kind]
       view.setUint16(1, topic.length)
       frame.set(topic, 3)
-      view.setUint32(3 + topic.length, id ?? 0)
+      view.setUint32(3 + topic.length, wireId)
       frame.set(body, 3 + topic.length + 4)
 
+      if (value.kind === 'EVENT' && value.id === undefined) ctx.state.set('events', wireId)
       return frame
     },
 

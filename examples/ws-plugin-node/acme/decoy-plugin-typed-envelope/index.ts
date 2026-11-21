@@ -39,13 +39,14 @@ export function typedEnvelope({
       }
 
       // `miss` skips the frame: Decoy logs the reason and keeps the socket open.
-      let envelope: Envelope
+      let envelope: unknown
       try {
-        envelope = decode(bytes) as Envelope
+        envelope = decode(bytes)
       } catch {
         miss('binary frame is not msgpack')
       }
 
+      if (!isEnvelope(envelope)) miss('binary frame is missing its envelope type')
       const type = envelope[typeField]
       if (typeof type !== 'string' || !(await ctx.protobuf.has(type))) {
         miss(`unknown type ${String(type)}`)

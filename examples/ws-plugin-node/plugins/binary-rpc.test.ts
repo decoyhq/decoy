@@ -6,6 +6,7 @@ import { binaryRpc } from '@acme/decoy-plugin-binary-rpc'
 import { type Context, Miss } from '@decoyhq/plugin'
 import { decodeProto, encodeProto, protos } from '../tests/decoy.ts'
 import plugin from './binary-rpc.ts'
+import envelope from './typed-envelope.ts'
 
 /** What Decoy hands a step; protobufjs stands in for Decoy's protos. */
 const ctx = (frame?: 'text' | 'binary', state = new Map<string, unknown>()): Context => ({
@@ -56,4 +57,19 @@ void test('kind overrides must be distinct bytes', () => {
   assert.throws(() => withCode(2), /own byte/)
   assert.doesNotThrow(() => withCode(0))
   assert.doesNotThrow(() => withCode(255))
+})
+
+void test('malformed frames are misses and oversized RPC fields are rejected', async () => {
+  for (const body of [[], [0]]) {
+    const bytes = Uint8Array.from([3, 0, 0, 0, 0, 0, 0, ...body])
+    await assert.rejects(Promise.resolve(plugin.input(bytes, ctx('binary'))), Miss)
+  }
+  await assert.rejects(Promise.resolve(envelope.input(Uint8Array.of(0xc0), ctx('binary'))), Miss)
+  const error = { kind: 'ERROR', topic: 'users.get', id: 1 }
+  for (const bad of [{ id: 2 ** 32 }, { error: { code: 65537 } }, { topic: 'x'.repeat(65536) }]) {
+    await assert.rejects(
+      Promise.resolve(plugin.output({ ...error, ...bad }, ctx())),
+      /must be an integer/,
+    )
+  }
 })
