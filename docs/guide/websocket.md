@@ -79,7 +79,7 @@ Collections and Sessions work as for HTTP: `on: connect` Cases are entries like 
 | `message`  | one reply. A string goes out as-is; a mapping or list goes out as JSON text.                |
 | `messages` | a list of `{ message, delay? }` items, each sent `delay` after the one before.              |
 | `close`    | `{ code, reason }`: close the socket after the messages. `code` is `1000` or `3000`–`4999`. |
-| `delay`    | initial wait, applied once before the Behavior sends anything.                             |
+| `delay`    | initial wait, applied once before the Behavior sends anything.                              |
 
 Use `message` or `messages`, not both. Every string is templated against the message envelope:
 `{ path, pathParams, query, headers, cookies, message }`.
