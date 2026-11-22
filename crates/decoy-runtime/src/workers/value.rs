@@ -41,11 +41,24 @@ enum Path<'a> {
 
 impl fmt::Display for Path<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Root => f.write_str("$"),
-            Self::Item(parent, index) => write!(f, "{parent}[{index}]"),
-            Self::Field(parent, key) => write!(f, "{parent}.{key}"),
+        // Conversion is still on the stack, so render the parent chain iteratively.
+        let mut segments = Vec::new();
+        let mut segment = self;
+        loop {
+            segments.push(segment);
+            segment = match segment {
+                Self::Root => break,
+                Self::Item(parent, _) | Self::Field(parent, _) => parent,
+            };
         }
+        for segment in segments.into_iter().rev() {
+            match segment {
+                Self::Root => f.write_str("$")?,
+                Self::Item(_, index) => write!(f, "[{index}]")?,
+                Self::Field(_, key) => write!(f, ".{key}")?,
+            }
+        }
+        Ok(())
     }
 }
 
@@ -119,6 +132,21 @@ mod tests {
         let key = Msgpack::Map(vec![(Msgpack::from(1), Msgpack::Nil)]);
         assert!(to_json(&key).unwrap_err().contains("not a string"));
         assert!(to_json(&Msgpack::F64(f64::NAN)).is_err());
+    }
+
+    #[test]
+    fn deep_error_paths_keep_all_segments_in_order() {
+        let depth = 256;
+        let value = (0..depth).fold(Msgpack::Binary(vec![1]), |leaf, _| {
+            Msgpack::Map(vec![("child".into(), Msgpack::Array(vec![leaf]))])
+        });
+        assert_eq!(
+            to_json(&value).unwrap_err(),
+            format!(
+                "`${}` is bytes, which JSON can't hold",
+                ".child[0]".repeat(depth)
+            )
+        );
     }
 
     #[test]
