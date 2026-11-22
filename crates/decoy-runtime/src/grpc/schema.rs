@@ -563,7 +563,7 @@ fn canonical_well_known(
     }
 }
 
-/// A canonical 64-bit string has no sign, padding, or leading zeros (`"5"`, not `"+05"`).
+/// A canonical 64-bit string has no plus sign, padding, or leading zeros (`"5"`, not `"+05"`).
 fn canonical_integer(value: &Value, number: i128, form: Form) -> bool {
     form == Form::Any || value.as_str() == Some(number.to_string().as_str())
 }
@@ -761,6 +761,31 @@ cases:
                 .unwrap_err()
                 .contains("expects approvals.v1.State")
         );
+    }
+
+    #[test]
+    fn canonical_integer_literals_keep_protobuf_width_and_spelling() {
+        use serde_json::json;
+
+        for (kind, valid, invalid) in [
+            (Kind::Int32, json!(i32::MIN), json!(i64::from(i32::MIN) - 1)),
+            (Kind::Uint32, json!(u32::MAX), json!(-1)),
+            (
+                Kind::Int64,
+                json!("-9223372036854775808"),
+                json!("-9223372036854775809"),
+            ),
+            (
+                Kind::Uint64,
+                json!("18446744073709551615"),
+                json!("18446744073709551616"),
+            ),
+            (Kind::Int64, json!("5"), json!("+05")),
+            (Kind::Uint64, json!("0"), json!("-0")),
+        ] {
+            assert!(check_kind(&valid, &kind, "field", Form::Canonical).is_ok());
+            assert!(check_kind(&invalid, &kind, "field", Form::Canonical).is_err());
+        }
     }
 
     #[test]
