@@ -30,6 +30,31 @@ test('waits for a split header and payload, then reads all complete messages in 
   expect(messages).toEqual([first, second])
 })
 
+test('preserves binary values after receiving and consuming more chunks', () => {
+  const serialized = new PassThrough()
+  const first = { kind: 'call', binary: Buffer.from([1, 2, 3]) }
+  const second = { kind: 'call', binary: Buffer.alloc(32 * 1024, 42) }
+  write(serialized, first)
+  write(serialized, second)
+  const bytes: unknown = serialized.read()
+  ok(Buffer.isBuffer(bytes))
+
+  const input = new PassThrough()
+  const messages: WireMessage[] = []
+  read(
+    input,
+    (message) => messages.push(message),
+    (error) => {
+      throw error
+    },
+  )
+  for (let start = 0; start < bytes.length; start += 1024) {
+    input.write(bytes.subarray(start, start + 1024))
+  }
+  bytes.fill(0)
+  expect(messages).toEqual([first, second])
+})
+
 test('rejects a valid msgpack value without a protocol kind', () => {
   const input = new PassThrough()
   const messages: WireMessage[] = []

@@ -26,13 +26,27 @@ export function read(
   onMessage: (message: WireMessage) => void,
   onError: (error: Error) => void,
 ): void {
-  // Bytes received but not yet a whole message.
-  let buffer = Buffer.alloc(0)
+  // Spare capacity follows the unread bytes. Never reuse consumed storage: decoded
+  // binary values may still reference it.
+  let buffer: Buffer | undefined
+  let used = 0
 
   input.on('data', (chunk: Buffer) => {
-    buffer = Buffer.concat([buffer, chunk])
+    if (!buffer) {
+      buffer = Buffer.from(chunk)
+    } else {
+      const needed = used + chunk.length
+      if (needed > buffer.length) {
+        const capacity = Math.max(needed, Math.min(used * 2, MAX_MESSAGE + 4))
+        const grown = Buffer.allocUnsafe(capacity)
+        buffer.copy(grown, 0, 0, used)
+        buffer = grown
+      }
+      chunk.copy(buffer, used)
+    }
+    used += chunk.length
 
-    while (buffer.length >= 4) {
+    while (used >= 4) {
       const length = buffer.readUInt32BE(0)
       if (length > MAX_MESSAGE) {
         onError(new Error(`message of ${length} bytes is over the ${MAX_MESSAGE} byte limit`))
@@ -40,10 +54,13 @@ export function read(
       }
 
       // Wait for the rest of this message.
-      if (buffer.length < 4 + length) return
+      const end = 4 + length
+      if (used < end) return
 
-      const body = buffer.subarray(4, 4 + length)
-      buffer = buffer.subarray(4 + length)
+      const body = buffer.subarray(4, end)
+      buffer = buffer.subarray(end)
+      used -= end
+      if (used === 0) buffer = undefined
 
       let message: unknown
       try {
@@ -58,6 +75,7 @@ export function read(
       }
 
       onMessage(message)
+      if (!buffer) return
     }
   })
 }
