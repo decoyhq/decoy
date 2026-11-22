@@ -106,11 +106,30 @@ impl CapturedBody {
     }
 
     pub fn decoded(value: &Value) -> Self {
-        let text = serde_json::to_vec(value).expect("JSON value serializes");
-        Self {
+        let mut capture = JsonCapture(Self {
+            bytes: Vec::new(),
             decoded: true,
-            ..Self::raw(&text)
-        }
+            size: 0,
+        });
+        serde_json::to_writer(&mut capture, value).expect("JSON value serializes");
+        capture.0
+    }
+}
+
+struct JsonCapture(CapturedBody);
+
+impl std::io::Write for JsonCapture {
+    fn write(&mut self, chunk: &[u8]) -> std::io::Result<usize> {
+        let body = &mut self.0;
+        let room = BODY_CAP - body.bytes.len();
+        body.bytes
+            .extend_from_slice(&chunk[..chunk.len().min(room)]);
+        body.size += chunk.len();
+        Ok(chunk.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
@@ -269,5 +288,16 @@ mod tests {
         let body = CapturedBody::decoded(&serde_json::json!({ "id": "a-1" }));
         assert_eq!(body.bytes, br#"{"id":"a-1"}"#);
         assert_eq!((body.decoded, body.size), (true, 12));
+    }
+
+    #[test]
+    fn decoded_capture_counts_escaped_and_multibyte_json_past_the_prefix() {
+        let value = serde_json::json!({ "text": "a\"😀\n".repeat(BODY_CAP) });
+        let expected = serde_json::to_vec(&value).unwrap();
+        let body = CapturedBody::decoded(&value);
+        assert!(expected.len() > BODY_CAP);
+        assert_eq!(body.bytes, expected[..BODY_CAP]);
+        assert_eq!(body.size, expected.len());
+        assert!(body.decoded);
     }
 }
