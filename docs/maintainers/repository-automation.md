@@ -50,24 +50,34 @@ choose **Only select repositories → decoy**, save. All are free for public rep
 - Optional: **Allow auto-merge**, so a PR merges once its required checks pass.
 
 **Settings → Rules → Rulesets → New branch ruleset** for `main` (optional but recommended):
-require a pull request and the status checks `required` (the aggregate of every `ci.yml` job, so
-example and matrix jobs can change freely), `conventional`, `autofix`, `coverage`,
-`analyze (actions)`, `analyze (javascript-typescript)` and `analyze (rust)`. Don't require
-`zizmor` or the Release jobs: they only run when their paths change, so a required one would
-leave other PRs waiting. CodeRabbit and Codecov report; they don't gate.
+require a pull request and the status checks `required` (the aggregate of blocking CI jobs,
+including affected CodeQL and coverage jobs), `conventional`, and `autofix`. Don't require
+individual CodeQL matrix jobs, coverage, `zizmor`, or Release jobs: they can be absent on a PR
+that doesn't affect them. CodeRabbit and Codecov report; they don't gate.
+
+### Full validation on a pull request
+
+By default, CI uses the base branch's path policy to select jobs from the tested merge diff.
+A change to the policy triggers a full run instead. Editing another workflow runs Actions scanning,
+not the entire product test suite; editing the coverage workflow also runs coverage. Pushes to
+`main` and scheduled CodeQL runs still use the full suite.
+
+To exercise every job before merging a CI change, add the `ci:full` label before a push or when the
+PR is reopened or marked ready for review. Adding the label alone (or rerunning an earlier run)
+does not start a new full run.
 
 ### 3. Check it works
 
 Open a draft PR with a badly formatted change and a title like `update stuff`, then mark it
 ready for review. Expect:
 
-| Check        | Expected                                                                |
-| ------------ | ----------------------------------------------------------------------- |
-| `PR title`   | fails until the title is a Conventional Commit, e.g. `chore: demo bots` |
-| `autofix.ci` | pushes a `[autofix.ci] apply automated fixes` commit                    |
-| CodeRabbit   | posts a summary and review comments                                     |
-| `CodeQL`     | three analyses; findings appear under Security → Code scanning          |
-| `zizmor`     | runs when `.github/**` changes; findings go to Code scanning            |
-| `Coverage`   | Codecov comments with Rust and JS coverage                              |
+| Check        | Expected                                                                       |
+| ------------ | ------------------------------------------------------------------------------ |
+| `PR title`   | fails until the title is a Conventional Commit, e.g. `chore: demo bots`        |
+| `autofix.ci` | pushes a `[autofix.ci] apply automated fixes` commit                           |
+| CodeRabbit   | posts a summary and review comments                                            |
+| `CodeQL`     | affected languages only on PRs; findings appear under Security → Code scanning |
+| `zizmor`     | runs when `.github/**` changes; findings go to Code scanning                   |
+| `Coverage`   | Codecov reports the Rust or JS coverage that ran                               |
 
 Renovate shows up separately: the Dependency Dashboard issue and its PRs.

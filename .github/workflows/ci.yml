@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 permissions:
   contents: read
@@ -13,19 +14,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # What changed, and which examples exist. Jobs below skip what a change can't affect (a skipped
-  # job still satisfies `required`); pushes to main run everything.
+  # Skips satisfy `required`. Main and ci:full PRs opt out of path filtering.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: read
-      pull-requests: read
     outputs:
-      js: ${{ github.event_name == 'push' || steps.filter.outputs.js == 'true' }}
-      docs: ${{ github.event_name == 'push' || steps.filter.outputs.docs == 'true' }}
-      rust: ${{ github.event_name == 'push' || steps.filter.outputs.rust == 'true' }}
-      e2e: ${{ github.event_name == 'push' || steps.filter.outputs.e2e == 'true' }}
+      js: ${{ steps.scope.outputs.js }}
+      lint: ${{ steps.scope.outputs.lint }}
+      js-lint: ${{ steps.scope.outputs.js-lint }}
+      rust: ${{ steps.scope.outputs.rust }}
+      e2e: ${{ steps.scope.outputs.e2e }}
+      js-coverage: ${{ steps.scope.outputs.js-coverage }}
+      codeql: ${{ steps.scope.outputs.codeql }}
       ub-mode: ${{ steps.ub-mode.outputs.changed }}
       examples: ${{ steps.find.outputs.examples }}
       has-examples: ${{ steps.find.outputs.has-examples }}
@@ -35,49 +35,37 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 2 # The PR merge commit and its base parent for UB-mode.
+          fetch-depth: 2 # The PR merge commit and its base parent.
+      - id: scope
+        env:
+          CI_FULL: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full') }}
+        run: |
+          policy=.github/scripts/ci_scope.py
+          if [[ "$CI_FULL" == true ]] ||
+             ! git diff --quiet --no-ext-diff HEAD^1 HEAD -- "$policy" ||
+             ! git cat-file -e "HEAD^1:$policy"; then
+            # A new or changed classifier cannot decide which checks validate it.
+            printf '%s\n' lint=true js-lint=true rust=true versions=true js=true js-coverage=true e2e=true \
+              'codeql=["actions","javascript-typescript","rust"]' >> "$GITHUB_OUTPUT"
+          else
+            base_policy=$(git show "HEAD^1:$policy")
+            python3 -I - <<< "$base_policy"
+          fi
+      - name: Test path policy
+        run: python3 -B -m unittest discover -s .github/scripts -p test_ci_scope.py
+      - name: Check published versions against Cargo.toml
+        if: steps.scope.outputs.versions == 'true' && steps.scope.outputs.js != 'true'
+        run: node scripts/versions.mjs check
       - id: ub-mode
         if: github.event_name == 'pull_request'
         continue-on-error: true
         run: |
           changed=$(python3 .github/scripts/ub_mode_report.py --check-paths)
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
-      - id: filter
-        if: github.event_name == 'pull_request'
-        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
-        with:
-          filters: |
-            shared: &shared
-              - .github/workflows/ci.yml
-              - .prototools
-            rust:
-              - *shared
-              - 'crates/**'
-              - 'Cargo.*'
-              - rust-toolchain.toml
-              - deny.toml
-            # Code and config only; Markdown is `docs`, which just lints.
-            js:
-              - *shared
-              - &js-files '{packages,examples}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,json,yaml,yml,proto,html,css}'
-              - 'scripts/**'
-              - 'package.json'
-              - 'pnpm-*.yaml'
-              - 'tsconfig*.json'
-              - 'eslint.config.*'
-            docs:
-              - '**/*.md'
-            e2e:
-              - *shared
-              - 'crates/**'
-              - 'Cargo.*'
-              - *js-files
-              - 'package.json'
-              - 'pnpm-*.yaml'
-              - 'tsconfig*.json'
       # Example workspaces (the e2e tier, `test:e2e`); ones depending on @playwright/test or
       # testplane get the browser job, which installs Chromium. An empty list skips that job.
       - id: find
+        if: steps.scope.outputs.e2e == 'true'
         run: |
           shopt -s nullglob
           plain=()
@@ -110,7 +98,7 @@ jobs:
   # --ignore-scripts skips the root `prepare` build; js runs build explicitly below.
   ci:
     needs: changes
-    if: needs.changes.outputs.js == 'true' || needs.changes.outputs.docs == 'true'
+    if: needs.changes.outputs.lint == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -146,7 +134,12 @@ jobs:
           pnpm audit --prod --audit-level high --filter @decoyhq/testplane --filter @decoyhq-examples/testplane-ts-e2e
 
       - name: Lint & format check
+        if: needs.changes.outputs.js-lint == 'true'
         run: pnpm check
+
+      - name: Format check only
+        if: needs.changes.outputs.js-lint != 'true'
+        run: pnpm exec prettier --check .
 
       - name: Typecheck
         if: needs.changes.outputs.js == 'true'
@@ -165,14 +158,24 @@ jobs:
         run: pnpm test
 
   js-coverage:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.js-coverage == 'true'
     needs: changes
     uses: $/.github/workflows/coverage.yml
     permissions:
       contents: read
       id-token: write # Codecov upload via OIDC
     with:
-      ub-mode: ${{ needs.changes.outputs.ub-mode == 'true' && needs.changes.outputs.js == 'true' }}
+      ub-mode: ${{ needs.changes.outputs.ub-mode == 'true' }}
+
+  codeql:
+    if: github.event_name == 'pull_request' && needs.changes.outputs.codeql != '[]'
+    needs: changes
+    uses: $/.github/workflows/codeql.yml
+    permissions:
+      contents: read
+      security-events: write
+    with:
+      languages: ${{ needs.changes.outputs.codeql }}
 
   # fmt, clippy, cargo-deny and the tests (run once, with coverage for Codecov).
   rust:
@@ -484,10 +487,19 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # The one check the `main` ruleset requires, so jobs and example matrices can change freely.
+  # Stable aggregate for branch rulesets; individual blocking jobs can be skipped.
   required:
     if: always()
-    needs: [changes, ci, rust, unit-os, build-decoy, example-e2e, example-e2e-browser]
+    needs:
+      - changes
+      - ci
+      - rust
+      - unit-os
+      - build-decoy
+      - example-e2e
+      - example-e2e-browser
+      - js-coverage
+      - codeql
     permissions: {}
     runs-on: ubuntu-latest
     timeout-minutes: 5

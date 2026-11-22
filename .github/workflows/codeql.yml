@@ -4,16 +4,20 @@ name: CodeQL
 on:
   push:
     branches: [main]
-  pull_request:
   schedule:
     - cron: '17 4 * * 1'
+  workflow_call:
+    inputs:
+      languages:
+        type: string
+        required: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   analyze:
@@ -25,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [actions, javascript-typescript, rust]
+        language: ${{ fromJSON(inputs.languages || '["actions","javascript-typescript","rust"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
