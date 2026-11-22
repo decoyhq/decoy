@@ -107,35 +107,56 @@ fn validate_response_shape(
         }
     }
     for name in response.metadata.keys() {
-        let valid = !name.is_empty()
-            && name
-                .bytes()
-                .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.'));
-        if !valid {
-            return Err(format!(
-                "metadata name `{name}` must be lowercase letters, digits, `-`, `_`, or `.`"
-            ));
-        }
-        if name.starts_with("grpc-") {
-            return Err(format!("metadata name `{name}` is reserved by gRPC"));
-        }
+        validate_metadata_name(name)?;
     }
-    if decoded == Some(false) {
-        match (&response.message, status_kind(response)) {
-            (Some(Value::String(text)), StatusKind::Ok) if !text.contains("${") => {
-                BASE64
-                    .decode(text)
-                    .map_err(|error| format!("`message` must be base64 bytes: {error}"))?;
-            }
-            (Some(Value::Object(_)), StatusKind::Ok) => {
-                return Err(
-                    "without a `protobuf` step, `message` is base64 bytes, not a mapping".into(),
-                );
-            }
-            _ => {}
-        }
+    validate_message_shape(response.message.as_ref(), status_kind(response), decoded)?;
+    for (index, item) in response.stream.iter().flatten().enumerate() {
+        validate_stream_payload(&item.message, decoded, index)?;
     }
-    match (&response.message, status_kind(response)) {
+    for (name, value) in &response.metadata {
+        // A templated value is checked once rendered, when the request comes in.
+        if !value.contains("${") && !valid_metadata_value(value) {
+            return Err(format!("metadata `{name}` has a value gRPC doesn't allow"));
+        }
+        validate_string(value)?;
+    }
+    response.message.iter().try_for_each(validate_value)
+}
+
+fn validate_metadata_name(name: &str) -> Result<(), String> {
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| matches!(byte, b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.'))
+    {
+        return Err(format!(
+            "metadata name `{name}` must be lowercase letters, digits, `-`, `_`, or `.`"
+        ));
+    }
+    if name.starts_with("grpc-") {
+        return Err(format!("metadata name `{name}` is reserved by gRPC"));
+    }
+    Ok(())
+}
+
+fn validate_message_shape(
+    message: Option<&Value>,
+    status: StatusKind,
+    decoded: Option<bool>,
+) -> Result<(), String> {
+    match (message, status) {
+        (Some(Value::String(text)), StatusKind::Ok)
+            if decoded == Some(false) && !text.contains("${") =>
+        {
+            BASE64
+                .decode(text)
+                .map_err(|error| format!("`message` must be base64 bytes: {error}"))?;
+        }
+        (Some(Value::Object(_)), StatusKind::Ok) if decoded == Some(false) => {
+            return Err(
+                "without a `protobuf` step, `message` is base64 bytes, not a mapping".into(),
+            );
+        }
         (Some(_), StatusKind::Ok | StatusKind::Templated) if decoded.is_none() => {}
         (None, _)
         | (Some(Value::String(_)), StatusKind::Error | StatusKind::Templated)
@@ -147,32 +168,35 @@ fn validate_response_shape(
         }
         (Some(_), _) => return Err("`message` must be a mapping of response fields".into()),
     }
-    for (index, item) in response.stream.iter().flatten().enumerate() {
-        let path = format!("stream[{index}].payload");
-        match &item.message {
-            Value::String(text) if text.contains("${") => {}
-            _ if decoded.is_none() => {}
-            Value::String(text) if decoded == Some(false) => {
-                BASE64
-                    .decode(text)
-                    .map_err(|error| format!("`{path}` must be base64 bytes: {error}"))?;
-            }
-            Value::Object(_) if decoded == Some(true) => {}
-            _ if decoded == Some(true) => {
-                return Err(format!("`{path}` must be a mapping of response fields"));
-            }
-            _ => return Err(format!("`{path}` is base64 bytes, not a mapping")),
+    Ok(())
+}
+
+fn validate_stream_payload(
+    message: &Value,
+    decoded: Option<bool>,
+    index: usize,
+) -> Result<(), String> {
+    match message {
+        Value::String(text) if text.contains("${") => {}
+        _ if decoded.is_none() => {}
+        Value::String(text) if decoded == Some(false) => {
+            BASE64.decode(text).map_err(|error| {
+                format!("`stream[{index}].payload` must be base64 bytes: {error}")
+            })?;
         }
-        validate_value(&item.message)?;
-    }
-    for (name, value) in &response.metadata {
-        // A templated value is checked once rendered, when the request comes in.
-        if !value.contains("${") && !valid_metadata_value(value) {
-            return Err(format!("metadata `{name}` has a value gRPC doesn't allow"));
+        Value::Object(_) if decoded == Some(true) => {}
+        _ if decoded == Some(true) => {
+            return Err(format!(
+                "`stream[{index}].payload` must be a mapping of response fields"
+            ));
         }
-        validate_string(value)?;
+        _ => {
+            return Err(format!(
+                "`stream[{index}].payload` is base64 bytes, not a mapping"
+            ));
+        }
     }
-    response.message.iter().try_for_each(validate_value)
+    validate_value(message)
 }
 
 /// gRPC ASCII metadata: printable `0x20..=0x7E` only, so no tab, which HTTP headers would allow.
@@ -539,7 +563,7 @@ fn canonical_well_known(
     }
 }
 
-/// A canonical 64-bit string has no sign, padding, or leading zeros (`"5"`, not `"+05"`).
+/// A canonical 64-bit string has no plus sign, padding, or leading zeros (`"5"`, not `"+05"`).
 fn canonical_integer(value: &Value, number: i128, form: Form) -> bool {
     form == Form::Any || value.as_str() == Some(number.to_string().as_str())
 }
@@ -737,6 +761,31 @@ cases:
                 .unwrap_err()
                 .contains("expects approvals.v1.State")
         );
+    }
+
+    #[test]
+    fn canonical_integer_literals_keep_protobuf_width_and_spelling() {
+        use serde_json::json;
+
+        for (kind, valid, invalid) in [
+            (Kind::Int32, json!(i32::MIN), json!(i64::from(i32::MIN) - 1)),
+            (Kind::Uint32, json!(u32::MAX), json!(-1)),
+            (
+                Kind::Int64,
+                json!("-9223372036854775808"),
+                json!("-9223372036854775809"),
+            ),
+            (
+                Kind::Uint64,
+                json!("18446744073709551615"),
+                json!("18446744073709551616"),
+            ),
+            (Kind::Int64, json!("5"), json!("+05")),
+            (Kind::Uint64, json!("0"), json!("-0")),
+        ] {
+            assert!(check_kind(&valid, &kind, "field", Form::Canonical).is_ok());
+            assert!(check_kind(&invalid, &kind, "field", Form::Canonical).is_err());
+        }
     }
 
     #[test]
