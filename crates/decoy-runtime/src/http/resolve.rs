@@ -4,13 +4,14 @@ use std::collections::BTreeMap;
 use jmespath::Rcvar;
 
 use super::path::match_path;
+use super::pipeline::PreparedRoute;
 use crate::collections::Activation;
 use crate::engine::{Candidate, Catalog, MissDiagnostic, Rejection, reject};
 use crate::expression::{set_field, to_rcvar};
 use crate::http::{HttpResponsePlan, RequestMetadata, ResponsePlan};
 use crate::matching::{MatchInput, case_matches, case_mismatch};
 use crate::request::RequestEnvelope;
-use crate::schema::{Behavior, HttpMethod, RouteMatch};
+use crate::schema::{Behavior, HttpMethod, Route, RouteMatch};
 use crate::template::render_response;
 
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -54,6 +55,7 @@ impl Catalog {
         self.resolve_http_with_overrides(collection_id, request, &[], metadata, true)
     }
 
+    #[cfg(test)]
     pub(crate) fn resolve_http_with_overrides(
         &self,
         collection_id: &str,
@@ -62,52 +64,86 @@ impl Catalog {
         metadata: &RequestMetadata,
         explain: bool,
     ) -> ResolveOutcome<'_> {
-        let activations = match self.activations(collection_id, overrides) {
-            Ok(activations) => activations,
-            Err(error) => {
-                return ResolveOutcome::Miss(MissDiagnostic {
-                    collection: collection_id.to_owned(),
-                    reason: error.to_string(),
-                    candidates: Vec::new(),
-                });
-            }
-        };
+        use futures_util::FutureExt as _;
+        let mut prepared = BTreeMap::new();
+        self.select_http(
+            collection_id,
+            overrides,
+            request,
+            metadata,
+            explain,
+            &mut prepared,
+        )
+        .now_or_never()
+        .expect("synchronous fixture has no Pipeline")
+        .expect("synchronous fixture needs no transforms")
+        .0
+    }
 
-        let mut candidates = explain.then(Vec::new);
-        // The envelope for JMESPath, built once per request; only `pathParams` changes per
-        // candidate.
+    /// Scans in selection order until a Case wins or a Route needs its input prepared.
+    pub(super) fn resolve_candidates<'catalog, 'entry>(
+        &'catalog self,
+        activations: impl Iterator<Item = &'entry Activation>,
+        request: &HttpRequest,
+        metadata: &RequestMetadata,
+        prepared: &BTreeMap<String, PreparedRoute>,
+        candidates: &mut Option<Vec<Candidate>>,
+    ) -> Result<Option<(ResolveOutcome<'catalog>, bool)>, (&'catalog Route, &'entry Activation)>
+    {
         let mut json = OnceCell::<Rcvar>::new();
-
-        for activation in activations.rev() {
+        let mut previous_envelope = &request.envelope;
+        for activation in activations {
             let Some(route) = self.routes.get(&activation.route) else {
-                reject(&mut candidates, activation, || Rejection::MissingRoute);
+                reject(candidates, activation, || Rejection::MissingRoute);
                 continue;
             };
 
             let RouteMatch::Http(route_match) = &route.route_match else {
-                reject(&mut candidates, activation, || Rejection::Transport);
+                reject(candidates, activation, || Rejection::Transport);
                 continue;
             };
 
             if route_match.method != request.method {
-                reject(&mut candidates, activation, || Rejection::Method {
+                reject(candidates, activation, || Rejection::Method {
                     expected: route_match.method.as_str().to_owned(),
                 });
                 continue;
             }
 
             let Some(path_params) = match_path(&route_match.path, &request.path) else {
-                reject(&mut candidates, activation, || Rejection::Path {
+                reject(candidates, activation, || Rejection::Path {
                     expected: route_match.path.clone(),
                 });
                 continue;
             };
 
             let Some(case) = route.cases.get(&activation.case) else {
-                reject(&mut candidates, activation, || Rejection::MissingCase);
+                reject(candidates, activation, || Rejection::MissingCase);
                 continue;
             };
 
+            let envelope = if route.pipeline_name.is_some() {
+                let Some(prepared) = prepared.get(&route.id) else {
+                    return Err((route, activation));
+                };
+                match &prepared.input {
+                    Ok(input) => input
+                        .as_ref()
+                        .map_or(&request.envelope, |input| &input.envelope),
+                    Err(reason) => {
+                        reject(candidates, activation, || Rejection::Decode {
+                            error: reason.clone(),
+                        });
+                        continue;
+                    }
+                }
+            } else {
+                &request.envelope
+            };
+            if !std::ptr::eq(previous_envelope, envelope) {
+                json.take();
+                previous_envelope = envelope;
+            }
             if let Some(json) = json.get_mut() {
                 set_field(json, "pathParams", &serde_json::json!(path_params));
             }
@@ -115,14 +151,12 @@ impl Catalog {
                 method: &request.method,
                 path: &request.path,
                 path_params: &path_params,
-                envelope: &request.envelope,
+                envelope,
                 json: &json,
             };
-            if explain {
+            if candidates.is_some() {
                 if let Some(failure) = case_mismatch(&case.case_match, &input) {
-                    reject(&mut candidates, activation, || {
-                        Rejection::Condition(failure)
-                    });
+                    reject(candidates, activation, || Rejection::Condition(failure));
                     continue;
                 }
             } else if !case_matches(&case.case_match, &input) {
@@ -130,7 +164,7 @@ impl Catalog {
             }
 
             let Some(behavior) = case.behaviors.get(&activation.behavior) else {
-                reject(&mut candidates, activation, || Rejection::MissingBehavior);
+                reject(candidates, activation, || Rejection::MissingBehavior);
                 continue;
             };
 
@@ -139,15 +173,12 @@ impl Catalog {
                 .get(&activation.route)
                 .and_then(|cases| cases.get(&activation.case))
                 .and_then(|behaviors| behaviors.get(&activation.behavior));
+            let mut render_failed = false;
             let plan = match behavior {
                 _ if let Some(plan) = static_plan => ResponsePlan::Response(plan.clone()),
                 Behavior::Response(response) => {
                     let envelope = json.get_or_init(|| {
-                        to_rcvar(&request.envelope.to_json(
-                            &request.method,
-                            &request.path,
-                            &path_params,
-                        ))
+                        to_rcvar(&envelope.to_json(&request.method, &request.path, &path_params))
                     });
                     match render_response(response, &|| envelope.clone()) {
                         Ok(rendered) => ResponsePlan::from_behavior(
@@ -156,40 +187,31 @@ impl Catalog {
                             &self.runtime,
                             metadata,
                         ),
-                        Err(reason) => ResponsePlan::Response(HttpResponsePlan::template_error(
-                            &activation.address(),
-                            &reason.to_string(),
-                        )),
+                        Err(reason) => {
+                            render_failed = true;
+                            ResponsePlan::Response(HttpResponsePlan::template_error(
+                                &activation.address(),
+                                &reason.to_string(),
+                            ))
+                        }
                     }
                 }
                 behavior => ResponsePlan::from_behavior(route, behavior, &self.runtime, metadata),
             };
 
-            return ResolveOutcome::Matched {
-                activation: activation.clone(),
-                path_params,
-                plan,
-                delay: behavior.delay(),
-                skipped: candidates.unwrap_or_default(),
-                conditions: &case.case_match,
-            };
+            return Ok(Some((
+                ResolveOutcome::Matched {
+                    activation: activation.clone(),
+                    path_params,
+                    plan,
+                    delay: behavior.delay(),
+                    skipped: candidates.take().unwrap_or_default(),
+                    conditions: &case.case_match,
+                },
+                render_failed,
+            )));
         }
-
-        let Some(candidates) = candidates else {
-            // Misses are rare: only now pay for the candidates the fail-closed body lists.
-            return self.resolve_http_with_overrides(
-                collection_id,
-                request,
-                overrides,
-                metadata,
-                true,
-            );
-        };
-        ResolveOutcome::Miss(MissDiagnostic {
-            collection: collection_id.to_owned(),
-            reason: "no active route case matched request".to_owned(),
-            candidates,
-        })
+        Ok(None)
     }
 }
 

@@ -1,6 +1,7 @@
 pub mod execute;
 pub mod forward;
 pub(crate) mod path;
+mod pipeline;
 pub mod resolve;
 mod view;
 
@@ -18,6 +19,8 @@ pub use resolve::{HttpRequest, ResolveOutcome};
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RuntimeConfig {
     pub passthrough: Option<PassthroughTarget>,
+    /// Configured cap for buffering upstream bodies when applying an HTTP output Pipeline.
+    pub max_body_bytes: Option<usize>,
     /// Message types for gRPC Routes, from the configured proto roots and descriptor sets.
     pub protos: DescriptorPool,
     /// `pipelines:` from the config file, for Routes that name one.

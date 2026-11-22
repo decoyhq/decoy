@@ -44,10 +44,14 @@ pipelines:
   (`DECOY_PLUGIN=1`). A unit test can import the file and call `input` directly.
 - A package can export a factory that takes typed options and returns `definePlugin(...)`; users
   call it from their own plugin file.
-- `miss(reason)` in `input` skips the frame: Decoy logs the reason and keeps the socket open. Any
+- On WebSockets, `miss(reason)` in `input` skips the frame: Decoy logs the reason and keeps the socket open. Any
   other throw is a plugin error, shown with the Transformer, Behavior and value that failed.
-- `ctx.frame` is `'text'` or `'binary'` on WebSocket input; `ctx.connection` is `{ id, route, session }`;
-  `ctx.state` is a `Map` kept per connection.
+- WebSocket input sets `ctx.frame` to `'text'` or `'binary'`. WebSocket input and output supply
+  `ctx.connection` as `{ id, route, session }` and share a `ctx.state` map per connection. HTTP,
+  gRPC and startup checks get a fresh state map for each call.
+- HTTP workers receive `ctx.request` on input and output, including Passthrough output. It is a
+  read-only snapshot of the original method, path, and headers (lowercase names). The headers can
+  include cookies and credentials; avoid logging them. Startup checks have no request context.
 - `ctx.protobuf.has/decode/encode` use the protos Decoy already compiled.
 - `console.log` goes to stderr while serving, since stdout carries the protocol. Decoy prints each
   stderr line with the plugin's name.

@@ -56,7 +56,7 @@ export function serve(plugin: Plugin, io: Io = processIo): void {
   const context = (message: WireMessage): Context => {
     const connection = message.connection as Connection | undefined
 
-    // A call without a connection (startup `check`) gets a fresh state that nobody keeps.
+    // Calls without a connection get a fresh state.
     let state = connection && states.get(connection.id)
     if (!state) {
       state = new Map()
@@ -64,7 +64,8 @@ export function serve(plugin: Plugin, io: Io = processIo): void {
     }
 
     const frame = message.frame as Context['frame']
-    return { frame, connection, state, protobuf }
+    const request = message.request as Context['request']
+    return { frame, connection, state, protobuf, ...(request && { request }) }
   }
 
   /** Runs the transform in the direction requested by Decoy. */

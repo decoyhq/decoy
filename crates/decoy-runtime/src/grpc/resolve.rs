@@ -1,4 +1,5 @@
 use std::cell::OnceCell;
+use std::collections::HashMap;
 
 use jmespath::Rcvar;
 use prost_reflect::MethodDescriptor;
@@ -6,11 +7,11 @@ use serde_json::{Value, json};
 
 use super::codec::{decode, pipeline};
 use super::schema::find_method;
-use super::{GrpcRequest, GrpcResponse, INVALID_ARGUMENT};
+use super::{GrpcRequest, GrpcResponse};
 use crate::collections::Activation;
 use crate::engine::{Candidate, Catalog, MissDiagnostic, Rejection, reject};
 use crate::matching::{envelope_case_matches, envelope_case_mismatch};
-use crate::schema::{Behavior, PipelineStep, ResponseBehavior, Route, RouteMatch};
+use crate::schema::{Behavior, ResponseBehavior, Route, RouteMatch};
 
 /// Which active route entry answers a unary call, and why the others did not.
 #[derive(Debug)]
@@ -34,54 +35,50 @@ pub enum GrpcResolution<'a> {
     },
 }
 
+pub(super) struct PendingDecode<'catalog, 'entry> {
+    pub route: &'catalog Route,
+    pub activation: &'entry Activation,
+    pub method: MethodDescriptor,
+}
+
 impl Catalog {
-    /// Resolves with the full explanation; serving uses `execute_grpc`, which skips it.
+    /// Resolves synchronously without calling any external Transformers.
     pub fn resolve_grpc(
         &self,
         collection_id: &str,
         overrides: &[Activation],
         request: &GrpcRequest,
     ) -> GrpcResolution<'_> {
-        self.resolve_grpc_with(collection_id, overrides, request, true)
+        use futures_util::FutureExt as _;
+        self.select_grpc(collection_id, overrides, request, true, false)
+            .now_or_never()
+            .expect("built-in Pipelines are synchronous")
     }
 
-    /// Unexplained (`explain: false`) leaves `skipped` and a miss's `candidates` empty: a gRPC
-    /// miss answers with its reason only.
-    pub(super) fn resolve_grpc_with(
-        &self,
-        collection_id: &str,
-        overrides: &[Activation],
+    /// Match the remaining entries up to the next named input Pipeline. The driver resumes at
+    /// that entry after the transform completes, so earlier Cases are never evaluated twice.
+    pub(super) fn grpc_candidates<'catalog, 'entry>(
+        &'catalog self,
+        activations: impl Iterator<Item = &'entry Activation>,
         request: &GrpcRequest,
-        explain: bool,
-    ) -> GrpcResolution<'_> {
-        let activations = match self.activations(collection_id, overrides) {
-            Ok(activations) => activations,
-            Err(error) => {
-                return GrpcResolution::Miss(MissDiagnostic {
-                    collection: collection_id.to_owned(),
-                    reason: error.to_string(),
-                    candidates: Vec::new(),
-                });
-            }
-        };
-
-        let mut candidates = explain.then(Vec::new);
+        transformed: &HashMap<&str, Result<Value, String>>,
+        candidates: &mut Option<Vec<Candidate>>,
+        decode_failure: &mut Option<String>,
+    ) -> Result<Option<GrpcResolution<'catalog>>, PendingDecode<'catalog, 'entry>> {
         // Decoded once per call, failure included; only another Pipeline needs a fresh decode.
         type Decoded = Result<(Value, OnceCell<Rcvar>), String>;
-        let mut decoded: Option<(&[PipelineStep], Decoded)> = None;
-        // The first decode error, the answer when no other Route matches.
-        let mut decode_failure = None;
-        for activation in activations.rev() {
+        let mut decoded: Option<(&Route, Decoded)> = None;
+        for activation in activations {
             let Some(route) = self.route(&activation.route) else {
-                reject(&mut candidates, activation, || Rejection::MissingRoute);
+                reject(candidates, activation, || Rejection::MissingRoute);
                 continue;
             };
             let RouteMatch::Grpc(address) = &route.route_match else {
-                reject(&mut candidates, activation, || Rejection::Transport);
+                reject(candidates, activation, || Rejection::Transport);
                 continue;
             };
             if address.service != request.service || address.method != request.method {
-                reject(&mut candidates, activation, || Rejection::Method {
+                reject(candidates, activation, || Rejection::Method {
                     expected: format!("{}/{}", address.service, address.method),
                 });
                 continue;
@@ -89,23 +86,39 @@ impl Catalog {
             // Startup checks every gRPC Route against the protos, so this only guards the lookup.
             let Ok(method) = find_method(&self.runtime().protos, &address.service, &address.method)
             else {
-                reject(&mut candidates, activation, || Rejection::MissingRoute);
+                reject(candidates, activation, || Rejection::MissingRoute);
                 continue;
             };
-            let steps = pipeline(route);
-            if !matches!(&decoded, Some((cached, _)) if *cached == steps) {
-                let result = decode(&request.body, steps, &method.input())
-                    .map(|message| {
-                        let envelope = json!({
-                            "service": request.service,
-                            "method": request.method,
-                            "metadata": request.metadata,
-                            "message": message,
-                        });
-                        (envelope, OnceCell::new())
-                    })
-                    .map_err(|error| error.to_string());
-                decoded = Some((steps, result));
+            let has_named_input = route
+                .pipeline_name
+                .as_ref()
+                .is_some_and(|name| !self.runtime().pipelines[name].input.is_empty());
+            if !matches!(&decoded, Some((cached, _)) if cached.id == route.id ||
+                (cached.pipeline_name.is_none() && route.pipeline_name.is_none() && pipeline(cached) == pipeline(route)))
+            {
+                let message = if has_named_input {
+                    transformed
+                        .get(route.id.as_str())
+                        .ok_or_else(|| PendingDecode {
+                            route,
+                            activation,
+                            method: method.clone(),
+                        })?
+                        .clone()
+                } else {
+                    decode(&request.body, pipeline(route), &method.input())
+                        .map_err(|error| error.to_string())
+                };
+                let result = message.map(|message| {
+                    let envelope = json!({
+                        "service": request.service,
+                        "method": request.method,
+                        "metadata": request.metadata,
+                        "message": message,
+                    });
+                    (envelope, OnceCell::new())
+                });
+                decoded = Some((route, result));
             }
             let Some((_, result)) = &mut decoded else {
                 unreachable!("decoded just above")
@@ -113,24 +126,26 @@ impl Catalog {
             let (envelope, jmes) = match result {
                 Ok((envelope, jmes)) => (envelope, &*jmes),
                 Err(error) => {
-                    decode_failure.get_or_insert_with(|| {
-                        format!("route `{}` could not decode the request: {error}", route.id)
-                    });
-                    reject(&mut candidates, activation, || Rejection::Decode {
+                    // Named Pipeline errors here are explicit input misses. Hard failures
+                    // already ended the call in the execute driver.
+                    if !has_named_input {
+                        decode_failure.get_or_insert_with(|| {
+                            format!("route `{}` could not decode the request: {error}", route.id)
+                        });
+                    }
+                    reject(candidates, activation, || Rejection::Decode {
                         error: error.clone(),
                     });
                     continue;
                 }
             };
             let Some(case) = route.cases.get(&activation.case) else {
-                reject(&mut candidates, activation, || Rejection::MissingCase);
+                reject(candidates, activation, || Rejection::MissingCase);
                 continue;
             };
-            if explain {
+            if candidates.is_some() {
                 if let Some(failure) = envelope_case_mismatch(&case.case_match, envelope, jmes) {
-                    reject(&mut candidates, activation, || {
-                        Rejection::Condition(failure)
-                    });
+                    reject(candidates, activation, || Rejection::Condition(failure));
                     continue;
                 }
             } else if !envelope_case_matches(&case.case_match, envelope, jmes) {
@@ -138,31 +153,20 @@ impl Catalog {
             }
             let Some(Behavior::Response(response)) = case.behaviors.get(&activation.behavior)
             else {
-                reject(&mut candidates, activation, || Rejection::MissingBehavior);
+                reject(candidates, activation, || Rejection::MissingBehavior);
                 continue;
             };
-            return GrpcResolution::Matched {
+            return Ok(Some(GrpcResolution::Matched {
                 activation: activation.clone(),
-                skipped: candidates.unwrap_or_default(),
+                skipped: candidates.take().unwrap_or_default(),
                 conditions: &case.case_match,
                 route,
                 method,
                 response,
                 envelope: std::mem::take(envelope),
-            };
+            }));
         }
 
-        let candidates = candidates.unwrap_or_default();
-        match decode_failure {
-            Some(reason) => GrpcResolution::Failed {
-                response: GrpcResponse::error(INVALID_ARGUMENT, reason),
-                candidates,
-            },
-            None => GrpcResolution::Miss(MissDiagnostic {
-                collection: collection_id.to_owned(),
-                reason: "no active route case matched request".to_owned(),
-                candidates,
-            }),
-        }
+        Ok(None)
     }
 }

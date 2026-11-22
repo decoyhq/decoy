@@ -3,3 +3,13 @@ collections: collections.yaml
 port: 8091 # gRPC (HTTP/2 cleartext) and the Control API share this port
 protos:
   roots: [../proto]
+
+transformers:
+  approval-id:
+    input: [node, ../transformers/approval-id.ts, input]
+    output: [node, ../transformers/approval-id.ts, output]
+
+pipelines:
+  approval-ids:
+    input: [grpc-frame, protobuf, approval-id]
+    output: [approval-id, protobuf, grpc-frame]

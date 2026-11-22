@@ -1,0 +1,13 @@
+id: compressed-approvals-post
+transport: http
+match: { method: POST, path: /compressed-approvals }
+pipeline: compressed-approvals
+cases:
+  watch:
+    match:
+      body: { type: approvals.v1.WatchRequest, data: { ids: [a-1] } }
+    behaviors:
+      approved:
+        headers: { content-type: application/msgpack, content-encoding: gzip }
+        body:
+          { type: approvals.v1.Approval, data: { id: '${ body.data.ids[0] }', state: APPROVED } }

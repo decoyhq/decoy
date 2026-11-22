@@ -21,14 +21,25 @@ export interface Connection {
   session: string
 }
 
+export interface HttpRequestContext {
+  readonly method: string
+  /** Path without the query string. */
+  readonly path: string
+  /** Original request headers, with lowercase names. May include credentials. */
+  readonly headers: Readonly<Partial<Record<string, string>>>
+}
+
 export interface Context {
+  /** Original request metadata on HTTP input and output calls. */
+  readonly request?: HttpRequestContext
+
   /** Frame type of the incoming WebSocket message. */
   frame: 'text' | 'binary' | undefined
 
-  /** Undefined at startup (`check`). */
+  /** Set on WebSocket input and output calls. */
   connection: Connection | undefined
 
-  /** Kept per connection for as long as it is open; a fresh map at startup. */
+  /** Shared across calls on a WebSocket connection. Other calls receive a fresh map. */
   state: Map<string, unknown>
 
   /** The protos Decoy compiled at startup. */
@@ -64,7 +75,7 @@ export class Miss extends Error {
   override name = 'Miss'
 }
 
-/** From `input`: this frame matches nothing. Decoy logs `reason` and keeps the socket open. */
+/** Signals an input miss. On WebSockets, Decoy logs `reason` and keeps the socket open. */
 export function miss(reason: string): never {
   throw new Miss(reason)
 }

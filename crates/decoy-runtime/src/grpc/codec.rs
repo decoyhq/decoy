@@ -1,6 +1,13 @@
+use crate::http::RuntimeConfig;
+use crate::pipeline::{Pipeline, PipelineError};
+use crate::plugins::{
+    Op,
+    value::{to_json, to_msgpack},
+};
 use base64::Engine as _;
 use prost::Message as _;
 use prost_reflect::{DynamicMessage, MessageDescriptor};
+use rmpv::Value as Msgpack;
 use serde_json::Value;
 use thiserror::Error;
 
@@ -35,6 +42,8 @@ pub(super) fn pipeline(route: &Route) -> &[PipelineStep] {
 /// Why a gRPC message didn't decode or encode. The text reaches grpc-message and miss reasons.
 #[derive(Debug, Error)]
 pub enum GrpcCodecError {
+    #[error("{0}")]
+    Transform(String),
     #[error("gRPC frame shorter than its 5-byte header")]
     ShortFrame,
     #[error("compressed gRPC messages are not supported")]
@@ -59,6 +68,81 @@ pub enum GrpcCodecError {
     NotBase64(base64::DecodeError),
     #[error("expected a base64 string, got {0}")]
     NotAString(Value),
+}
+
+/// A named Pipeline gets the full gRPC frame. Each direction runs in authored order.
+pub(super) async fn decode_named(
+    body: &[u8],
+    pipeline: &Pipeline,
+    descriptor: &MessageDescriptor,
+) -> Result<Value, PipelineError> {
+    let value = pipeline
+        .run_grpc(Op::Input, Msgpack::Binary(body.to_vec()), |step, value| {
+            let Msgpack::Binary(bytes) = value else {
+                return Err(format!("gRPC input step `{step}` requires bytes"));
+            };
+            match step {
+                PipelineStep::GrpcFrame => {
+                    unframe(&bytes).map(|data| Msgpack::Binary(data.to_vec()))
+                }
+                PipelineStep::Protobuf => {
+                    decode(&bytes, &[step], descriptor).map(|json| to_msgpack(&json))
+                }
+            }
+            .map_err(|error| error.to_string())
+        })
+        .await?;
+    match value {
+        Msgpack::Binary(bytes) if pipeline.input_ends_in_command() => {
+            serde_json::from_slice(&bytes)
+                .map_err(|error| format!("input command did not return JSON: {error}"))
+        }
+        Msgpack::Binary(bytes) => Ok(Value::String(base64_engine().encode(bytes))),
+        value => to_json(&value),
+    }
+    .map_err(|reason| pipeline.invalid_result(Op::Input, reason))
+}
+
+/// Encodes one unary reply, stream item, or Control API push through the configured Pipeline.
+pub async fn encode_response_async(
+    route: &Route,
+    runtime: &RuntimeConfig,
+    message: Value,
+    descriptor: &MessageDescriptor,
+) -> Result<Vec<u8>, GrpcCodecError> {
+    let named = Pipeline::of(route, runtime).map_err(GrpcCodecError::Transform)?;
+    let Some(named) = named.filter(Pipeline::has_output) else {
+        return encode(message, pipeline(route), descriptor);
+    };
+    let value = named
+        .run_grpc(Op::Output, to_msgpack(&message), |step, value| {
+            let bytes = match step {
+                PipelineStep::GrpcFrame => {
+                    let Msgpack::Binary(bytes) = value else {
+                        return Err("gRPC output step `grpc-frame` requires bytes".into());
+                    };
+                    frame(&bytes)
+                }
+                PipelineStep::Protobuf => {
+                    let json = match value {
+                        Msgpack::Binary(bytes) => {
+                            serde_json::from_slice(&bytes).map_err(|error| error.to_string())?
+                        }
+                        value => to_json(&value)?,
+                    };
+                    encode(json, &[step], descriptor).map_err(|error| error.to_string())?
+                }
+            };
+            Ok(Msgpack::Binary(bytes))
+        })
+        .await
+        .map_err(|error| GrpcCodecError::Transform(error.to_string()))?;
+    match value {
+        Msgpack::Binary(bytes) => Ok(bytes),
+        _ => Err(GrpcCodecError::Transform(
+            "gRPC output Pipeline must return bytes".into(),
+        )),
+    }
 }
 
 /// Bytes as they flow through a Pipeline: steps turn one into the other.

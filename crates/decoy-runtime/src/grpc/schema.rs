@@ -17,7 +17,7 @@ use prost_reflect::{
 use serde_json::Value;
 
 use crate::matching::value_matches;
-use crate::schema::{Behavior, PipelineStep, ResponseBehavior, Route, RouteMatch};
+use crate::schema::{Behavior, Case, PipelineStep, ResponseBehavior, Route, RouteMatch};
 use crate::template::{validate_string, validate_value};
 
 /// gRPC status codes by name, indexed by numeric code.
@@ -69,6 +69,25 @@ pub fn validate_pipeline(steps: &[PipelineStep]) -> Result<(), String> {
 /// string (error); `metadata` for trailers. No HTTP fields. Without a `protobuf` step (`decoded`
 /// false), a success `message` is base64 bytes instead of a mapping.
 pub fn validate_response(response: &ResponseBehavior, decoded: bool) -> Result<(), String> {
+    validate_response_shape(response, Some(decoded))
+}
+
+pub(crate) fn validate_response_for_pipeline(
+    response: &ResponseBehavior,
+    route: &Route,
+) -> Result<(), String> {
+    if route.pipeline_name.is_some() {
+        validate_response_shape(response, None)
+    } else {
+        validate_response(response, route.decodes_protobuf())
+    }
+}
+
+// A named Pipeline defines its own logical response type.
+fn validate_response_shape(
+    response: &ResponseBehavior,
+    decoded: Option<bool>,
+) -> Result<(), String> {
     if response.body.is_some() || !response.headers.is_empty() {
         return Err("gRPC Behaviors use `message` and `metadata`, not `body` and `headers`".into());
     }
@@ -101,7 +120,7 @@ pub fn validate_response(response: &ResponseBehavior, decoded: bool) -> Result<(
             return Err(format!("metadata name `{name}` is reserved by gRPC"));
         }
     }
-    if !decoded {
+    if decoded == Some(false) {
         match (&response.message, status_kind(response)) {
             (Some(Value::String(text)), StatusKind::Ok) if !text.contains("${") => {
                 BASE64
@@ -117,10 +136,12 @@ pub fn validate_response(response: &ResponseBehavior, decoded: bool) -> Result<(
         }
     }
     match (&response.message, status_kind(response)) {
+        (Some(_), StatusKind::Ok | StatusKind::Templated) if decoded.is_none() => {}
         (None, _)
         | (Some(Value::String(_)), StatusKind::Error | StatusKind::Templated)
         | (Some(Value::Object(_)), StatusKind::Ok | StatusKind::Templated) => {}
-        (Some(Value::String(text)), StatusKind::Ok) if !decoded || text.contains("${") => {}
+        (Some(Value::String(text)), StatusKind::Ok)
+            if decoded == Some(false) || text.contains("${") => {}
         (Some(_), StatusKind::Error) => {
             return Err("an error status takes a string `message`".into());
         }
@@ -130,13 +151,16 @@ pub fn validate_response(response: &ResponseBehavior, decoded: bool) -> Result<(
         let path = format!("stream[{index}].payload");
         match &item.message {
             Value::String(text) if text.contains("${") => {}
-            Value::String(text) if !decoded => {
+            _ if decoded.is_none() => {}
+            Value::String(text) if decoded == Some(false) => {
                 BASE64
                     .decode(text)
                     .map_err(|error| format!("`{path}` must be base64 bytes: {error}"))?;
             }
-            Value::Object(_) if decoded => {}
-            _ if decoded => return Err(format!("`{path}` must be a mapping of response fields")),
+            Value::Object(_) if decoded == Some(true) => {}
+            _ if decoded == Some(true) => {
+                return Err(format!("`{path}` must be a mapping of response fields"));
+            }
             _ => return Err(format!("`{path}` is base64 bytes, not a mapping")),
         }
         validate_value(&item.message)?;
@@ -177,6 +201,31 @@ fn status_kind(response: &ResponseBehavior) -> StatusKind {
 /// Check a gRPC Route against the loaded protos. Errors name the Route, Case, or Behavior and the
 /// field path.
 pub fn check_route(route: &Route, pool: &DescriptorPool) -> Result<(), String> {
+    check_route_directions(route, pool, false, false)
+}
+
+pub(crate) fn check_configured_route(
+    route: &Route,
+    runtime: &crate::http::RuntimeConfig,
+) -> Result<(), String> {
+    let named = route
+        .pipeline_name
+        .as_ref()
+        .and_then(|name| runtime.pipelines.get(name));
+    check_route_directions(
+        route,
+        &runtime.protos,
+        named.is_some_and(|pipeline| pipeline.input.is_empty()),
+        named.is_some_and(|pipeline| pipeline.output.is_empty()),
+    )
+}
+
+fn check_route_directions(
+    route: &Route,
+    pool: &DescriptorPool,
+    default_input: bool,
+    default_output: bool,
+) -> Result<(), String> {
     let RouteMatch::Grpc(address) = &route.route_match else {
         return Ok(());
     };
@@ -196,25 +245,38 @@ pub fn check_route(route: &Route, pool: &DescriptorPool) -> Result<(), String> {
         ));
     }
 
-    // Literals are protobuf JSON only where a `protobuf` step runs (Q3).
+    // Named Transformers may change the logical shape before matching and before encoding.
     let decoded = route.decodes_protobuf();
-
     for (case_id, case) in &route.cases {
-        if decoded
+        if (decoded || default_input)
             && let Some(pattern) = case.case_match.get("message")
             && !is_template(pattern)
         {
             check_message(pattern, &method.input(), "message", Form::Canonical)
                 .map_err(|reason| format!("case `{}:{case_id}` match: {reason}", route.id))?;
         }
-        for (behavior_id, behavior) in &case.behaviors {
-            let Behavior::Response(response) = behavior else {
-                continue;
-            };
-            check_behavior(response, &method, decoded).map_err(|reason| {
-                format!("behavior `{}:{case_id}:{behavior_id}`: {reason}", route.id)
-            })?;
+        check_case_responses(&route.id, case_id, case, &method, decoded, default_output)?;
+    }
+    Ok(())
+}
+
+fn check_case_responses(
+    route_id: &str,
+    case_id: &str,
+    case: &Case,
+    method: &MethodDescriptor,
+    decoded: bool,
+    default_output: bool,
+) -> Result<(), String> {
+    for (behavior_id, behavior) in &case.behaviors {
+        let Behavior::Response(response) = behavior else {
+            continue;
+        };
+        let context = |reason| format!("behavior `{route_id}:{case_id}:{behavior_id}`: {reason}");
+        if default_output {
+            validate_response(response, true).map_err(context)?;
         }
+        check_behavior(response, method, decoded || default_output).map_err(context)?;
     }
     Ok(())
 }
@@ -843,7 +905,7 @@ cases:
         .unwrap_err()
         .to_string();
         assert!(
-            plugin.contains("gRPC Routes take only `grpc-frame` and `protobuf` for now"),
+            plugin.contains("an inline gRPC step list takes only `grpc-frame` and `protobuf`"),
             "{plugin}"
         );
 
@@ -853,7 +915,7 @@ cases:
         .unwrap_err()
         .to_string();
         assert!(
-            http.contains("HTTP Routes do not take a `pipeline` yet"),
+            http.contains("HTTP Routes select a named Pipeline"),
             "{http}"
         );
     }

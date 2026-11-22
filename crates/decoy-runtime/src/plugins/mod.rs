@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinSet;
 
 use crate::config::PluginConfig;
-pub use host::{Call, CallConnection, CallError, Frame, Op, Plugin};
+pub use host::{Call, CallConnection, CallError, CallRequest, Frame, Op, Plugin};
 use host::{Stderr, connect, forward_stderr};
 use protobuf::ProtoHost;
 

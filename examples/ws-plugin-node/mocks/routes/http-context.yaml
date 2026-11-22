@@ -1,0 +1,9 @@
+id: http-context
+transport: http
+match: { method: POST, path: /http-context }
+pipeline: http-context
+cases:
+  preview:
+    match: { body: { preview: true } }
+    behaviors:
+      ok: { body: { mode: preview } }

@@ -225,6 +225,483 @@ cases:
     upstream.join().unwrap();
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn http_pipeline_forwards_transformed_bytes_and_transforms_the_upstream_reply() {
+    let (upstream_url, captured, upstream) = spawn_upstream_with_response(
+        b"HTTP/1.1 202 Accepted\r\ncontent-type: application/json\r\ncontent-encoding: custom\r\netag: abc\r\ncontent-digest: old\r\ncontent-length: 8\r\n\r\naccepted",
+    );
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "users.yaml",
+        format!(
+            r#"
+id: users
+transport: http
+pipeline: uppercase
+match: {{ method: POST, path: /users }}
+cases:
+  fallback:
+    match: {{ headers: {{ content-digest: old }}, body: {{ SKU: ABC }} }}
+    behaviors:
+      forward: {{ kind: passthrough, target: {{ baseUrl: {upstream_url} }} }}
+  object:
+    match: {{ body: {{ sku: abc }} }}
+    behaviors:
+      bad: {{ status: 400 }}
+"#
+        ),
+    );
+    fixture
+        .write_collections("- id: default\n  routes: [users:fallback:forward, users:object:bad]");
+    fixture.write_config(
+        r#"
+routes: routes
+collections: collections.yaml
+port: 0
+transformers:
+  upper:
+    input: [sh, -c, "echo called >> calls; tr a-z A-Z"]
+    output: [sh, -c, "tr a-z A-Z; printf '!'"]
+pipelines:
+  uppercase: { input: [upper], output: [upper] }
+"#,
+    );
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let port = server.port("port");
+    let response = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{port}/users"))
+        .header("Content-Type", "application/json")
+        .header("Content-Digest", "old")
+        .body(r#"{ "sku" : "abc" }"#)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), 202);
+    for name in ["content-encoding", "etag", "content-digest"] {
+        assert!(response.headers().get(name).is_none(), "{name}");
+    }
+    assert_eq!(response.text().await.unwrap(), "ACCEPTED!");
+    let sent = captured.recv().unwrap();
+    assert_eq!(sent.body, r#"{"SKU":"ABC"}"#);
+    assert!(!sent.headers.contains_key("content-digest"));
+    assert_eq!(
+        fs::read_to_string(fixture.temp.path().join("calls")).unwrap(),
+        "called\n"
+    );
+    upstream.join().unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn http_route_miss_tries_the_next_route_with_the_original_json() {
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "high.yaml",
+        r#"
+id: high
+transport: http
+pipeline: replace
+match: { method: POST, path: /orders }
+cases:
+  abc:
+    match: { body: { sku: abc } }
+    behaviors:
+      bad: { status: 400 }
+"#,
+    );
+    fixture.write_route(
+        "low.yaml",
+        r#"
+id: low
+transport: http
+match: { method: POST, path: /orders }
+cases:
+  abc:
+    match: { body: { sku: abc } }
+    behaviors:
+      ok: { body: '${ body.sku }' }
+"#,
+    );
+    fixture.write_collections("- id: default\n  routes: [low:abc:ok, high:abc:bad]");
+    fixture.write_config(
+        r#"
+routes: routes
+collections: collections.yaml
+port: 0
+transformers:
+  replace:
+    input: [sh, -c, 'cat > seen; if grep -q fail seen; then exit 1; fi; printf xyz']
+pipelines:
+  replace: { input: [replace] }
+"#,
+    );
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let port = server.port("port");
+    let response = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{port}/orders"))
+        .header("Content-Type", "application/vnd.orders+json; charset=utf-8")
+        .body(r#"{ "sku" : "abc" }"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.text().await.unwrap(), "abc");
+    assert_eq!(
+        fs::read_to_string(fixture.temp.path().join("seen")).unwrap(),
+        r#"{"sku":"abc"}"#
+    );
+
+    let failure = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{port}/orders"))
+        .json(&serde_json::json!({"sku": "abc", "fail": true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(failure.status(), 500);
+    assert!(
+        failure
+            .text()
+            .await
+            .unwrap()
+            .contains("HTTP Pipeline failed")
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn http_candidates_match_only_their_own_pipeline_results() {
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "high.yaml",
+        r#"
+id: high
+transport: http
+pipeline: reject
+match: { method: POST, path: /orders }
+cases:
+  original:
+    match: { body: { sku: abc } }
+    behaviors:
+      bad: { status: 400 }
+"#,
+    );
+    fixture.write_route(
+        "low.yaml",
+        r#"
+id: low
+transport: http
+pipeline: accept
+match: { method: POST, path: /orders }
+cases:
+  transformed:
+    match: { body: { sku: low } }
+    behaviors:
+      ok: { body: '${ body.sku }' }
+"#,
+    );
+    fixture.write_collections("- id: default\n  routes: [low:transformed:ok, high:original:bad]");
+    fixture.write_config(
+        r#"
+routes: routes
+collections: collections.yaml
+port: 0
+transformers:
+  reject:
+    input: [sed, '-e', 's/^wire://', '-e', 's/abc/wrong/g']
+    output: [sh, -c, 'echo high >> output-calls; cat']
+  accept:
+    input: [sed, '-e', 's/^wire://', '-e', '/"choice":"yes"/s/abc/low/g', '-e', 's/abc/wrong/g']
+    output: [sh, -c, 'echo low >> output-calls; cat; printf "!"']
+pipelines:
+  reject: { input: [reject], output: [reject] }
+  accept: { input: [accept], output: [accept] }
+"#,
+    );
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let port = server.port("port");
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{port}/orders");
+    let response = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .body(r#"wire:{"sku":"abc","choice":"yes"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.text().await.unwrap(), "low!");
+
+    let miss = client
+        .post(&url)
+        .json(&serde_json::json!({"sku": "abc"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(miss.status(), 501);
+    assert_eq!(miss.headers()["x-mock-miss"], "true");
+    assert_eq!(
+        fs::read_to_string(fixture.temp.path().join("output-calls")).unwrap(),
+        "low\n"
+    );
+    server.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn passthrough_labels_structured_transformer_output_as_json_only_upstream() {
+    assert_passthrough_input_type("application/msgpack", "application/json").await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn passthrough_preserves_an_existing_vendor_json_media_type() {
+    assert_passthrough_input_type("application/vnd.orders+json", "application/vnd.orders+json")
+        .await;
+}
+
+#[cfg(unix)]
+async fn assert_passthrough_input_type(incoming_type: &str, forwarded_type: &str) {
+    let (target, captured, upstream) = spawn_upstream();
+    let fixture = Fixture::new();
+    write_json_worker_frames(&fixture, "input");
+    fixture.write_route(
+        "json.yaml",
+        format!(
+            r#"
+id: json
+transport: http
+pipeline: parse
+match: {{ method: POST, path: /orders }}
+cases:
+  order:
+    match: {{ headers: {{ content-type: {incoming_type} }}, body: {{ sku: abc }} }}
+    behaviors:
+      forward: {{ kind: passthrough, target: {{ baseUrl: {target} }} }}
+"#
+        ),
+    );
+    fixture.write_collections("- id: default\n  routes: [json:order:forward]");
+    fixture.write_config(r#"
+routes: routes
+collections: collections.yaml
+port: 0
+transformers:
+  parse:
+    worker: [sh, -c, 'for reply in ready reply; do dd bs=4096 count=1 of=/dev/null 2>/dev/null; cat "$reply"; done; dd bs=4096 count=1 of=/dev/null 2>/dev/null']
+pipelines:
+  parse: { input: [parse] }
+"#);
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let port = server.port("port");
+    let response = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{port}/orders"))
+        .header("content-type", incoming_type)
+        .body(r#"{"sku":"original"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 202);
+    let sent = captured.recv().unwrap();
+    assert_eq!(sent.body, r#"{"sku":"abc"}"#);
+    assert_eq!(sent.headers["content-type"], forwarded_type);
+    upstream.join().unwrap();
+    server.shutdown().await;
+}
+
+#[cfg(unix)]
+fn write_json_worker_frames(fixture: &Fixture, direction: &str) {
+    for (name, value) in [
+        (
+            "ready",
+            serde_json::json!({"kind":"ready","protocol":1,"name":"parse","version":"1","directions":[direction]}),
+        ),
+        (
+            "reply",
+            serde_json::json!({"kind":"result","id":1,"ok":true,"value":{"sku":"abc"}}),
+        ),
+    ] {
+        let mut msg = Vec::new();
+        rmpv::encode::write_value(&mut msg, &decoy_runtime::plugins::value::to_msgpack(&value))
+            .unwrap();
+        let mut frame = u32::try_from(msg.len()).unwrap().to_be_bytes().to_vec();
+        frame.extend(msg);
+        fs::write(fixture.temp.path().join(name), frame).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn passthrough_labels_structured_output_as_json() {
+    let (target, _received, upstream) = spawn_upstream_with_response(
+        b"HTTP/1.1 200 OK\r\ncontent-type: application/msgpack\r\ncontent-length: 3\r\n\r\nabc",
+    );
+    let fixture = Fixture::new();
+    write_json_worker_frames(&fixture, "output");
+    fixture.write_route(
+        "json.yaml",
+        format!(
+            r#"
+id: json
+transport: http
+pipeline: parse
+match: {{ method: GET, path: /orders }}
+cases:
+  any:
+    behaviors:
+      forward: {{ kind: passthrough, target: {{ baseUrl: {target} }} }}
+"#
+        ),
+    );
+    fixture.write_collections("- id: default\n  routes: [json:any:forward]");
+    fixture.write_config(r#"
+routes: routes
+collections: collections.yaml
+port: 0
+transformers:
+  parse:
+    worker: [sh, -c, 'for reply in ready reply; do dd bs=4096 count=1 of=/dev/null 2>/dev/null; cat "$reply"; done; dd bs=4096 count=1 of=/dev/null 2>/dev/null']
+pipelines:
+  parse: { output: [parse] }
+"#);
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let url = format!("http://127.0.0.1:{}/orders", server.port("port"));
+    let response = reqwest::get(url).await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["content-type"], "application/json");
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap(),
+        serde_json::json!({"sku":"abc"})
+    );
+    upstream.join().unwrap();
+    server.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn http_transformer_diagnostics_do_not_reach_the_client() {
+    let fixture = Fixture::new();
+    fixture.write_route("fail.yaml", "id: fail\ntransport: http\npipeline: fail\nmatch: { method: POST, path: /fail }\ncases: { any: { behaviors: { ok: { body: ok } } } }");
+    fixture.write_collections("- id: default\n  routes: [fail:any:ok]");
+    fixture.write_config(r#"
+routes: routes
+collections: collections.yaml
+port: 0
+transformers:
+  fail:
+    input: [sh, -c, 'data=$(cat); if [ "$data" = input ]; then echo internal-input >&2; exit 1; fi; printf "%s" "$data"']
+    output: [sh, -c, 'cat >/dev/null; echo internal-output >&2; exit 1']
+pipelines:
+  fail: { input: [fail], output: [fail] }
+"#);
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let url = format!("http://127.0.0.1:{}/fail", server.port("port"));
+    let client = reqwest::Client::new();
+    for body in ["input", "output"] {
+        let response = client.post(&url).body(body).send().await.unwrap();
+        assert_eq!(response.status(), 500);
+        assert_eq!(
+            response.json::<serde_json::Value>().await.unwrap(),
+            serde_json::json!({"error": "HTTP Pipeline failed"})
+        );
+    }
+    server.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn passthrough_output_rejects_changed_ranges_and_distinguishes_upstream_read_errors() {
+    for (upstream_response, status, error) in [
+        (&b"HTTP/1.1 206 Partial Content\r\ncontent-range: bytes 0-2/10\r\ncontent-length: 3\r\n\r\nabc"[..], 500, "HTTP Pipeline failed"),
+        (&b"HTTP/1.1 200 OK\r\ncontent-length: 8\r\n\r\nabc"[..], 502, "passthrough forwarding failed"),
+    ] {
+        let (target, _captured, upstream) = spawn_upstream_with_response(upstream_response);
+        let fixture = Fixture::new();
+        fixture.write_route("range.yaml", format!(r#"
+id: range
+transport: http
+pipeline: change
+match: {{ method: GET, path: /range }}
+cases:
+  any:
+    behaviors:
+      forward: {{ kind: passthrough, target: {{ baseUrl: {target} }} }}
+"#));
+        fixture.write_collections("- id: default\n  routes: [range:any:forward]");
+        fixture.write_config(r#"
+routes: routes
+collections: collections.yaml
+port: 0
+transformers:
+  change:
+    output: [sh, -c, 'cat; printf "!"']
+pipelines:
+  change: { output: [change] }
+"#);
+        let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+        let port = server.port("port");
+        let response = reqwest::get(format!("http://127.0.0.1:{port}/range")).await.unwrap();
+        assert_eq!(response.status(), status);
+        assert!(response.headers().get("content-range").is_none());
+        assert!(response.text().await.unwrap().contains(error));
+        upstream.join().unwrap();
+        server.shutdown().await;
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn bodyless_passthrough_skips_output_and_keeps_headers_for_unchanged_input() {
+    let (target, received, upstream) =
+        spawn_upstream_with_response(b"HTTP/1.1 204 No Content\r\netag: kept\r\n\r\n");
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "users.yaml",
+        format!(
+            r#"
+id: users
+transport: http
+pipeline: encoded
+match: {{ method: POST, path: /users }}
+cases:
+  any:
+    behaviors:
+      real: {{ kind: passthrough, target: {{ baseUrl: {target} }} }}
+"#
+        ),
+    );
+    fixture.write_collections("- id: local\n  routes: [users:any:real]");
+    fixture.write_config(
+        r#"
+routes: routes
+collections: collections.yaml
+port: 0
+transformers:
+  encoded: { input: [cat], output: [sh, -c, "exit 1"] }
+pipelines:
+  encoded: { input: [encoded], output: [encoded] }
+"#,
+    );
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let response = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{}/users", server.port("port")))
+        .header("Content-Type", "application/json")
+        .header("Content-Encoding", "custom")
+        .header("Content-Digest", "unchanged")
+        .body("encoded bytes")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 204);
+    assert_eq!(response.headers()["etag"], "kept");
+    let sent = received.recv().unwrap();
+    assert_eq!(sent.body, "encoded bytes");
+    assert_eq!(sent.headers["content-encoding"], "custom");
+    assert_eq!(sent.headers["content-digest"], "unchanged");
+    upstream.join().unwrap();
+}
+
 #[tokio::test]
 async fn serve_uses_cli_global_passthrough_target_for_selected_passthrough() {
     let (upstream_url, captured, upstream) = spawn_upstream();
@@ -812,24 +1289,7 @@ cases:
     let in_flight = tokio::spawn(reqwest::get(format!("http://127.0.0.1:{port}/slow")));
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let started = Instant::now();
-    let killed = Command::new("kill")
-        .args(["-TERM", &server.child.id().to_string()])
-        .status()
-        .unwrap();
-    assert!(killed.success());
-    let status = loop {
-        if let Some(status) = server.child.try_wait().unwrap() {
-            break status;
-        }
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "decoy did not stop"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
-    // A clean exit, not death by signal: SIGTERM ran the graceful shutdown.
-    assert!(status.success(), "{status}");
+    server.shutdown().await;
     in_flight.abort();
 }
 
@@ -963,6 +1423,16 @@ fn spawn_upstream() -> (
     mpsc::Receiver<CapturedRequest>,
     thread::JoinHandle<()>,
 ) {
+    spawn_upstream_with_response(b"HTTP/1.1 202 Accepted\r\ncontent-type: text/plain\r\nx-upstream: yes\r\ncontent-length: 8\r\n\r\naccepted")
+}
+
+fn spawn_upstream_with_response(
+    response: &'static [u8],
+) -> (
+    String,
+    mpsc::Receiver<CapturedRequest>,
+    thread::JoinHandle<()>,
+) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let (tx, rx) = mpsc::channel();
@@ -1017,11 +1487,7 @@ fn spawn_upstream() -> (
         })
         .unwrap();
 
-        stream
-            .write_all(
-                b"HTTP/1.1 202 Accepted\r\ncontent-type: text/plain\r\nx-upstream: yes\r\ncontent-length: 8\r\n\r\naccepted",
-            )
-            .unwrap();
+        stream.write_all(response).unwrap();
     });
 
     (format!("http://{addr}"), rx, handle)
@@ -1055,6 +1521,30 @@ impl Server {
             child,
             lines,
             ports: BTreeMap::new(),
+        }
+    }
+
+    /// Stop Decoy cleanly so the child can flush its coverage profile.
+    #[cfg(unix)]
+    async fn shutdown(&mut self) {
+        let started = Instant::now();
+        assert!(
+            Command::new("kill")
+                .args(["-TERM", &self.child.id().to_string()])
+                .status()
+                .unwrap()
+                .success()
+        );
+        loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                assert!(status.success(), "{status}");
+                return;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "decoy did not stop"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
 

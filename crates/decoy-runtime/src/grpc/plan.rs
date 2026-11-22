@@ -27,7 +27,7 @@ pub(crate) fn static_unary_replies<'a>(
         let Ok(method) = find_method(pool, &address.service, &address.method) else {
             continue;
         };
-        if method.is_server_streaming() {
+        if method.is_server_streaming() || route.pipeline_name.is_some() {
             continue;
         }
         for (case_name, case) in &route.cases {
@@ -66,22 +66,39 @@ pub(super) fn respond(
     response: &ResponseBehavior,
     envelope: &Value,
 ) -> Result<GrpcResponse, String> {
+    let (mut reply, message) = prepare_unary(response, envelope)?;
+    if let Some(message) = message {
+        reply.body = encode(message, pipeline(route), &method.output())
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(reply)
+}
+
+pub(super) fn prepare_unary(
+    response: &ResponseBehavior,
+    envelope: &Value,
+) -> Result<(GrpcResponse, Option<Value>), String> {
     let rendered = render(response, envelope)?;
     let status = match &rendered.status {
         None => OK,
         Some(status) => status_code(status)?,
     };
     if status != OK {
-        return status_only(status, rendered.message, rendered.metadata);
+        return Ok((
+            status_only(status, rendered.message, rendered.metadata)?,
+            None,
+        ));
     }
     let message = rendered.message.unwrap_or_else(|| json!({}));
-    Ok(GrpcResponse {
-        body: encode(message, pipeline(route), &method.output())
-            .map_err(|error| error.to_string())?,
-        status: OK,
-        status_message: String::new(),
-        metadata: rendered.metadata,
-    })
+    Ok((
+        GrpcResponse {
+            body: Vec::new(),
+            status: OK,
+            status_message: String::new(),
+            metadata: rendered.metadata,
+        },
+        Some(message),
+    ))
 }
 
 pub(super) fn render(

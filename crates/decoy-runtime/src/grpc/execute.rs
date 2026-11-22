@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 use futures_util::StreamExt as _;
@@ -7,14 +7,16 @@ use prost_reflect::MethodDescriptor;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use super::codec::{decode, encode, pipeline};
-use super::plan::{render, respond, status_code, status_only};
+use super::codec::{decode, decode_named, encode_response_async, pipeline};
+use super::plan::{prepare_unary, render, status_code, status_only};
 use super::resolve::GrpcResolution;
-use super::{GrpcRequest, GrpcResponse, INTERNAL, OK, StreamPart, UNAVAILABLE};
+use super::{GrpcRequest, GrpcResponse, INTERNAL, INVALID_ARGUMENT, OK, StreamPart, UNAVAILABLE};
 use crate::collections::Activation;
 use crate::connections::{Connections, Registration};
-use crate::engine::{Catalog, MissDiagnostic};
+use crate::engine::{Catalog, MissDiagnostic, Rejection, reject};
 use crate::events::{Match, Outcome};
+use crate::http::RuntimeConfig;
+use crate::pipeline::{Pipeline, PipelineError};
 use crate::schema::{ResponseBehavior, Route};
 
 /// A served call and what an event needs to explain it.
@@ -25,14 +27,105 @@ pub(crate) struct GrpcCall {
     pub stream: Option<GrpcStream>,
     /// Only when `capture` was asked for.
     pub outcome: Option<Outcome>,
-    /// The Pipeline-decoded request message, when a Route decoded protobuf and `capture` was
-    /// asked for.
+    /// The request exposed to Cases, when decoded through protobuf or a named Pipeline and captured.
     pub request: Option<Value>,
     /// The response message before encoding; only when `capture` was asked for.
     pub message: Option<Value>,
 }
 
 impl Catalog {
+    pub(super) async fn select_grpc(
+        &self,
+        collection_id: &str,
+        overrides: &[Activation],
+        request: &GrpcRequest,
+        explain: bool,
+        run_transformers: bool,
+    ) -> GrpcResolution<'_> {
+        let mut activations = match self.activations(collection_id, overrides) {
+            Ok(activations) => activations.rev(),
+            Err(error) => {
+                return GrpcResolution::Miss(MissDiagnostic {
+                    collection: collection_id.to_owned(),
+                    reason: error.to_string(),
+                    candidates: vec![],
+                });
+            }
+        };
+        let mut transformed = HashMap::new();
+        let mut candidates = explain.then(Vec::new);
+        let mut decode_failure = None;
+        let mut resume = None;
+        loop {
+            let remaining = resume.take().into_iter().chain(&mut activations);
+            match self.grpc_candidates(
+                remaining,
+                request,
+                &transformed,
+                &mut candidates,
+                &mut decode_failure,
+            ) {
+                Ok(Some(hit)) => return hit,
+                Ok(None) => break,
+                Err(pending) if !run_transformers => {
+                    return GrpcResolution::Failed {
+                        response: GrpcResponse::error(
+                            INVALID_ARGUMENT,
+                            format!(
+                                "route `{}`: named input Pipeline requires request execution",
+                                pending.route.id
+                            ),
+                        ),
+                        candidates: candidates.unwrap_or_default(),
+                    };
+                }
+                Err(pending) => {
+                    let failed = |reason: String, mut candidates: Option<Vec<_>>| {
+                        reject(&mut candidates, pending.activation, || Rejection::Decode {
+                            error: reason.clone(),
+                        });
+                        GrpcResolution::Failed {
+                            response: GrpcResponse::error(
+                                INVALID_ARGUMENT,
+                                format!(
+                                    "route `{}` could not decode the request: {reason}",
+                                    pending.route.id
+                                ),
+                            ),
+                            candidates: candidates.unwrap_or_default(),
+                        }
+                    };
+                    let pipeline = match Pipeline::of(pending.route, self.runtime()) {
+                        Ok(Some(pipeline)) => pipeline,
+                        Ok(None) => unreachable!("only a named Pipeline needs preparation"),
+                        Err(error) => return failed(error, candidates),
+                    };
+                    let result =
+                        match decode_named(&request.body, &pipeline, &pending.method.input()).await
+                        {
+                            Ok(value) => Ok(value),
+                            Err(error @ PipelineError::Miss { .. }) => Err(error.to_string()),
+                            Err(error) => return failed(error.to_string(), candidates),
+                        };
+                    transformed.insert(pending.route.id.as_str(), result);
+                    resume = Some(pending.activation);
+                }
+            }
+        }
+        let candidates = candidates.unwrap_or_default();
+        match decode_failure {
+            Some(reason) => GrpcResolution::Failed {
+                response: GrpcResponse::error(INVALID_ARGUMENT, reason),
+                candidates,
+            },
+            None => GrpcResolution::Miss(MissDiagnostic {
+                collection: collection_id.to_owned(),
+                reason: "no active route case matched request".to_owned(),
+                candidates,
+            }),
+        }
+    }
+
     pub(crate) async fn execute_grpc(
         &self,
         collection_id: &str,
@@ -40,7 +133,10 @@ impl Catalog {
         request: GrpcRequest,
         capture: bool,
     ) -> GrpcCall {
-        match self.resolve_grpc_with(collection_id, overrides, &request, capture) {
+        let resolution = self
+            .select_grpc(collection_id, overrides, &request, capture, true)
+            .await;
+        match resolution {
             GrpcResolution::Matched {
                 activation,
                 skipped,
@@ -54,8 +150,18 @@ impl Catalog {
                     tokio::time::sleep(delay).await;
                 }
                 let failed = |reason| behavior_failed(&activation.address(), reason);
+                let mut logical_reply = None;
                 let (response, stream) = if method.is_server_streaming() {
-                    match respond_stream(&activation, route, &method, response, &envelope) {
+                    match respond_stream(
+                        &activation,
+                        route,
+                        self.runtime(),
+                        &method,
+                        response,
+                        &envelope,
+                    )
+                    .await
+                    {
                         // The event records the end status when it is known at open.
                         Ok(stream) => (
                             stream
@@ -69,14 +175,33 @@ impl Catalog {
                 } else if let Some(reply) = self.grpc_replies.get(&activation) {
                     (reply.clone(), None)
                 } else {
-                    let response = respond(route, &method, response, &envelope);
-                    (response.unwrap_or_else(failed), None)
+                    let reply = async {
+                        let (mut reply, message) = prepare_unary(response, &envelope)?;
+                        if let Some(message) = message {
+                            let captured =
+                                (capture && route.pipeline_name.is_some()).then(|| message.clone());
+                            reply.body = encode_response_async(
+                                route,
+                                self.runtime(),
+                                message,
+                                &method.output(),
+                            )
+                            .await
+                            .map_err(|error| error.to_string())?;
+                            logical_reply = captured;
+                        }
+                        Ok(reply)
+                    }
+                    .await;
+                    (reply.unwrap_or_else(failed), None)
                 };
                 // A raw Pipeline leaves base64 in `message`; that is not a decoded body.
                 let decoded = capture && route.decodes_protobuf();
-                let message = (decoded && !response.body.is_empty())
-                    .then(|| decode(&response.body, pipeline(route), &method.output()).ok())
-                    .flatten();
+                let message = logical_reply.or_else(|| {
+                    (decoded && !response.body.is_empty())
+                        .then(|| decode(&response.body, pipeline(route), &method.output()).ok())
+                        .flatten()
+                });
                 GrpcCall {
                     response,
                     stream,
@@ -88,7 +213,8 @@ impl Catalog {
                             path_params: BTreeMap::new(),
                         })
                     }),
-                    request: decoded.then(|| envelope["message"].take()),
+                    request: (decoded || capture && route.pipeline_name.is_some())
+                        .then(|| envelope["message"].take()),
                     message,
                 }
             }
@@ -175,24 +301,22 @@ struct Open {
     receiver: mpsc::Receiver<bytes::Bytes>,
 }
 
-fn respond_stream(
+async fn respond_stream(
     activation: &Activation,
     route: &Route,
+    runtime: &RuntimeConfig,
     method: &MethodDescriptor,
     response: &ResponseBehavior,
     envelope: &Value,
 ) -> Result<GrpcStream, String> {
     let rendered = render(response, envelope)?;
-    let steps = pipeline(route);
-    let messages = rendered
-        .stream
-        .unwrap_or_default()
-        .into_iter()
-        .map(|item| {
-            let message = encode(item.message, steps, &method.output());
-            Ok((item.delay, message.map_err(|error| error.to_string())?))
-        })
-        .collect::<Result<_, String>>()?;
+    let mut messages = Vec::new();
+    for item in rendered.stream.unwrap_or_default() {
+        let message = encode_response_async(route, runtime, item.message, &method.output())
+            .await
+            .map_err(|error| error.to_string())?;
+        messages.push((item.delay, message));
+    }
     let end = match &rendered.status {
         None => None,
         Some(status) => Some(status_only(

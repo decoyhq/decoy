@@ -80,7 +80,7 @@ Cases and templates see one call as:
 }
 ```
 
-- `message` is the decoded request as protobuf JSON: camelCase field names, enums as names, 64-bit
+- By default, `message` is the decoded request as protobuf JSON: camelCase field names, enums as names, 64-bit
   integers as strings, `bytes` as base64, and default values included (`id: ''`, `state:
 STATE_UNSPECIFIED`).
 - `metadata` is the request headers with lowercased names.
@@ -153,6 +153,11 @@ cases:
 - Literal metadata values are printable ASCII (`0x20`–`0x7E`). A rendered value outside that range
   is dropped from the trailers with a warning.
 
+For a named Pipeline, Transformers can change the shape of `message` before matching or
+protobuf encoding. Decoy still validates the method and Behavior structure at startup.
+A first output worker can check authored literals. The `protobuf` step checks actual
+values against the descriptor when the Pipeline runs.
+
 Templated values are checked when they render. A render or encode failure answers `INTERNAL` with
 the Behavior address. A stream renders its whole list when the call comes in, so a failure there
 answers `INTERNAL` before any message. A `send` message that doesn't fit the output type is
@@ -185,12 +190,51 @@ Then switch that Session's Collection or Behaviors with the
 ## Pipelines
 
 A gRPC Route decodes calls with the default Pipeline `[grpc-frame, protobuf]`. An explicit
-`pipeline` replaces it, steps in order. Each step can appear once, `grpc-frame` must come first
+list replaces it. Decoy decodes in list order and encodes in reverse order. Each step can appear once, `grpc-frame` must come first
 (gRPC bodies are always framed); `protobuf`, if present, follows it.
 Without `protobuf`, the Route sees and answers raw bytes: `message` is a base64 string.
 
 ```yaml
 pipeline: [grpc-frame] # message is base64 bytes, e.g. `message: CgNhLTE=`
 ```
+
+To add a Transformer, select a named Pipeline with `pipeline: approval-ids` on the Route.
+For example, this worker normalizes IDs before matching and adds a prefix to each reply:
+
+```js
+// approval-ids.mjs, next to decoy.yaml
+import { definePlugin } from '@decoyhq/plugin'
+
+definePlugin({
+  name: 'approval-ids',
+  version: '1',
+  input: (request) => ({ ...request, id: request.id.toLowerCase() }),
+  output: (reply) => ({ ...reply, id: 'ref-' + reply.id }),
+})
+```
+
+```yaml
+# decoy.yaml
+transformers:
+  ids: { worker: [node, approval-ids.mjs] }
+pipelines:
+  approval-ids:
+    input: [grpc-frame, protobuf, ids]
+    output: [ids, protobuf, grpc-frame]
+```
+
+Each direction runs in the order written. Input starts with the framed request bytes.
+Here `grpc-frame` removes the frame, `protobuf` decodes the request using the method's
+input type, and the Case sees the worker's result as `message`. Output starts with the
+rendered reply. The worker changes it, `protobuf` encodes it using the method's output
+type, and `grpc-frame` adds the frame the client expects. The same output steps apply to
+each server-streamed reply and to Control API pushes. A nonempty output list must return wire bytes.
+An omitted or empty list uses the default gRPC codec and its startup protobuf validation for that
+direction. Nonempty lists run in the authored order, including custom steps between built-ins.
+Decoy rejects incompatible adjacent built-ins at startup; a custom step can change the value type. An input command at the end of
+the list must emit JSON for Case matching. A worker can return a JSON value or bytes,
+which Cases see as a base64 string. A worker can call `miss` to skip its Route. If no
+other Case matches, the client gets `UNIMPLEMENTED`. A named input step that fails
+ends the call with `INVALID_ARGUMENT`. An authored reply that fails to encode gets `INTERNAL`.
 
 See [`examples/grpc-node`](../../examples/grpc-node) for a runnable Node client.

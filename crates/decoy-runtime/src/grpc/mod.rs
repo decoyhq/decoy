@@ -16,15 +16,22 @@ use bytes::Bytes;
 use crate::schema::PipelineStep;
 
 pub use codec::GrpcCodecError;
+pub use codec::encode_response_async;
 pub(crate) use plan::static_unary_replies;
 pub use resolve::GrpcResolution;
 
-/// Encodes `message` as a response of `method` through the Route's Pipeline, as a stream sends it.
+/// Encodes `message` with the Route's inline or default built-in codec. Named Pipelines
+/// need the configured Transformers supplied to [`encode_response_async`].
 pub fn encode_response(
     route: &crate::schema::Route,
     method: &prost_reflect::MethodDescriptor,
     message: serde_json::Value,
 ) -> Result<Vec<u8>, GrpcCodecError> {
+    if route.pipeline_name.is_some() {
+        return Err(GrpcCodecError::Transform(
+            "named Pipelines require asynchronous encoding".into(),
+        ));
+    }
     codec::encode(message, codec::pipeline(route), &method.output())
 }
 
@@ -183,6 +190,164 @@ mod tests {
         .output();
         let message = DynamicMessage::decode(output, unframe(&response.body).unwrap()).unwrap();
         serde_json::to_value(&message).unwrap()
+    }
+
+    #[test]
+    fn named_pipelines_validate_the_default_protobuf_direction() {
+        for (input, output, conditions, message, invalid_field) in [
+            (
+                vec![],
+                vec!["protobuf", "grpc-frame"],
+                "{ unknownInput: true }",
+                "{ id: ok }",
+                "unknownInput",
+            ),
+            (
+                vec!["grpc-frame", "protobuf"],
+                vec![],
+                "{ id: ok }",
+                "{ unknownOutput: true }",
+                "unknownOutput",
+            ),
+        ] {
+            let route = Route::from_yaml(&format!("id: get\ntransport: grpc\npipeline: named\nmatch: {{ service: approvals.v1.Approvals, method: GetApproval }}\ncases: {{ any: {{ match: {{ message: {conditions} }}, behaviors: {{ ok: {{ message: {message} }} }} }} }}")).unwrap();
+            let mut runtime = runtime();
+            runtime.pipelines.insert(
+                "named".into(),
+                crate::config::PipelineConfig {
+                    input: input.into_iter().map(str::to_owned).collect(),
+                    output: output.into_iter().map(str::to_owned).collect(),
+                },
+            );
+            let collections =
+                CollectionsFile::from_yaml("- id: default\n  routes: [get:any:ok]").unwrap();
+            let error = Catalog::new(vec![route], collections, runtime).unwrap_err();
+            assert!(error.to_string().contains(invalid_field), "{error}");
+        }
+    }
+
+    #[test]
+    fn named_grpc_builtins_reject_impossible_transitions_without_reordering_custom_steps() {
+        let route = Route::from_yaml("id: get\ntransport: grpc\npipeline: named\nmatch: { service: approvals.v1.Approvals, method: GetApproval }\ncases: { any: { behaviors: { ok: { message: { id: ok } } } } }").unwrap();
+        let collections =
+            CollectionsFile::from_yaml("- id: default\n  routes: [get:any:ok]").unwrap();
+        for (input, output, valid) in [
+            (vec!["protobuf", "grpc-frame"], vec![], false),
+            (vec!["grpc-frame", "protobuf", "protobuf"], vec![], false),
+            (vec![], vec!["grpc-frame"], false),
+            (vec![], vec!["protobuf", "grpc-frame", "protobuf"], false),
+            (
+                vec!["custom", "grpc-frame", "custom", "protobuf"],
+                vec!["protobuf", "grpc-frame"],
+                true,
+            ),
+            (
+                vec!["grpc-frame", "protobuf", "custom"],
+                vec!["protobuf", "grpc-frame", "custom"],
+                true,
+            ),
+        ] {
+            let mut runtime = runtime();
+            runtime.commands.insert(
+                "custom".into(),
+                crate::config::CommandsConfig {
+                    input: Some(vec!["not-run-during-validation".into()]),
+                    output: Some(vec!["not-run-during-validation".into()]),
+                    dir: std::env::temp_dir(),
+                },
+            );
+            runtime.pipelines.insert(
+                "named".into(),
+                crate::config::PipelineConfig {
+                    input: input.into_iter().map(str::to_owned).collect(),
+                    output: output.into_iter().map(str::to_owned).collect(),
+                },
+            );
+            let result = Catalog::new(vec![route.clone()], collections.clone(), runtime);
+            assert_eq!(result.is_ok(), valid, "{:?}", result.err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn named_input_misses_try_other_routes_and_worker_errors_end_the_call() {
+        use crate::{
+            config::{PipelineConfig, PluginConfig},
+            plugins,
+        };
+
+        // A worker replying to the handshake and three consecutive input calls.
+        let dir = tempfile::tempdir().unwrap();
+        let frames = [
+            (
+                "ready",
+                json!({"kind":"ready","protocol":1,"name":"filter","version":"1","directions":["input"]}),
+            ),
+            (
+                "miss1",
+                json!({"kind":"result","id":1,"ok":false,"miss":"unknown record"}),
+            ),
+            (
+                "miss2",
+                json!({"kind":"result","id":2,"ok":false,"miss":"unknown record"}),
+            ),
+            (
+                "failed",
+                json!({"kind":"result","id":3,"ok":false,"error":"broken transformer"}),
+            ),
+        ];
+        for (name, message) in frames {
+            let mut body = Vec::new();
+            rmpv::encode::write_value(&mut body, &plugins::value::to_msgpack(&message)).unwrap();
+            let mut frame = u32::try_from(body.len()).unwrap().to_be_bytes().to_vec();
+            frame.extend(body);
+            std::fs::write(dir.path().join(name), frame).unwrap();
+        }
+        let worker = PluginConfig {
+            command: vec!["sh".into(), "-c".into(), "for reply in ready miss1 miss2 failed; do dd bs=4096 count=1 of=/dev/null 2>/dev/null; cat \"$reply\"; done; dd bs=4096 count=1 of=/dev/null 2>/dev/null".into()],
+            dir: dir.path().to_owned(),
+            timeout: crate::config::DEFAULT_PLUGIN_TIMEOUT,
+        };
+        let (plugins, supervisor) = plugins::start(
+            &BTreeMap::from([("filter".into(), worker)]),
+            &crate::events::channel(),
+        )
+        .await
+        .unwrap();
+        let mut runtime = runtime();
+        runtime.plugins = plugins;
+        runtime.pipelines.insert(
+            "filtered".into(),
+            PipelineConfig {
+                input: vec!["filter".into()],
+                output: vec!["protobuf".into(), "grpc-frame".into()],
+            },
+        );
+        let plain = Route::from_yaml("id: plain\ntransport: grpc\nmatch: { service: approvals.v1.Approvals, method: GetApproval }\ncases: { any: { behaviors: { ok: { message: { id: fallback } } } } }").unwrap();
+        let mut filtered = plain.clone();
+        filtered.id = "filtered".into();
+        filtered.pipeline_name = Some("filtered".into());
+        let collections = CollectionsFile::from_yaml("- id: only\n  routes: [filtered:any:ok]\n- id: both\n  routes: [plain:any:ok, filtered:any:ok]").unwrap();
+        let catalog = Catalog::new(vec![plain, filtered], collections, runtime).unwrap();
+        let call = request(&catalog, json!({}));
+        let miss = catalog
+            .execute_grpc("only", &[], call.clone(), false)
+            .await
+            .response;
+        assert_eq!(miss.status, UNIMPLEMENTED);
+        assert_eq!(miss.metadata["x-mock-miss"], "true");
+        let fallback = catalog
+            .execute_grpc("both", &[], call.clone(), false)
+            .await
+            .response;
+        assert_eq!(decoded(&catalog, &fallback)["id"], "fallback");
+        let failed = catalog
+            .execute_grpc("both", &[], call, false)
+            .await
+            .response;
+        assert_eq!(failed.status, INVALID_ARGUMENT);
+        assert!(failed.status_message.contains("broken transformer"));
+        supervisor.shutdown().await;
     }
 
     #[tokio::test]

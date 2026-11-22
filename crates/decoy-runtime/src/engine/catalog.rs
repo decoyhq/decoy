@@ -30,7 +30,9 @@ impl Catalog {
     ) -> Result<Self, CatalogError> {
         for (index, route) in routes.iter().enumerate() {
             route.validate()?;
-            crate::grpc::schema::check_route(route, &runtime.protos)
+            crate::pipeline::Pipeline::validate_route(route, &runtime)
+                .map_err(|reason| CatalogError::Pipeline { reason })?;
+            crate::grpc::schema::check_configured_route(route, &runtime)
                 .map_err(|reason| CatalogError::GrpcRoute { reason })?;
             if let Some(other) = crate::ws::schema::find_tie(&routes[..index], route) {
                 return Err(CatalogError::WsRoute {
@@ -67,6 +69,11 @@ impl Catalog {
             .values()
             .filter(|route| matches!(route.route_match, RouteMatch::Http(_)))
             .map(|route| {
+                let transforms_output = route
+                    .pipeline_name
+                    .as_ref()
+                    .and_then(|name| runtime.pipelines.get(name))
+                    .is_some_and(|pipeline| !pipeline.output.is_empty());
                 let cases = route.cases.iter().map(|(case_id, case)| {
                     let behaviors = case.behaviors.iter().filter_map(|(name, behavior)| {
                         let Behavior::Response(response) = behavior else {
@@ -76,7 +83,9 @@ impl Catalog {
                             return None;
                         }
                         let mut plan = HttpResponsePlan::from_response(response);
-                        plan.body = plan.body.map(|body| BodyPlan::Bytes(body.into_bytes()));
+                        if !transforms_output {
+                            plan.body = plan.body.map(|body| BodyPlan::Bytes(body.into_bytes()));
+                        }
                         Some((name.clone(), plan))
                     });
                     (case_id.clone(), behaviors.collect())
@@ -184,6 +193,8 @@ pub enum CatalogError {
     Validation(#[from] crate::schema::ValidationError),
     #[error("duplicate route id")]
     DuplicateRoute,
+    #[error("{reason}")]
+    Pipeline { reason: String },
     /// A gRPC Route that doesn't fit the loaded protos.
     #[error("{reason}")]
     GrpcRoute { reason: String },

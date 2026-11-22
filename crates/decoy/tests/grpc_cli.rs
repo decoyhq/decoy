@@ -55,6 +55,114 @@ const COLLECTIONS: &str = r#"
     - approvals-get:any:not-found
 "#;
 
+#[cfg(unix)]
+const NORMALIZE_PIPELINE: &str = r#"
+transformers:
+  normalize:
+    input: [sed, 's/incoming/a-1/g']
+    output: [sed, 's/a-1/outgoing/g']
+pipelines:
+  normalize-replies:
+    input: [grpc-frame, protobuf, normalize]
+    output: [normalize, protobuf, grpc-frame]
+"#;
+
+#[cfg(unix)]
+#[tokio::test]
+async fn named_pipeline_matches_transformed_messages_and_encodes_each_reply() {
+    let route = ROUTE.replace(
+        "transport: grpc",
+        "transport: grpc\npipeline: normalize-replies",
+    );
+    let server = Server::start_with_config(&route, COLLECTIONS, false, NORMALIZE_PIPELINE).await;
+    let mut client = server.client().await;
+    let reply = client.get(json!({ "id": "incoming" }), &[]).await.unwrap();
+    assert_eq!(
+        reply,
+        json!({ "id": "outgoing", "state": "PENDING", "approvers": ["alice"] })
+    );
+
+    let route = WATCH_ROUTE.replace(
+        "transport: grpc",
+        "transport: grpc\npipeline: normalize-replies",
+    );
+    let server =
+        Server::start_with_config(&route, WATCH_COLLECTIONS, false, NORMALIZE_PIPELINE).await;
+    let mut client = server.client().await;
+    let mut stream = client
+        .watch(json!({ "ids": ["incoming"] }), &[])
+        .await
+        .unwrap();
+    for state in ["PENDING", "APPROVED"] {
+        assert_eq!(
+            next(&mut stream).await.unwrap(),
+            Some(json!({ "id": "outgoing", "state": state }))
+        );
+    }
+    assert_eq!(next(&mut stream).await.unwrap(), None);
+
+    server
+        .control("useCollection", r#"{"collection":"open"}"#, "s1")
+        .await;
+    let mut open = client
+        .watch(json!({ "ids": [] }), &[("x-mock-session", "s1")])
+        .await
+        .unwrap();
+    assert_eq!(next(&mut open).await.unwrap().unwrap()["id"], "outgoing");
+    let invalid = r#"{"route":"approvals-watch","message":{"unknownField":1}}"#;
+    let (status, diagnostic) = server.send(invalid, "s1").await;
+    assert_eq!(status, 400);
+    assert!(
+        diagnostic["error"]
+            .as_str()
+            .unwrap()
+            .contains("unknownField")
+    );
+    let pushed = r#"{"route":"approvals-watch","message":{"id":"a-1","state":"APPROVED"}}"#;
+    assert_eq!(
+        server.send(pushed, "s1").await,
+        (200, json!({ "delivered": 1 }))
+    );
+    assert_eq!(
+        next(&mut open).await.unwrap(),
+        Some(json!({ "id": "outgoing", "state": "APPROVED" }))
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn named_pipeline_keeps_the_default_grpc_codec_for_each_omitted_direction() {
+    let route = ROUTE.replace(
+        "transport: grpc",
+        "transport: grpc\npipeline: normalize-replies",
+    );
+    for (omitted, reply_id, approver) in [
+        (
+            "    output: [normalize, protobuf, grpc-frame]\n",
+            "a-1",
+            "alice",
+        ),
+        (
+            "    input: [grpc-frame, protobuf, normalize]\n",
+            "incoming",
+            "carol",
+        ),
+    ] {
+        let config = NORMALIZE_PIPELINE.replace(omitted, "");
+        let server = Server::start_with_config(&route, COLLECTIONS, false, &config).await;
+        let reply = server
+            .client()
+            .await
+            .get(json!({ "id": "incoming" }), &[("x-user", "carol")])
+            .await
+            .unwrap();
+        assert_eq!(
+            reply,
+            json!({ "id": reply_id, "state": "PENDING", "approvers": [approver] })
+        );
+    }
+}
+
 #[tokio::test]
 async fn serves_unary_grpc_calls_with_matching_templates_statuses_and_sessions() {
     let server = Server::start(ROUTE, COLLECTIONS).await;
@@ -488,6 +596,10 @@ impl Server {
     }
 
     async fn start_with(route: &str, collections: &str, tls: bool) -> Self {
+        Self::start_with_config(route, collections, tls, "").await
+    }
+
+    async fn start_with_config(route: &str, collections: &str, tls: bool, config: &str) -> Self {
         let temp = TempDir::new().unwrap();
         let protos =
             Path::new(env!("CARGO_MANIFEST_DIR")).join("../decoy-runtime/tests/fixtures/proto");
@@ -497,7 +609,7 @@ impl Server {
         fs::write(
             temp.path().join("decoy.yaml"),
             format!(
-                "routes: routes\ncollections: collections.yaml\nport: 0\nprotos:\n  roots: [{}]\n{}",
+                "routes: routes\ncollections: collections.yaml\nport: 0\nprotos:\n  roots: [{}]\n{}{config}",
                 protos.display(),
                 if tls { "tls: { cert: cert.pem, key: key.pem }\n" } else { "" }
             ),

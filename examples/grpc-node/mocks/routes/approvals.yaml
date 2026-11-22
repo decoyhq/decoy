@@ -1,12 +1,13 @@
 id: approvals-get
 transport: grpc
+pipeline: approval-ids
 match:
   service: approvals.v1.Approvals
   method: GetApproval
 cases:
   pending:
     match:
-      message: { id: a-1 } # the decoded request, as protobuf JSON
+      message: { id: a-1 } # protobuf JSON after the Transformer lowercases the id
     behaviors:
       ok:
         message: { id: a-1, state: PENDING, approvers: [alice] }

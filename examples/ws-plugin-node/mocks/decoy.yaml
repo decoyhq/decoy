@@ -14,9 +14,11 @@ transformers:
   gzip:
     input: [gzip, -dc]
     output: [gzip, -c]
+  http-context:
+    worker: [node, ../plugins/http-context.ts]
 
 pipelines:
-  approvals-ws:
+  typed-approvals:
     input: [env]
     output: [env]
   compressed-approvals:
@@ -25,3 +27,6 @@ pipelines:
   rpc:
     input: [rpc]
     output: [rpc]
+  http-context:
+    input: [http-context]
+    output: [http-context]
