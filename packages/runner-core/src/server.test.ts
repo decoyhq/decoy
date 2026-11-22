@@ -9,7 +9,7 @@ import { setTimeout as sleep } from 'node:timers/promises'
 import { afterEach, describe, expect, test } from '@rstest/core'
 import { FAKE_DECOY } from '../fixtures'
 import { isHealthy } from './health'
-import { resolveServerOptions, type ServerOptions, startDecoy } from './server'
+import { pidFileFor, resolveServerOptions, type ServerOptions, startDecoy } from './server'
 
 async function listen(server: Server): Promise<number> {
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
@@ -68,6 +68,13 @@ describe('resolveServerOptions', () => {
     expect(options.reuseExistingServer).toBe(false)
     expect(options.url).toBe('http://127.0.0.1:9000')
   })
+})
+
+test('keys a runner pidfile by the effective port', () => {
+  expect(pidFileFor('http://localhost')).toBe(join(tmpdir(), 'decoy-runner-80.json'))
+  expect(pidFileFor('https://localhost')).toBe(join(tmpdir(), 'decoy-runner-443.json'))
+  expect(pidFileFor('https://localhost:443')).toBe(join(tmpdir(), 'decoy-runner-443.json'))
+  expect(pidFileFor('https://localhost:9000')).toBe(join(tmpdir(), 'decoy-runner-9000.json'))
 })
 
 describe('startDecoy', () => {

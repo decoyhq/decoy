@@ -51,6 +51,12 @@ function trimTrailingSlashes(url: string): string {
   return url.slice(0, end)
 }
 
+export function pidFileFor(url: string): string {
+  const endpoint = new URL(url)
+  const port = endpoint.port || (endpoint.protocol === 'https:' ? '443' : '80')
+  return join(tmpdir(), `decoy-runner-${port}.json`)
+}
+
 /**
  * Start `command` in `cwd` unless Decoy already answers at `url`. Reuse follows Playwright
  * `webServer`: allowed locally, refused when `CI` is set. The teardown stops Decoy only if this
@@ -62,7 +68,7 @@ export async function startDecoy(
   // Absolute, so the PATH entries and the walk up to the root don't depend on process.cwd().
   const cwd = resolve(options.cwd)
 
-  const pidFile = join(tmpdir(), `decoy-runner-${new URL(options.url).port || '80'}.json`)
+  const pidFile = pidFileFor(options.url)
   await stopOrphan(pidFile, options, cwd)
 
   if (await isHealthy(options.url)) {
