@@ -456,11 +456,11 @@ impl App {
             }
             // A typed session id may be new, so Enter runs it as typed; Tab takes a seen one.
             KeyCode::Enter if !self.naming_session() => {
-                return Some(
-                    self.accept(&items)
-                        .then(|| self.submit())
-                        .unwrap_or_default(),
-                );
+                return Some(if self.accept(&items) {
+                    self.submit()
+                } else {
+                    Vec::new()
+                });
             }
             _ => return None,
         }
