@@ -1,6 +1,8 @@
 //! JSON ⇄ msgpack for values crossing to a worker. Cases and templates work on JSON; a worker also
 //! sees and returns wire bytes, as msgpack `bin`.
 
+use std::fmt;
+
 use rmpv::Value as Msgpack;
 use serde_json::{Map, Number, Value};
 
@@ -27,10 +29,27 @@ pub fn to_msgpack(value: &Value) -> Msgpack {
 /// The JSON a worker's value stands for. Bytes, non-string map keys, non-UTF-8 strings and
 /// extension types have none; the error names where the first one is (`$.data`).
 pub fn to_json(value: &Msgpack) -> Result<Value, String> {
-    at(value, "$")
+    at(value, &Path::Root)
 }
 
-fn at(value: &Msgpack, path: &str) -> Result<Value, String> {
+/// Keep path segments on the stack; only format them if conversion fails.
+enum Path<'a> {
+    Root,
+    Item(&'a Self, usize),
+    Field(&'a Self, &'a str),
+}
+
+impl fmt::Display for Path<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Root => f.write_str("$"),
+            Self::Item(parent, index) => write!(f, "{parent}[{index}]"),
+            Self::Field(parent, key) => write!(f, "{parent}.{key}"),
+        }
+    }
+}
+
+fn at(value: &Msgpack, path: &Path<'_>) -> Result<Value, String> {
     Ok(match value {
         Msgpack::Nil => Value::Null,
         Msgpack::Boolean(flag) => Value::Bool(*flag),
@@ -50,7 +69,7 @@ fn at(value: &Msgpack, path: &str) -> Result<Value, String> {
             items
                 .iter()
                 .enumerate()
-                .map(|(index, item)| at(item, &format!("{path}[{index}]")))
+                .map(|(index, item)| at(item, &Path::Item(path, index)))
                 .collect::<Result<_, _>>()?,
         ),
         Msgpack::Map(entries) => {
@@ -61,7 +80,7 @@ fn at(value: &Msgpack, path: &str) -> Result<Value, String> {
                         "`{path}` has a map key that is not a string: {key}"
                     ));
                 };
-                fields.insert(key.to_owned(), at(value, &format!("{path}.{key}"))?);
+                fields.insert(key.to_owned(), at(value, &Path::Field(path, key))?);
             }
             Value::Object(fields)
         }
@@ -69,7 +88,7 @@ fn at(value: &Msgpack, path: &str) -> Result<Value, String> {
     })
 }
 
-fn number(float: f64, path: &str) -> Result<Value, String> {
+fn number(float: f64, path: &Path<'_>) -> Result<Value, String> {
     Number::from_f64(float)
         .map(Value::Number)
         .ok_or_else(|| format!("`{path}` is {float}, which JSON can't hold"))
@@ -100,5 +119,23 @@ mod tests {
         let key = Msgpack::Map(vec![(Msgpack::from(1), Msgpack::Nil)]);
         assert!(to_json(&key).unwrap_err().contains("not a string"));
         assert!(to_json(&Msgpack::F64(f64::NAN)).is_err());
+    }
+
+    #[test]
+    fn nested_errors_name_the_failing_sibling_only() {
+        let value = Msgpack::Map(vec![
+            ("earlier".into(), Msgpack::Array(vec![Msgpack::Nil])),
+            (
+                "items".into(),
+                Msgpack::Array(vec![
+                    Msgpack::Nil,
+                    Msgpack::Map(vec![("bad".into(), Msgpack::Binary(vec![1]))]),
+                ]),
+            ),
+        ]);
+        assert_eq!(
+            to_json(&value).unwrap_err(),
+            "`$.items[1].bad` is bytes, which JSON can't hold"
+        );
     }
 }
