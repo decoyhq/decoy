@@ -1,0 +1,29 @@
+name: UB-mode comment
+
+on: # zizmor: ignore[dangerous-triggers] -- only default-branch code runs; the ZIP is parsed as bounded text.
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.path == '.github/workflows/ci.yml'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      # workflow_run uses the default branch SHA, never the PR's branch or artifacts as code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Post report if present
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/ub_mode_comment.py

@@ -5,19 +5,24 @@ name: Coverage
 on:
   push:
     branches: [main]
-  pull_request:
+  workflow_call:
+    inputs:
+      ub-mode:
+        type: boolean
+        default: false
+    outputs:
+      ub-lcov:
+        value: ${{ jobs.coverage.outputs.ub-lcov }}
 
 permissions:
   contents: read
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   coverage:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      ub-lcov: ${{ steps.ub-lcov.outputs.artifact-id }}
     permissions:
       contents: read
       id-token: write
@@ -35,6 +40,15 @@ jobs:
         run: |
           pnpm install --frozen-lockfile
           pnpm -r --filter './packages/*' exec rstest run --coverage
+
+      - id: ub-lcov
+        if: inputs.ub-mode
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ub-lcov-js-${{ github.run_attempt }}
+          path: packages/*/coverage/lcov.info
+          retention-days: 1
 
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
