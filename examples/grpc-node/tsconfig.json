@@ -6,5 +6,5 @@
     "erasableSyntaxOnly": true,
     "types": ["node"]
   },
-  "include": ["tests"]
+  "include": ["tests", "transformers"]
 }

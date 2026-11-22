@@ -129,6 +129,40 @@ async fn named_pipeline_matches_transformed_messages_and_encodes_each_reply() {
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn named_pipeline_keeps_the_default_grpc_codec_for_each_omitted_direction() {
+    let route = ROUTE.replace(
+        "transport: grpc",
+        "transport: grpc\npipeline: normalize-replies",
+    );
+    for (omitted, request_id, reply_id) in [
+        (
+            "    output: [normalize, protobuf, grpc-frame]\n",
+            "incoming",
+            "a-1",
+        ),
+        (
+            "    input: [grpc-frame, protobuf, normalize]\n",
+            "a-1",
+            "outgoing",
+        ),
+    ] {
+        let config = NORMALIZE_PIPELINE.replace(omitted, "");
+        let server = Server::start_with_config(&route, COLLECTIONS, false, &config).await;
+        let reply = server
+            .client()
+            .await
+            .get(json!({ "id": request_id }), &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            reply,
+            json!({ "id": reply_id, "state": "PENDING", "approvers": ["alice"] })
+        );
+    }
+}
+
 #[tokio::test]
 async fn serves_unary_grpc_calls_with_matching_templates_statuses_and_sessions() {
     let server = Server::start(ROUTE, COLLECTIONS).await;

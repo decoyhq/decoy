@@ -15,14 +15,14 @@ after(() => {
   stop()
 })
 
-void test('a Case matches the decoded request message', async () => {
-  const reply = await getApproval(client, 'a-1')
-  assert.deepEqual(reply, { id: 'a-1', state: 'PENDING', approvers: ['alice'] })
+void test('the input Pipeline normalizes the id before Case matching, then output prefixes it', async () => {
+  const reply = await getApproval(client, 'A-1')
+  assert.deepEqual(reply, { id: 'ref-a-1', state: 'PENDING', approvers: ['alice'] })
 })
 
 void test('templates read the request message and metadata', async () => {
   const reply = await getApproval(client, 'a-7', { 'x-user': 'carol' })
-  assert.deepEqual(reply, { id: 'a-7', state: 'PENDING', approvers: ['carol'] })
+  assert.deepEqual(reply, { id: 'ref-a-7', state: 'PENDING', approvers: ['carol'] })
 })
 
 void test('useCollection switches a Session to a gRPC status error', async () => {

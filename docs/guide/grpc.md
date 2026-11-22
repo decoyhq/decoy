@@ -228,8 +228,9 @@ Here `grpc-frame` removes the frame, `protobuf` decodes the request using the me
 input type, and the Case sees the worker's result as `message`. Output starts with the
 rendered reply. The worker changes it, `protobuf` encodes it using the method's output
 type, and `grpc-frame` adds the frame the client expects. The same output steps apply to
-each server-streamed reply and to Control API pushes. The final output must be wire bytes.
-Include the built-ins where your wire format needs them. An input command at the end of
+each server-streamed reply and to Control API pushes. A nonempty output list must return wire bytes.
+An omitted or empty list uses the default gRPC codec for that direction. Include the built-ins in
+nonempty lists where your wire format needs them. An input command at the end of
 the list must emit JSON for Case matching. A worker can return a JSON value or bytes,
 which Cases see as a base64 string. A worker can call `miss` to skip its Route. If no
 other Case matches, the client gets `UNIMPLEMENTED`. A named input step that fails

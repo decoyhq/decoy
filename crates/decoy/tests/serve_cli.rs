@@ -242,6 +242,7 @@ pipeline: uppercase
 match: {{ method: POST, path: /users }}
 cases:
   fallback:
+    match: {{ headers: {{ content-digest: old }}, body: {{ SKU: ABC }} }}
     behaviors:
       forward: {{ kind: passthrough, target: {{ baseUrl: {upstream_url} }} }}
   object:
@@ -365,6 +366,84 @@ pipelines:
             .await
             .unwrap()
             .contains("transformer `replace` input failed")
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn http_candidates_match_only_their_own_pipeline_results() {
+    let fixture = Fixture::new();
+    fixture.write_route(
+        "high.yaml",
+        r#"
+id: high
+transport: http
+pipeline: reject
+match: { method: POST, path: /orders }
+cases:
+  original:
+    match: { body: { sku: abc } }
+    behaviors:
+      bad: { status: 400 }
+"#,
+    );
+    fixture.write_route(
+        "low.yaml",
+        r#"
+id: low
+transport: http
+pipeline: accept
+match: { method: POST, path: /orders }
+cases:
+  transformed:
+    match: { body: { sku: low } }
+    behaviors:
+      ok: { body: '${ body.sku }' }
+"#,
+    );
+    fixture.write_collections("- id: default\n  routes: [low:transformed:ok, high:original:bad]");
+    fixture.write_config(
+        r#"
+routes: routes
+collections: collections.yaml
+port: 0
+transformers:
+  reject:
+    input: [sed, '-e', 's/^wire://', '-e', 's/abc/wrong/g']
+    output: [sh, -c, 'echo high >> output-calls; cat']
+  accept:
+    input: [sed, '-e', 's/^wire://', '-e', '/"choice":"yes"/s/abc/low/g', '-e', 's/abc/wrong/g']
+    output: [sh, -c, 'echo low >> output-calls; cat; printf "!"']
+pipelines:
+  reject: { input: [reject], output: [reject] }
+  accept: { input: [accept], output: [accept] }
+"#,
+    );
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let port = server.port("port");
+    let client = reqwest::Client::new();
+    let url = format!("http://127.0.0.1:{port}/orders");
+    let response = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .body(r#"wire:{"sku":"abc","choice":"yes"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.text().await.unwrap(), "low!");
+
+    let miss = client
+        .post(&url)
+        .json(&serde_json::json!({"sku": "abc"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(miss.status(), 501);
+    assert_eq!(miss.headers()["x-mock-miss"], "true");
+    assert_eq!(
+        fs::read_to_string(fixture.temp.path().join("output-calls")).unwrap(),
+        "low\n"
     );
 }
 

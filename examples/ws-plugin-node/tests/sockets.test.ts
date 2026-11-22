@@ -77,6 +77,24 @@ void test('the HTTP Route uses the same typed envelope as the WebSocket Route', 
   })
 })
 
+void test('HTTP shares the compressed Pipeline with the WebSocket Route', async () => {
+  const request = envelope('approvals.v1.WatchRequest', { ids: ['a-1'] })
+  const response = await fetch(`${decoyUrl}/compressed-approvals`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/msgpack', 'content-encoding': 'gzip' },
+    body: gzipSync(request),
+  })
+
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get('content-type'), 'application/msgpack')
+  assert.equal(response.headers.get('content-encoding'), 'gzip')
+  // Fetch inflates the HTTP response according to Content-Encoding.
+  assert.deepEqual(readEnvelope(new Uint8Array(await response.arrayBuffer())), {
+    type: 'approvals.v1.Approval',
+    data: { id: 'a-1', state: 'APPROVED' },
+  })
+})
+
 void test('runs a command and a worker in each configured order', async () => {
   const approvals = await open('/ws/compressed-approvals', session())
   const greeting = gunzipSync(await approvals.binary()).toString('utf8')

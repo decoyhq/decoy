@@ -90,10 +90,14 @@ impl Catalog {
                 reject(candidates, activation, || Rejection::MissingRoute);
                 continue;
             };
+            let has_named_input = route
+                .pipeline_name
+                .as_ref()
+                .is_some_and(|name| !self.runtime().pipelines[name].input.is_empty());
             if !matches!(&decoded, Some((cached, _)) if cached.id == route.id ||
                 (cached.pipeline_name.is_none() && route.pipeline_name.is_none() && pipeline(cached) == pipeline(route)))
             {
-                let message = if route.pipeline_name.is_some() {
+                let message = if has_named_input {
                     transformed
                         .get(route.id.as_str())
                         .ok_or_else(|| PendingDecode {
@@ -125,7 +129,7 @@ impl Catalog {
                 Err(error) => {
                     // Named Pipeline errors here are explicit input misses. Hard failures
                     // already ended the call in the execute driver.
-                    if route.pipeline_name.is_none() {
+                    if !has_named_input {
                         decode_failure.get_or_insert_with(|| {
                             format!("route `{}` could not decode the request: {error}", route.id)
                         });

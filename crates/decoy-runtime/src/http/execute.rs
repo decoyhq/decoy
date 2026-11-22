@@ -5,7 +5,7 @@ use bytes::Bytes;
 use super::forward::{
     ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough, target_url,
 };
-use super::pipeline::{PreparedRoute, mock_output, passthrough_output};
+use super::pipeline::{PreparedRoute, describes_original_body, mock_output, passthrough_output};
 use super::resolve::{HttpRequest, ResolveOutcome};
 use crate::collections::Activation;
 use crate::engine::{Catalog, MissDiagnostic};
@@ -158,9 +158,14 @@ impl Catalog {
                                         .ok()
                                         .map(String::from)
                                 });
-                        let (headers, body) = match input {
-                            Some(envelope) => (envelope.headers, envelope.raw_body),
-                            None => (request.headers, request.body),
+                        let mut headers = request.headers;
+                        let body = if let Some(envelope) = input {
+                            if envelope.raw_body != request.body {
+                                headers.retain(|name, _| !describes_original_body(name));
+                            }
+                            envelope.raw_body
+                        } else {
+                            request.body
                         };
                         let is_head = request.method == HttpMethod::Head;
                         let source = forward_passthrough(

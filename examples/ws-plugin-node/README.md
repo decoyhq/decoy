@@ -3,7 +3,10 @@
 Two binary socket formats, each mocked through a plugin step. Laid out like a user's repo: the
 plugins are packages (`acme/`, standing in for npm packages), configured in the user's own plugin
 files (`plugins/`), which `mocks/decoy.yaml` runs. The HTTP Route `POST /approvals` shares
-the typed-envelope Pipeline with the WebSocket Route at `/ws/approvals`.
+the typed-envelope Pipeline with the WebSocket Route at `/ws/approvals`. `POST /compressed-approvals`
+and `/ws/compressed-approvals` also share a Pipeline: `gzip` decompresses incoming bytes before
+`env` decodes them for Case matching. The reply goes through `env` and then `gzip`. The HTTP
+Route declares `Content-Encoding: gzip` so the client knows to decompress it.
 
 ```sh
 pnpm --filter ./examples/ws-plugin-node test:e2e
@@ -24,15 +27,16 @@ mocks/decoy.yaml                    transformers and named pipelines
 proto/                              compiled by Decoy; plugins use it through ctx.protobuf
 ```
 
-| Test (`tests/sockets.test.ts`) | Proves                                                                                  |
-| ------------------------------ | --------------------------------------------------------------------------------------- |
-| typed envelopes                | One socket mixes JSON text (`{ action: ping }` on connect) and binary protobuf replies. |
-| send through the plugin        | Control API `send` is encoded by the plugin; a failed output skips delivery.            |
-| a frame the plugin misses      | `miss()` skips the frame and logs why; the socket keeps working.                        |
-| rpc REQUEST → REPLY            | The reply echoes the request's `id` with `${ message.id }`.                             |
-| another Session                | Same path, `broken` Collection: an ERROR frame instead of the REPLY.                    |
-| events numbered per connection | Plugin `ctx.state` is per socket: each one counts its events from 1.                    |
-| an unknown kind                | A miss; the next request is still answered.                                             |
+| Test (`tests/sockets.test.ts`)      | Proves                                                                                  |
+| ----------------------------------- | --------------------------------------------------------------------------------------- |
+| typed envelopes                     | One socket mixes JSON text (`{ action: ping }` on connect) and binary protobuf replies. |
+| shared HTTP and WebSocket Pipelines | Both transports use the same typed envelopes, with and without gzip.                    |
+| send through the plugin             | Control API `send` is encoded by the plugin; a failed output skips delivery.            |
+| a frame the plugin misses           | `miss()` skips the frame and logs why; the socket keeps working.                        |
+| rpc REQUEST → REPLY                 | The reply echoes the request's `id` with `${ message.id }`.                             |
+| another Session                     | Same path, `broken` Collection: an ERROR frame instead of the REPLY.                    |
+| events numbered per connection      | Plugin `ctx.state` is per socket: each one counts its events from 1.                    |
+| an unknown kind                     | A miss; the next request is still answered.                                             |
 
 Try breaking it: a typo in a payload (`nmae: Ann` in `mocks/routes/rpc.yaml`) fails startup through
 the plugin's `check`; a `throw` in a plugin's `input` shows up as an error event with the frame's

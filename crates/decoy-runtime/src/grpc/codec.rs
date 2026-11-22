@@ -110,7 +110,8 @@ pub async fn encode_response_async(
     message: Value,
     descriptor: &MessageDescriptor,
 ) -> Result<Vec<u8>, GrpcCodecError> {
-    let Some(named) = Pipeline::of(route, runtime).map_err(GrpcCodecError::Transform)? else {
+    let named = Pipeline::of(route, runtime).map_err(GrpcCodecError::Transform)?;
+    let Some(named) = named.filter(Pipeline::has_output) else {
         return encode(message, pipeline(route), descriptor);
     };
     let value = named

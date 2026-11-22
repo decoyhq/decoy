@@ -193,14 +193,16 @@ cases:
 ```
 
 The first worker receives parsed JSON for `application/json` and `+json` media types,
-text for `text/*`, or bytes for binary content. In the example the client posts
+UTF-8 text for `text/*`, or the original bytes for binary content or bodies Decoy cannot parse.
+In the example the client posts
 `application/msgpack`. The worker decodes those bytes, so the Case can match on
 `body.data.ids` and the template can read the ID. The output worker encodes the rendered
 object as MessagePack bytes. Decoy sends those bytes verbatim with the authored content type.
 
-Cases on a Route share its transformed body. If another Route is tried, its input starts
-with the original request. If the final input is bytes, `body` is null for JSON matching and templates. A
-Passthrough Behavior still forwards the exact bytes. Other Passthrough inputs are serialized
+Cases on a Route share its transformed body and see the original request headers. If another
+Route is tried, its Pipeline starts from the original request. A terminal input command's stdout
+is parsed as JSON for Case matching and templates if possible. Other byte results appear as
+`null` there. A Passthrough Behavior forwards byte results verbatim and serializes other results
 from the winning Route's transformed value.
 
 When a Passthrough Route has output steps, Decoy buffers the upstream body and decodes it
