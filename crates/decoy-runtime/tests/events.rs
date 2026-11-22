@@ -11,7 +11,12 @@ use decoy_runtime::events::{
     CAPACITY, Event, Level, Outcome, RequestEvent, SessionChange, SessionEvent, SessionSource,
 };
 use decoy_runtime::grpc::GrpcReply;
-use decoy_runtime::{Candidate, HttpExecutionRequest, HttpMethod, Rejection, Server};
+use decoy_runtime::ws::Inbound;
+use decoy_runtime::{
+    Candidate, Catalog, CollectionsFile, Controller, HttpExecutionRequest, HttpMethod, Rejection,
+    Route, Server,
+};
+use serde_json::json;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
 
@@ -478,6 +483,41 @@ async fn next_session(events: &mut Receiver<Event>) -> SessionEvent {
             return event;
         }
     }
+}
+
+#[test]
+fn subscribers_see_text_frames_verbatim_and_json_frames_decoded() {
+    let route = Route::from_yaml("id: live\ntransport: ws\nmatch: { path: /live }\ncases: { any: { behaviors: { ok: { message: ok } } } }").unwrap();
+    let catalog = Catalog::new(
+        vec![route],
+        CollectionsFile::from_yaml("- id: default\n  routes: [live:any:ok]").unwrap(),
+        Default::default(),
+    )
+    .unwrap();
+    let controller = Controller::new(catalog, "default");
+    let view = controller.session_view("default");
+    let connection = controller
+        .catalog()
+        .ws_upgrade("/live", &Default::default())
+        .unwrap();
+    let mut events = controller.subscribe();
+    for (inbound, bytes, decoded) in [
+        (Inbound::Text(r#" "hi" "#), r#" "hi" "#, false),
+        (Inbound::Text(r#" {"id": 1} "#), r#"{"id":1}"#, true),
+        (Inbound::Decoded(json!("hi")), r#""hi""#, true),
+    ] {
+        assert!(view.execute_ws(&connection, inbound).is_some());
+        let Event::Request(event) = events.try_recv().unwrap() else {
+            panic!("expected request event");
+        };
+        assert_eq!(event.body.bytes, bytes.as_bytes());
+        assert_eq!(event.body.decoded, decoded);
+    }
+    drop(events);
+    assert!(
+        view.execute_ws(&connection, Inbound::Decoded(json!("hi")))
+            .is_some()
+    );
 }
 
 #[tokio::test]

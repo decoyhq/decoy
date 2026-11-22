@@ -34,21 +34,10 @@ impl SessionView {
     pub fn execute_ws(&self, connection: &WsConnection, inbound: Inbound<'_>) -> Option<WsReply> {
         let capture = self.events.receiver_count() > 0;
         let started = capture.then(|| self.start(METHOD, &connection.url, &connection.headers));
-        let (trigger, message, body) = match inbound {
-            Inbound::Open => (Trigger::Connect, None, CapturedBody::raw(&[])),
-            Inbound::Text(text) => {
-                let message = decode_text(text);
-                let body = if message.is_string() {
-                    CapturedBody::raw(text.as_bytes())
-                } else {
-                    CapturedBody::decoded(&message)
-                };
-                (Trigger::Message, Some(message), body)
-            }
-            Inbound::Decoded(message) => {
-                let body = CapturedBody::decoded(&message);
-                (Trigger::Message, Some(message), body)
-            }
+        let (trigger, message, raw_text) = match inbound {
+            Inbound::Open => (Trigger::Connect, None, None),
+            Inbound::Text(text) => (Trigger::Message, Some(decode_text(text)), Some(text)),
+            Inbound::Decoded(message) => (Trigger::Message, Some(message), None),
             Inbound::Binary(payload) => {
                 let reason = "binary frames need a `pipeline` on the Route".to_owned();
                 self.missed(connection, started, payload, reason);
@@ -76,6 +65,11 @@ impl SessionView {
         match (started, call.outcome) {
             (Some(_), Some(Outcome::Miss(_))) if trigger == Trigger::Connect => {}
             (Some(started), Some(outcome)) => {
+                let body = match (message.as_ref(), raw_text) {
+                    (Some(Value::String(_)), Some(text)) => CapturedBody::raw(text.as_bytes()),
+                    (Some(message), _) => CapturedBody::decoded(message),
+                    (None, _) => CapturedBody::raw(&[]),
+                };
                 self.emit(
                     Transport::Ws,
                     started,
