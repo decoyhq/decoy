@@ -93,6 +93,7 @@ pub struct CapturedBody {
     /// The Pipeline decoded the body (protobuf → JSON).
     pub decoded: bool,
     /// Size of the full body (the full JSON text when `decoded`) before the cap.
+    /// Saturates at `usize::MAX` if the length cannot be represented.
     pub size: usize,
 }
 
@@ -124,7 +125,7 @@ impl std::io::Write for JsonCapture {
         let room = BODY_CAP - body.bytes.len();
         body.bytes
             .extend_from_slice(&chunk[..chunk.len().min(room)]);
-        body.size += chunk.len();
+        body.size = body.size.saturating_add(chunk.len());
         Ok(chunk.len())
     }
 
@@ -154,7 +155,7 @@ impl StreamCapture {
         let room = BODY_CAP - self.bytes.len();
         self.bytes
             .extend_from_slice(&chunk[..chunk.len().min(room)]);
-        self.size += chunk.len();
+        self.size = self.size.saturating_add(chunk.len());
     }
 }
 
@@ -288,6 +289,21 @@ mod tests {
         let body = CapturedBody::decoded(&serde_json::json!({ "id": "a-1" }));
         assert_eq!(body.bytes, br#"{"id":"a-1"}"#);
         assert_eq!((body.decoded, body.size), (true, 12));
+    }
+
+    #[test]
+    fn decoded_capture_saturates_size_without_losing_the_prefix() {
+        use std::io::Write;
+
+        let mut capture = JsonCapture(CapturedBody {
+            bytes: vec![b'x'; BODY_CAP - 1],
+            decoded: true,
+            size: usize::MAX - 1,
+        });
+        assert_eq!(capture.write(b"yz").unwrap(), 2);
+        assert_eq!(capture.0.size, usize::MAX);
+        assert_eq!(capture.0.bytes.len(), BODY_CAP);
+        assert_eq!(capture.0.bytes.last(), Some(&b'y'));
     }
 
     #[test]
