@@ -93,6 +93,7 @@ pub struct CapturedBody {
     /// The Pipeline decoded the body (protobuf → JSON).
     pub decoded: bool,
     /// Size of the full body (the full JSON text when `decoded`) before the cap.
+    /// Saturates at `usize::MAX` if the length cannot be represented.
     pub size: usize,
 }
 
@@ -106,11 +107,30 @@ impl CapturedBody {
     }
 
     pub fn decoded(value: &Value) -> Self {
-        let text = serde_json::to_vec(value).expect("JSON value serializes");
-        Self {
+        let mut capture = JsonCapture(Self {
+            bytes: Vec::new(),
             decoded: true,
-            ..Self::raw(&text)
-        }
+            size: 0,
+        });
+        serde_json::to_writer(&mut capture, value).expect("JSON value serializes");
+        capture.0
+    }
+}
+
+struct JsonCapture(CapturedBody);
+
+impl std::io::Write for JsonCapture {
+    fn write(&mut self, chunk: &[u8]) -> std::io::Result<usize> {
+        let body = &mut self.0;
+        let room = BODY_CAP - body.bytes.len();
+        body.bytes
+            .extend_from_slice(&chunk[..chunk.len().min(room)]);
+        body.size = body.size.saturating_add(chunk.len());
+        Ok(chunk.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
@@ -135,7 +155,7 @@ impl StreamCapture {
         let room = BODY_CAP - self.bytes.len();
         self.bytes
             .extend_from_slice(&chunk[..chunk.len().min(room)]);
-        self.size += chunk.len();
+        self.size = self.size.saturating_add(chunk.len());
     }
 }
 
@@ -269,5 +289,31 @@ mod tests {
         let body = CapturedBody::decoded(&serde_json::json!({ "id": "a-1" }));
         assert_eq!(body.bytes, br#"{"id":"a-1"}"#);
         assert_eq!((body.decoded, body.size), (true, 12));
+    }
+
+    #[test]
+    fn decoded_capture_saturates_size_without_losing_the_prefix() {
+        use std::io::Write;
+
+        let mut capture = JsonCapture(CapturedBody {
+            bytes: vec![b'x'; BODY_CAP - 1],
+            decoded: true,
+            size: usize::MAX - 1,
+        });
+        assert_eq!(capture.write(b"yz").unwrap(), 2);
+        assert_eq!(capture.0.size, usize::MAX);
+        assert_eq!(capture.0.bytes.len(), BODY_CAP);
+        assert_eq!(capture.0.bytes.last(), Some(&b'y'));
+    }
+
+    #[test]
+    fn decoded_capture_counts_escaped_and_multibyte_json_past_the_prefix() {
+        let value = serde_json::json!({ "text": "a\"😀\n".repeat(BODY_CAP) });
+        let expected = serde_json::to_vec(&value).unwrap();
+        let body = CapturedBody::decoded(&value);
+        assert!(expected.len() > BODY_CAP);
+        assert_eq!(body.bytes, expected[..BODY_CAP]);
+        assert_eq!(body.size, expected.len());
+        assert!(body.decoded);
     }
 }
