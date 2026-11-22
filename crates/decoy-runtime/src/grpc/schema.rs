@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use crate::matching::value_matches;
 use crate::schema::{Behavior, Case, PipelineStep, ResponseBehavior, Route, RouteMatch};
-use crate::template::{validate_string, validate_value};
+use crate::template::{validate_string, validate_value, value_has_templates};
 
 /// gRPC status codes by name, indexed by numeric code.
 pub const STATUS_CODES: [&str; 17] = [
@@ -348,15 +348,6 @@ fn is_template(value: &Value) -> bool {
     value.as_str().is_some_and(|text| text.contains("${"))
 }
 
-pub(super) fn has_template(value: &Value) -> bool {
-    match value {
-        Value::String(text) => text.contains("${"),
-        Value::Array(items) => items.iter().any(has_template),
-        Value::Object(fields) => fields.values().any(has_template),
-        _ => false,
-    }
-}
-
 /// Which protobuf JSON spellings a literal may use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Form {
@@ -374,7 +365,7 @@ pub(crate) fn check_response_message(
     path: &str,
 ) -> Result<(), String> {
     check_message(value, message, path, Form::Any)?;
-    if !has_template(value) {
+    if !value_has_templates(value) {
         DynamicMessage::deserialize(message.clone(), value.clone())
             .map_err(|error| format!("`{path}` does not fit {}: {error}", message.full_name()))?;
     }

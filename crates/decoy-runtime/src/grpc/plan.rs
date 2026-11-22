@@ -7,12 +7,12 @@ use prost_reflect::{DescriptorPool, MethodDescriptor};
 use serde_json::{Value, json};
 
 use super::codec::{encode, pipeline};
-use super::schema::{STATUS_CODES, find_method, has_template};
+use super::schema::{STATUS_CODES, find_method};
 use super::{GrpcResponse, OK};
 use crate::collections::Activation;
 use crate::expression::to_rcvar;
 use crate::schema::{Behavior, ResponseBehavior, Route, RouteMatch};
-use crate::template::render_grpc_response;
+use crate::template::{render_grpc_response, value_has_templates};
 
 /// Cache unary replies whose rendered fields are independent of the request.
 pub(crate) fn static_unary_replies<'a>(
@@ -39,7 +39,7 @@ pub(crate) fn static_unary_replies<'a>(
                     .status
                     .iter()
                     .chain(&response.message)
-                    .any(has_template)
+                    .any(value_has_templates)
                     || response.metadata.values().any(|value| value.contains("${"))
                 {
                     continue;
