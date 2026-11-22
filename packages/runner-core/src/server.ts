@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -52,9 +53,10 @@ function trimTrailingSlashes(url: string): string {
 }
 
 export function pidFileFor(url: string): string {
-  const endpoint = new URL(url)
-  const port = endpoint.port || (endpoint.protocol === 'https:' ? '443' : '80')
-  return join(tmpdir(), `decoy-runner-${port}.json`)
+  const origin = new URL(url).origin
+  const key = createHash('sha256').update(origin).digest('hex')
+  // Do not fall back to port-only records: they don't identify the endpoint's process.
+  return join(tmpdir(), `decoy-runner-${key}.json`)
 }
 
 /**

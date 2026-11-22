@@ -70,11 +70,13 @@ describe('resolveServerOptions', () => {
   })
 })
 
-test('keys a runner pidfile by the effective port', () => {
-  expect(pidFileFor('http://localhost')).toBe(join(tmpdir(), 'decoy-runner-80.json'))
-  expect(pidFileFor('https://localhost')).toBe(join(tmpdir(), 'decoy-runner-443.json'))
-  expect(pidFileFor('https://localhost:443')).toBe(join(tmpdir(), 'decoy-runner-443.json'))
-  expect(pidFileFor('https://localhost:9000')).toBe(join(tmpdir(), 'decoy-runner-9000.json'))
+test('keys runner pidfiles by normalized origin', () => {
+  const https = pidFileFor('https://localhost')
+  expect(pidFileFor('https://LOCALHOST:443/')).toBe(https)
+  expect(pidFileFor('http://localhost:443')).not.toBe(https)
+  expect(pidFileFor('https://127.0.0.1:443')).not.toBe(https)
+  expect(pidFileFor('https://localhost:9000')).not.toBe(https)
+  expect(pidFileFor('http://localhost')).not.toBe(https)
 })
 
 describe('startDecoy', () => {
@@ -120,7 +122,7 @@ describe('startDecoy', () => {
     // The first run never tears down, as when its runner is killed.
     await start(options)
     const orphan = await servingPid()
-    const pidFile = join(tmpdir(), `decoy-runner-${port}.json`)
+    const pidFile = pidFileFor(url)
     const recorded = JSON.parse(readFileSync(pidFile, 'utf8')) as { runner: number }
     writeFileSync(pidFile, JSON.stringify({ ...recorded, runner: await deadPid() }))
 
@@ -143,7 +145,7 @@ describe('startDecoy', () => {
     // Another runner, still running, owns this Decoy.
     const runner = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
     cleanups.push(() => Promise.resolve(runner.kill()))
-    const pidFile = join(tmpdir(), `decoy-runner-${port}.json`)
+    const pidFile = pidFileFor(url)
     const recorded = JSON.parse(readFileSync(pidFile, 'utf8')) as { runner: number }
     writeFileSync(pidFile, JSON.stringify({ ...recorded, runner: runner.pid }))
 
@@ -191,7 +193,7 @@ describe('startDecoy', () => {
       { stdio: 'inherit' },
     )
     cleanups.push(async () => {
-      await rm(join(tmpdir(), `decoy-runner-${port}.json`), { force: true })
+      await rm(pidFileFor(url), { force: true })
       // A leaked one, if this test fails.
       await fetch(`${url}/__decoy__/health`)
         .then(async (res) => process.kill(((await res.json()) as { pid: number }).pid))
@@ -228,10 +230,11 @@ describe('startDecoy', () => {
 
   test('fails clearly when the command exits before serving', async () => {
     const port = await freePort()
-    await expect(start({ url: `http://127.0.0.1:${port}`, command: 'exit 3' })).rejects.toThrow(
+    const url = `http://127.0.0.1:${port}`
+    await expect(start({ url, command: 'exit 3' })).rejects.toThrow(
       /exited before serving \(code 3\)/,
     )
-    expect(existsSync(join(tmpdir(), `decoy-runner-${port}.json`))).toBe(false)
+    expect(existsSync(pidFileFor(url))).toBe(false)
   })
 
   test('stops the command when the pidfile cannot be written', async () => {
@@ -239,7 +242,7 @@ describe('startDecoy', () => {
     const url = `http://127.0.0.1:${port}`
     // A directory where the pidfile goes: neither writable nor removable as a file, like another
     // user's pidfile in a shared /tmp.
-    const pidFile = join(tmpdir(), `decoy-runner-${port}.json`)
+    const pidFile = pidFileFor(url)
     mkdirSync(pidFile)
     cleanups.push(() => rm(pidFile, { recursive: true }))
 
@@ -250,17 +253,18 @@ describe('startDecoy', () => {
 
   test("leaves a running runner's pidfile it could not overwrite", async () => {
     const port = await freePort()
+    const url = `http://127.0.0.1:${port}`
     // Another live runner's pidfile, read-only to this start.
     const runner = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
     cleanups.push(() => Promise.resolve(runner.kill()))
-    const pidFile = join(tmpdir(), `decoy-runner-${port}.json`)
+    const pidFile = pidFileFor(url)
     writeFileSync(pidFile, JSON.stringify({ pid: runner.pid, runner: runner.pid }))
     chmodSync(pidFile, 0o444)
     cleanups.push(() => rm(pidFile, { force: true }))
 
-    await expect(
-      start({ url: `http://127.0.0.1:${port}`, command: `node ${FAKE_DECOY} ${port}` }),
-    ).rejects.toThrow(/EACCES|EPERM/)
+    await expect(start({ url, command: `node ${FAKE_DECOY} ${port}` })).rejects.toThrow(
+      /EACCES|EPERM/,
+    )
     expect(existsSync(pidFile)).toBe(true)
   })
 
