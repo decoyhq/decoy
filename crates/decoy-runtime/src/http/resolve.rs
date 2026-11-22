@@ -127,7 +127,9 @@ impl Catalog {
                     return Err((route, activation));
                 };
                 match &prepared.input {
-                    Ok(envelope) => envelope.as_ref().unwrap_or(&request.envelope),
+                    Ok(input) => input
+                        .as_ref()
+                        .map_or(&request.envelope, |input| &input.envelope),
                     Err(reason) => {
                         reject(candidates, activation, || Rejection::Decode {
                             error: reason.clone(),

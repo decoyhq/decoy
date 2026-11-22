@@ -203,7 +203,9 @@ Cases on a Route share its transformed body and see the original request headers
 Route is tried, its Pipeline starts from the original request. A terminal input command's stdout
 is parsed as JSON for Case matching and templates if possible. Other byte results appear as
 `null` there. A Passthrough Behavior forwards byte results verbatim and serializes other results
-from the winning Route's transformed value. HTTP workers can also read the original method, path,
+from the winning Route's transformed value. If Decoy serializes that value as JSON, it uses
+`application/json` upstream unless the original media type already identifies JSON.
+HTTP workers can also read the original method, path,
 and headers as `ctx.request` in both directions. This does not change which headers Passthrough
 forwards. Command Transformers still receive only their payload on stdin.
 
@@ -214,6 +216,9 @@ media types. When a Passthrough transform changes the wire bytes, Decoy drops th
 `Content-Encoding`, `ETag`, and digest headers and sends the new body length. If the bytes
 are identical, those headers stay in place. Mock responses keep their authored media type and
 encoding. Decoy skips output steps for bodyless upstream responses such as HEAD and 204.
+An HTTP `206 Partial Content` response can only pass through if the output steps leave its bytes
+unchanged; otherwise Decoy returns `500` rather than sending an invalid byte range.
+Upstream body read failures are reported as Passthrough forwarding failures, not Transformer errors.
 An input worker can call `miss` to skip its Route. A Transformer error returns HTTP 500.
 An input error occurs before Decoy contacts an upstream.
 

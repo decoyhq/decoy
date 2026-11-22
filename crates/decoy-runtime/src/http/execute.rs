@@ -6,13 +6,16 @@ use super::forward::{
     ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough, target_url,
 };
 use super::pipeline::{
-    PreparedRoute, describes_original_body, mock_output, passthrough_output, worker_request,
+    PassthroughOutputError, PreparedInput, PreparedRoute, describes_original_body, mock_output,
+    passthrough_output, worker_request,
 };
 use super::resolve::{HttpRequest, ResolveOutcome};
 use crate::collections::Activation;
 use crate::engine::{Catalog, MissDiagnostic};
 use crate::events::{Match, Outcome};
-use crate::http::{BodyPlan, HttpResponsePlan, RequestMetadata, ResponsePlan};
+use crate::http::{BodyPlan, HttpResponsePlan, PassthroughPlan, RequestMetadata, ResponsePlan};
+use crate::pipeline::Pipeline;
+use crate::plugins::CallRequest;
 use crate::request::RequestEnvelope;
 use crate::schema::{Behavior, HttpMethod};
 
@@ -116,37 +119,25 @@ impl Catalog {
                     conditions: conditions.clone(),
                     path_params,
                 });
-                let (input, output) = match prepared.remove(&activation.route) {
-                    Some(PreparedRoute { input, pipeline }) => (
-                        input.ok().flatten(),
-                        pipeline.has_output().then_some(pipeline),
-                    ),
-                    None => (None, None),
-                };
+                let (input, output) = prepared.remove(&activation.route).map_or_else(
+                    || (None, None),
+                    |PreparedRoute { input, pipeline }| {
+                        (
+                            input.ok().flatten(),
+                            pipeline.has_output().then_some(pipeline),
+                        )
+                    },
+                );
                 match plan {
                     ResponsePlan::Response(plan) => {
-                        let response = if let Some(output) =
-                            output.as_ref().filter(|_| !render_failed)
-                        {
-                            let behavior = &self.routes[&activation.route].cases[&activation.case]
-                                .behaviors[&activation.behavior];
-                            let explicit_type = matches!(behavior, Behavior::Response(response) if response.headers.keys().any(|key| key.eq_ignore_ascii_case("content-type")));
-                            mock_output(
-                                output,
+                        let response = self
+                            .execute_mock_output(
+                                &activation,
                                 plan,
-                                explicit_type,
+                                output.as_ref().filter(|_| !render_failed),
                                 worker_request(&resolve_request),
                             )
-                            .await
-                            .unwrap_or_else(|error| {
-                                transform_failure(&format!(
-                                    "route `{}` output: {error}",
-                                    activation.route
-                                ))
-                            })
-                        } else {
-                            plan.into()
-                        };
+                            .await;
                         (
                             HttpExecutionOutcome::Response {
                                 activation: Some(activation),
@@ -156,71 +147,22 @@ impl Catalog {
                         )
                     }
                     ResponsePlan::Passthrough(plan) => {
-                        let upstream_url =
-                            plan.base_url
-                                .as_deref()
-                                .filter(|_| explain)
-                                .and_then(|base_url| {
-                                    target_url(base_url, &request.path_and_query)
-                                        .ok()
-                                        .map(String::from)
-                                });
-                        let mut headers = request.headers;
-                        let body = if let Some(envelope) = input {
-                            if envelope.raw_body != request.body {
-                                headers.retain(|name, _| !describes_original_body(name));
-                            }
-                            envelope.raw_body
-                        } else {
-                            request.body
-                        };
-                        let is_head = request.method == HttpMethod::Head;
-                        let source = forward_passthrough(
+                        let upstream_url = matched.as_ref().and_then(|_| {
+                            target_url(plan.base_url.as_deref()?, &request.path_and_query)
+                                .ok()
+                                .map(String::from)
+                        });
+                        let (outcome, upstream_status) = execute_passthrough(
                             &plan,
-                            ForwardRequest {
-                                method: request.method,
-                                path_and_query: request.path_and_query,
-                                headers,
-                                body,
-                            },
+                            activation,
+                            forwarded_request(request, input),
+                            output.as_ref(),
+                            self.runtime
+                                .max_body_bytes
+                                .unwrap_or(crate::config::DEFAULT_MAX_BODY_BYTES),
+                            worker_request(&resolve_request),
                         )
                         .await;
-
-                        let upstream_status = source.as_ref().ok().map(|response| response.status);
-                        let outcome = match source {
-                            Ok(response) => {
-                                let body_allowed = !is_head
-                                    && !matches!(response.status, 100..=199 | 204 | 205 | 304);
-                                let response = if let Some(output) =
-                                    output.as_ref().filter(|_| body_allowed)
-                                {
-                                    passthrough_output(
-                                        output,
-                                        response,
-                                        self.runtime
-                                            .max_body_bytes
-                                            .unwrap_or(crate::config::DEFAULT_MAX_BODY_BYTES),
-                                        worker_request(&resolve_request),
-                                    )
-                                    .await
-                                    .unwrap_or_else(|error| {
-                                        transform_failure(&format!(
-                                            "route `{}` output: {error}",
-                                            activation.route
-                                        ))
-                                    })
-                                } else {
-                                    response
-                                };
-                                HttpExecutionOutcome::Response {
-                                    activation: Some(activation),
-                                    response,
-                                }
-                            }
-                            Err(source) => {
-                                HttpExecutionOutcome::ForwardingError { activation, source }
-                            }
-                        };
                         (
                             outcome,
                             matched.map(|matched| Outcome::Passthrough {
@@ -240,6 +182,24 @@ impl Catalog {
                 explain.then_some(Outcome::Miss(miss)),
             ),
         }
+    }
+
+    async fn execute_mock_output(
+        &self,
+        activation: &Activation,
+        plan: HttpResponsePlan,
+        output: Option<&Pipeline>,
+        context: CallRequest<'_>,
+    ) -> ForwardResponse {
+        let Some(output) = output else {
+            return plan.into();
+        };
+        let behavior =
+            &self.routes[&activation.route].cases[&activation.case].behaviors[&activation.behavior];
+        let explicit_type = matches!(behavior, Behavior::Response(response) if response.headers.keys().any(|key| key.eq_ignore_ascii_case("content-type")));
+        mock_output(output, plan, explicit_type, context)
+            .await
+            .unwrap_or_else(|error| output_failure(&activation.route, &error))
     }
 
     /// Run input I/O only when resolution reaches that Route. The diagnostic pass on a miss
@@ -302,6 +262,76 @@ impl Catalog {
             explain = true;
         }
     }
+}
+
+fn forwarded_request(
+    request: HttpExecutionRequest,
+    input: Option<PreparedInput>,
+) -> ForwardRequest {
+    let HttpExecutionRequest {
+        method,
+        path_and_query,
+        mut headers,
+        mut body,
+        ..
+    } = request;
+    if let Some(input) = input {
+        if input.envelope.raw_body != body {
+            headers.retain(|name, _| !describes_original_body(name));
+        }
+        if let Some(content_type) = input.content_type {
+            headers.retain(|name, _| !name.eq_ignore_ascii_case("content-type"));
+            headers.insert("content-type".into(), content_type.into());
+        }
+        body = input.envelope.raw_body;
+    }
+    ForwardRequest {
+        method,
+        path_and_query,
+        headers,
+        body,
+    }
+}
+
+async fn execute_passthrough(
+    plan: &PassthroughPlan,
+    activation: Activation,
+    request: ForwardRequest,
+    output: Option<&Pipeline>,
+    limit: usize,
+    context: CallRequest<'_>,
+) -> (HttpExecutionOutcome, Option<u16>) {
+    let is_head = request.method == HttpMethod::Head;
+    let source = forward_passthrough(plan, request).await;
+    let upstream_status = source.as_ref().ok().map(|response| response.status);
+    let source = match (source, output) {
+        (Ok(response), Some(output))
+            if !is_head && !matches!(response.status, 100..=199 | 204 | 205 | 304) =>
+        {
+            passthrough_output(output, response, limit, context)
+                .await
+                .or_else(|error| match error {
+                    PassthroughOutputError::Upstream(source) => Err(source),
+                    PassthroughOutputError::Transform(reason) => {
+                        Ok(output_failure(&activation.route, &reason))
+                    }
+                })
+        }
+        (source, _) => source,
+    };
+    let outcome = match source {
+        Ok(response) => HttpExecutionOutcome::Response {
+            activation: Some(activation),
+            response,
+        },
+        Err(source) => HttpExecutionOutcome::ForwardingError { activation, source },
+    };
+    (outcome, upstream_status)
+}
+
+fn output_failure(route: &str, reason: &str) -> ForwardResponse {
+    crate::events::error(format!("route `{route}` output Pipeline failed"));
+    transform_failure(&format!("route `{route}` output: {reason}"))
 }
 
 fn transform_failure(reason: &str) -> ForwardResponse {

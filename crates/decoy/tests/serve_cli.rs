@@ -445,6 +445,126 @@ pipelines:
         fs::read_to_string(fixture.temp.path().join("output-calls")).unwrap(),
         "low\n"
     );
+    server.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn passthrough_labels_structured_transformer_output_as_json_only_upstream() {
+    assert_passthrough_input_type("application/msgpack", "application/json").await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn passthrough_preserves_an_existing_vendor_json_media_type() {
+    assert_passthrough_input_type("application/vnd.orders+json", "application/vnd.orders+json")
+        .await;
+}
+
+#[cfg(unix)]
+async fn assert_passthrough_input_type(incoming_type: &str, forwarded_type: &str) {
+    let (target, captured, upstream) = spawn_upstream();
+    let fixture = Fixture::new();
+    for (name, value) in [
+        (
+            "ready",
+            serde_json::json!({"kind":"ready","protocol":1,"name":"parse","version":"1","directions":["input"]}),
+        ),
+        (
+            "reply",
+            serde_json::json!({"kind":"result","id":1,"ok":true,"value":{"sku":"abc"}}),
+        ),
+    ] {
+        let mut msg = Vec::new();
+        rmpv::encode::write_value(&mut msg, &decoy_runtime::plugins::value::to_msgpack(&value))
+            .unwrap();
+        let mut frame = u32::try_from(msg.len()).unwrap().to_be_bytes().to_vec();
+        frame.extend(msg);
+        fs::write(fixture.temp.path().join(name), frame).unwrap();
+    }
+    fixture.write_route(
+        "json.yaml",
+        format!(
+            r#"
+id: json
+transport: http
+pipeline: parse
+match: {{ method: POST, path: /orders }}
+cases:
+  order:
+    match: {{ headers: {{ content-type: {incoming_type} }}, body: {{ sku: abc }} }}
+    behaviors:
+      forward: {{ kind: passthrough, target: {{ baseUrl: {target} }} }}
+"#
+        ),
+    );
+    fixture.write_collections("- id: default\n  routes: [json:order:forward]");
+    fixture.write_config(r#"
+routes: routes
+collections: collections.yaml
+port: 0
+transformers:
+  parse:
+    worker: [sh, -c, 'for reply in ready reply; do dd bs=4096 count=1 of=/dev/null 2>/dev/null; cat "$reply"; done; dd bs=4096 count=1 of=/dev/null 2>/dev/null']
+pipelines:
+  parse: { input: [parse] }
+"#);
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let port = server.port("port");
+    let response = reqwest::Client::new()
+        .post(format!("http://127.0.0.1:{port}/orders"))
+        .header("content-type", incoming_type)
+        .body(r#"{"sku":"original"}"#)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 202);
+    let sent = captured.recv().unwrap();
+    assert_eq!(sent.body, r#"{"sku":"abc"}"#);
+    assert_eq!(sent.headers["content-type"], forwarded_type);
+    upstream.join().unwrap();
+    server.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn passthrough_output_rejects_changed_ranges_and_distinguishes_upstream_read_errors() {
+    for (upstream_response, status, error) in [
+        (&b"HTTP/1.1 206 Partial Content\r\ncontent-range: bytes 0-2/10\r\ncontent-length: 3\r\n\r\nabc"[..], 500, "partial response"),
+        (&b"HTTP/1.1 200 OK\r\ncontent-length: 8\r\n\r\nabc"[..], 502, "passthrough forwarding failed"),
+    ] {
+        let (target, _captured, upstream) = spawn_upstream_with_response(upstream_response);
+        let fixture = Fixture::new();
+        fixture.write_route("range.yaml", format!(r#"
+id: range
+transport: http
+pipeline: change
+match: {{ method: GET, path: /range }}
+cases:
+  any:
+    behaviors:
+      forward: {{ kind: passthrough, target: {{ baseUrl: {target} }} }}
+"#));
+        fixture.write_collections("- id: default\n  routes: [range:any:forward]");
+        fixture.write_config(r#"
+routes: routes
+collections: collections.yaml
+port: 0
+transformers:
+  change:
+    output: [sh, -c, 'cat; printf "!"']
+pipelines:
+  change: { output: [change] }
+"#);
+        let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+        let port = server.port("port");
+        let response = reqwest::get(format!("http://127.0.0.1:{port}/range")).await.unwrap();
+        assert_eq!(response.status(), status);
+        assert!(response.headers().get("content-range").is_none());
+        assert!(response.text().await.unwrap().contains(error));
+        upstream.join().unwrap();
+        server.shutdown().await;
+    }
 }
 
 #[cfg(unix)]
@@ -1086,24 +1206,7 @@ cases:
     let in_flight = tokio::spawn(reqwest::get(format!("http://127.0.0.1:{port}/slow")));
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let started = Instant::now();
-    let killed = Command::new("kill")
-        .args(["-TERM", &server.child.id().to_string()])
-        .status()
-        .unwrap();
-    assert!(killed.success());
-    let status = loop {
-        if let Some(status) = server.child.try_wait().unwrap() {
-            break status;
-        }
-        assert!(
-            started.elapsed() < Duration::from_secs(10),
-            "decoy did not stop"
-        );
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    };
-    // A clean exit, not death by signal: SIGTERM ran the graceful shutdown.
-    assert!(status.success(), "{status}");
+    server.shutdown().await;
     in_flight.abort();
 }
 
@@ -1335,6 +1438,30 @@ impl Server {
             child,
             lines,
             ports: BTreeMap::new(),
+        }
+    }
+
+    /// Stop Decoy cleanly so the child can flush its coverage profile.
+    #[cfg(unix)]
+    async fn shutdown(&mut self) {
+        let started = Instant::now();
+        assert!(
+            Command::new("kill")
+                .args(["-TERM", &self.child.id().to_string()])
+                .status()
+                .unwrap()
+                .success()
+        );
+        loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                assert!(status.success(), "{status}");
+                return;
+            }
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "decoy did not stop"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
     }
 

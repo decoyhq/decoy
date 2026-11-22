@@ -5,7 +5,7 @@ use futures_util::TryStreamExt as _;
 use rmpv::Value as Msgpack;
 use serde_json::Value;
 
-use super::forward::ForwardResponse;
+use super::forward::{ForwardResponse, ForwardingError};
 use super::{BodyPlan, HttpRequest, HttpResponsePlan, RuntimeConfig};
 use crate::pipeline::{Pipeline, PipelineError};
 use crate::plugins::value::{to_json, to_msgpack};
@@ -24,7 +24,13 @@ pub(super) fn worker_request(request: &HttpRequest) -> CallRequest<'_> {
 pub(super) struct PreparedRoute {
     pub pipeline: Pipeline,
     /// An explicit worker miss rejects every Case on this Route.
-    pub input: Result<Option<RequestEnvelope>, String>,
+    pub input: Result<Option<PreparedInput>, String>,
+}
+
+pub(super) struct PreparedInput {
+    pub envelope: RequestEnvelope,
+    /// Media type override for Passthrough only; Cases see the original headers.
+    pub content_type: Option<&'static str>,
 }
 
 impl PreparedRoute {
@@ -43,26 +49,12 @@ impl PreparedRoute {
                 .run_http(Op::Input, value, worker_request(request))
                 .await
             {
-                Ok(value) => {
-                    let mut envelope = original.clone();
-                    let (bytes, json) = match value {
-                        Msgpack::Binary(bytes) => {
-                            let json = if pipeline.input_ends_in_command() {
-                                serde_json::from_slice(&bytes).unwrap_or(Value::Null)
-                            } else {
-                                Value::Null
-                            };
-                            (Bytes::from(bytes), json)
-                        }
-                        value => {
-                            let json = to_json(&value)?;
-                            (json_bytes(&json, content_type), json)
-                        }
-                    };
-                    envelope.parsed_body = json.into();
-                    envelope.raw_body = bytes;
-                    Ok(Some(envelope))
-                }
+                Ok(value) => Ok(Some(PreparedInput::from_transformed(
+                    original.clone(),
+                    value,
+                    content_type,
+                    pipeline.input_ends_in_command(),
+                )?)),
                 Err(error @ PipelineError::Miss { .. }) => Err(error.to_string()),
                 Err(error) => return Err(error.to_string()),
             }
@@ -70,6 +62,38 @@ impl PreparedRoute {
             Ok(None)
         };
         Ok(Self { pipeline, input })
+    }
+}
+
+impl PreparedInput {
+    fn from_transformed(
+        mut envelope: RequestEnvelope,
+        value: Msgpack,
+        content_type: Option<&str>,
+        from_command: bool,
+    ) -> Result<Self, String> {
+        let (bytes, json, content_type) = match value {
+            Msgpack::Binary(bytes) => {
+                let json = if from_command {
+                    serde_json::from_slice(&bytes).unwrap_or(Value::Null)
+                } else {
+                    Value::Null
+                };
+                (Bytes::from(bytes), json, None)
+            }
+            value => {
+                let json = to_json(&value)?;
+                let forwarded_type = (!json.is_string() && !is_json(mime(content_type)))
+                    .then_some("application/json");
+                (json_bytes(&json, content_type), json, forwarded_type)
+            }
+        };
+        envelope.parsed_body = json.into();
+        envelope.raw_body = bytes;
+        Ok(Self {
+            envelope,
+            content_type,
+        })
     }
 }
 
@@ -200,24 +224,27 @@ pub(super) async fn mock_output(
     Ok(response)
 }
 
+#[derive(Debug, thiserror::Error)]
+pub(super) enum PassthroughOutputError {
+    #[error(transparent)]
+    Upstream(#[from] ForwardingError),
+    #[error("{0}")]
+    Transform(String),
+}
+
 pub(super) async fn passthrough_output(
     pipeline: &Pipeline,
     mut response: ForwardResponse,
     limit: usize,
     request: CallRequest<'_>,
-) -> Result<ForwardResponse, String> {
+) -> Result<ForwardResponse, PassthroughOutputError> {
     let mut bytes = Vec::new();
     if let Some(mut stream) = response.stream.take() {
-        while let Some(chunk) = stream
-            .0
-            .try_next()
-            .await
-            .map_err(|error| error.to_string())?
-        {
+        while let Some(chunk) = stream.0.try_next().await.map_err(ForwardingError::from)? {
             if chunk.len() > limit - bytes.len() {
-                return Err(format!(
+                return Err(PassthroughOutputError::Transform(format!(
                     "upstream body exceeds {limit} bytes (maxBodyBytes)"
-                ));
+                )));
             }
             bytes.extend_from_slice(&chunk);
         }
@@ -227,8 +254,15 @@ pub(super) async fn passthrough_output(
         response.header("content-encoding"),
         &bytes,
     );
-    output(pipeline, &mut response, value, request).await?;
+    output(pipeline, &mut response, value, request)
+        .await
+        .map_err(PassthroughOutputError::Transform)?;
     if response.body.as_ref() != bytes {
+        if response.status == 206 {
+            return Err(PassthroughOutputError::Transform(
+                "cannot change the body of an upstream partial response".into(),
+            ));
+        }
         response
             .headers
             .retain(|(name, _)| !describes_original_body(name));
