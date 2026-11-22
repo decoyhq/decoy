@@ -44,16 +44,18 @@ def sources(rev):
 
 def changed_lines(before, after):
     left, right = before.splitlines(), after.splitlines()
-    return {
-        line
-        for tag, _, _, start, end in SequenceMatcher(None, left, right, autojunk=False).get_opcodes()
-        if tag != 'equal' and right
-        for line in range(min(start + 1, len(right)), max(end, min(start + 1, len(right))) + 1)
-    }
+    changes = set()
+    for tag, _, _, start, end in SequenceMatcher(None, left, right, autojunk=False).get_opcodes():
+        if tag == 'delete':
+            # A deletion changes the gap, not either neighboring line.
+            changes.add((start, start + 1))
+        elif tag != 'equal':
+            changes.update((line, line) for line in range(start + 1, end + 1))
+    return changes
 
 
 def touches(changes, path, start, end):
-    return any(start <= line <= end for line in changes.get(path, ()))
+    return any(start <= first and last <= end for first, last in changes.get(path, ()))
 
 
 def crap_findings(source, changes, reports):

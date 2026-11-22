@@ -38,11 +38,11 @@ def read_report(data):
         return archive.read(entries[0]).decode('utf-8')
 
 
-def comment_body(run_url, sha, report):
+def comment_body(run_url, sha, report, attempt):
     # No mentions, links, Markdown directives, or terminal controls from PR data.
     text = ''.join(c for c in report if c in '\n\t' or not category(c).startswith('C'))
     text = text.replace('`', 'ˋ').replace('@', '＠').strip()
-    return f'### UB-mode report (advisory)\n\nPR commit `{sha}` · [CI attempt]({run_url})\n\n```text\n{text}\n```'
+    return f'### UB-mode report (advisory)\n\nPR commit `{sha}` · [CI attempt #{attempt}]({run_url})\n\n```text\n{text}\n```'
 
 
 def api(endpoint, *options, data=None):
@@ -77,10 +77,18 @@ def main():
         raise ValueError('Cannot uniquely bind the report run to a PR')
     if artifact['size_in_bytes'] > MAX_REPORT * 2:
         raise ValueError('Report artifact is too large')
+    endpoint = f'{repo}/issues/{number}/comments'
+    marker = f'<!-- decoy-ub-mode:{run["id"]}:{attempt} -->\n'
+    # Retrying the publisher is not a new analysis attempt. Never edit an old comment.
+    if int(os.environ.get('GITHUB_RUN_ATTEMPT', '1')) > 1:
+        pages = json.loads(api(endpoint, '--paginate', '--slurp'))
+        if any((comment.get('user') or {}).get('login') == 'github-actions[bot]'
+               and (comment.get('body') or '').startswith(marker) for page in pages for comment in page):
+            return
     report = read_report(api(f'{repo}/actions/artifacts/{artifact["id"]}/zip'))
     run_url = f'{os.environ["GITHUB_SERVER_URL"]}/{repository["full_name"]}/actions/runs/{run["id"]}/attempts/{attempt}'
-    body = comment_body(run_url, run['head_sha'], report)
-    api(f'{repo}/issues/{number}/comments', '--method', 'POST', '--input', '-', data=json.dumps({'body': body}).encode())
+    body = marker + comment_body(run_url, run['head_sha'], report, attempt)
+    api(endpoint, '--method', 'POST', '--input', '-', data=json.dumps({'body': body}).encode())
     print(f'Published UB-mode report on PR #{number}.')
 
 

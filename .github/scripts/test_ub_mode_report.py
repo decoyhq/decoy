@@ -2,7 +2,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import TestCase
 
-from ub_mode_report import changed_lines, crap_findings, duplicate_findings, source_path
+from ub_mode_report import changed_lines, crap_findings, duplicate_findings, source_path, touches
 
 
 class ReportTest(TestCase):
@@ -12,8 +12,12 @@ class ReportTest(TestCase):
         for path in ('README.md', 'crates/decoy/Cargo.toml', 'packages/cli/rstest.config.ts', 'packages/cli/src/main.test.ts'):
             self.assertFalse(source_path(path), path)
 
-    def test_changed_lines_include_deletion_inside_function(self):
-        self.assertEqual(changed_lines('a\nb\nc\n', 'a\nc\n'), {2})
+    def test_deletion_only_touches_a_function_that_spans_the_gap(self):
+        changes = {'lib.rs': changed_lines('a\nb\nc\n', 'a\nc\n')}
+        self.assertTrue(touches(changes, 'lib.rs', 1, 2))
+        self.assertFalse(touches(changes, 'lib.rs', 2, 2))
+        self.assertFalse(touches(changes, 'lib.rs', 1, 1))
+        self.assertFalse(touches({'lib.rs': changed_lines('a\nb\n', 'a\n')}, 'lib.rs', 1, 1))
         self.assertEqual(changed_lines('a\nb\n', 'a\nb\n'), set())
 
     def test_score_threshold_and_missing_coverage(self):
@@ -22,8 +26,9 @@ class ReportTest(TestCase):
         with TemporaryDirectory() as tmp:
             report = Path(tmp) / 'lcov.info'
             report.write_text(f'SF:{path}\nDA:2,0\nend_of_record\n')
-            self.assertIn('CRAP 12.0', crap_findings({path: source}, {path: {2}}, [report])[0])
-            self.assertEqual(crap_findings({path: source}, {path: {2}}, [],), [f'{path}:1 run — complexity 3, CRAP unavailable'])
+            changes = {path: {(2, 2)}}
+            self.assertIn('CRAP 12.0', crap_findings({path: source}, changes, [report])[0])
+            self.assertEqual(crap_findings({path: source}, changes, []), [f'{path}:1 run — complexity 3, CRAP unavailable'])
             self.assertEqual(crap_findings({path: source}, {path: set()}, [report]), [])
 
     def test_new_duplicate_against_untouched_file_but_not_existing_pair(self):
@@ -36,9 +41,10 @@ class ReportTest(TestCase):
                   '  const n = arr.filter(Boolean).map(Math.sign).reduce((a,b) => a+b,0);\n'
                   '  try { return Math.abs(x) + n } catch { return -1; }\n}\n')
         finding = {left: source, right: source}
-        self.assertEqual(len(duplicate_findings({right: source}, finding, {left: {2}})), 1)
-        self.assertEqual(duplicate_findings(finding, finding, {left: {2}}), [])
+        changes = {left: {(2, 2)}}
+        self.assertEqual(len(duplicate_findings({right: source}, finding, changes)), 1)
+        self.assertEqual(duplicate_findings(finding, finding, changes), [])
         # Changing a call changes the fingerprint, but this pair already cleared 80%.
         changed = source.replace('Math.max', 'Math.round')
-        self.assertEqual(len(duplicate_findings({right: source}, {left: changed, right: source}, {left: {2}})), 1)
-        self.assertEqual(duplicate_findings(finding, {left: changed, right: source}, {left: {2}}), [])
+        self.assertEqual(len(duplicate_findings({right: source}, {left: changed, right: source}, changes)), 1)
+        self.assertEqual(duplicate_findings(finding, {left: changed, right: source}, changes), [])

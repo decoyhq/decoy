@@ -33,9 +33,10 @@ class CommentTest(TestCase):
         with ZipFile(archive, 'w') as zipped:
             zipped.writestr('ub-mode.txt', '```\n@decoyhq/team\n<img>\n')
         text = read_report(archive.getvalue())
-        comment = comment_body('https://github.com/decoyhq/decoy/actions/runs/7/attempts/2', 'abc', text)
+        comment = comment_body('https://github.com/decoyhq/decoy/actions/runs/7/attempts/2', 'abc', text, 2)
         self.assertEqual(comment.count('```'), 2)
         self.assertNotIn('@decoyhq', comment)
+        self.assertIn('ˋˋˋ\n＠decoyhq/team\n<img>', comment)
         self.assertIn('/attempts/2', comment)
         self.assertIn('abc', comment)
 
@@ -48,7 +49,7 @@ class CommentTest(TestCase):
         with ZipFile(archive, 'w') as zipped:
             zipped.writestr('ub-mode.txt', 'No findings.')
         artifacts = [{'name': f'ub-mode-report-{attempt}', 'id': attempt, 'expired': False,
-                      'size_in_bytes': len(archive.getvalue())} for attempt in (1, 2)]
+                      'size_in_bytes': len(archive.getvalue())} for attempt in (1, 2, 4)]
         posts = []
 
         def fake_api(endpoint, *options, data=None):
@@ -57,6 +58,8 @@ class CommentTest(TestCase):
             if endpoint.endswith('/zip'):
                 return archive.getvalue()
             self.assertEqual(endpoint, 'repos/decoyhq/decoy/issues/42/comments')
+            if options == ('--paginate', '--slurp'):
+                return json.dumps([[{'body': body, 'user': {'login': 'github-actions[bot]'}} for body in posts]]).encode()
             self.assertEqual(options, ('--method', 'POST', '--input', '-'))
             posts.append(json.loads(data)['body'])
             return b'{}'
@@ -64,12 +67,15 @@ class CommentTest(TestCase):
         with TemporaryDirectory() as tmp:
             event_path = Path(tmp) / 'event.json'
             with patch.dict('os.environ', {'GITHUB_EVENT_PATH': str(event_path), 'GITHUB_SERVER_URL': 'https://github.com'}), patch('ub_mode_comment.api', side_effect=fake_api):
-                for attempt in (1, 2, 3):
+                for attempt, publisher_attempt in ((1, 1), (2, 1), (1, 2), (3, 1), (2, 2), (4, 2)):
                     event_path.write_text(json.dumps({'workflow_run': run | {'run_attempt': attempt},
                                                      'repository': {'id': 7, 'full_name': 'decoyhq/decoy'}}))
-                    main()
-        self.assertEqual(len(posts), 2)
-        self.assertTrue(all(f'/attempts/{index}' in body for index, body in enumerate(posts, 1)))
+                    with patch.dict('os.environ', {'GITHUB_RUN_ATTEMPT': str(publisher_attempt)}):
+                        main()
+        self.assertEqual(len(posts), 3)
+        for attempt, body in zip((1, 2, 4), posts):
+            self.assertIn(f'/attempts/{attempt}', body)
+            self.assertIn('No findings.', body)
 
     def test_reject_unexpected_zip_member(self):
         archive = BytesIO()

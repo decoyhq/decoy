@@ -59,7 +59,7 @@ jobs:
             # Code and config only; Markdown is `docs`, which just lints.
             js:
               - *shared
-              - '{packages,examples}/**/*.{ts,mts,cts,js,mjs,cjs,json,yaml,yml,proto,html,css}'
+              - &js-files '{packages,examples}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,json,yaml,yml,proto,html,css}'
               - 'scripts/**'
               - 'package.json'
               - 'pnpm-*.yaml'
@@ -71,7 +71,7 @@ jobs:
               - *shared
               - 'crates/**'
               - 'Cargo.*'
-              - '{packages,examples}/**/*.{ts,mts,cts,js,mjs,cjs,json,yaml,yml,proto,html,css}'
+              - *js-files
               - 'package.json'
               - 'pnpm-*.yaml'
               - 'tsconfig*.json'
@@ -167,7 +167,7 @@ jobs:
   js-coverage:
     if: github.event_name == 'pull_request'
     needs: changes
-    uses: ./.github/workflows/coverage.yml
+    uses: $/.github/workflows/coverage.yml
     permissions:
       contents: read
       id-token: write # Codecov upload via OIDC
