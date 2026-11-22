@@ -18,7 +18,8 @@ pub fn has_templates(response: &ResponseBehavior) -> bool {
         || response.headers.values().any(|value| value.contains("${"))
 }
 
-fn value_has_templates(value: &Value) -> bool {
+/// Whether any string value contains a template marker, including an escaped marker.
+pub(crate) fn value_has_templates(value: &Value) -> bool {
     match value {
         Value::String(text) => text.contains("${"),
         Value::Array(items) => items.iter().any(value_has_templates),
