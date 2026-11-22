@@ -26,6 +26,7 @@ jobs:
       docs: ${{ github.event_name == 'push' || steps.filter.outputs.docs == 'true' }}
       rust: ${{ github.event_name == 'push' || steps.filter.outputs.rust == 'true' }}
       e2e: ${{ github.event_name == 'push' || steps.filter.outputs.e2e == 'true' }}
+      ub-mode: ${{ steps.ub-mode.outputs.changed }}
       examples: ${{ steps.find.outputs.examples }}
       has-examples: ${{ steps.find.outputs.has-examples }}
       browser-examples: ${{ steps.find.outputs.browser-examples }}
@@ -34,6 +35,13 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 2 # The PR merge commit and its base parent for UB-mode.
+      - id: ub-mode
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        run: |
+          changed=$(python3 .github/scripts/ub_mode_report.py --check-paths)
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
       - id: filter
         if: github.event_name == 'pull_request'
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -51,7 +59,7 @@ jobs:
             # Code and config only; Markdown is `docs`, which just lints.
             js:
               - *shared
-              - '{packages,examples}/**/*.{ts,mts,cts,js,mjs,cjs,json,yaml,yml,proto,html,css}'
+              - &js-files '{packages,examples}/**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,json,yaml,yml,proto,html,css}'
               - 'scripts/**'
               - 'package.json'
               - 'pnpm-*.yaml'
@@ -63,7 +71,7 @@ jobs:
               - *shared
               - 'crates/**'
               - 'Cargo.*'
-              - '{packages,examples}/**/*.{ts,mts,cts,js,mjs,cjs,json,yaml,yml,proto,html,css}'
+              - *js-files
               - 'package.json'
               - 'pnpm-*.yaml'
               - 'tsconfig*.json'
@@ -156,9 +164,21 @@ jobs:
         if: needs.changes.outputs.js == 'true'
         run: pnpm test
 
+  js-coverage:
+    if: github.event_name == 'pull_request'
+    needs: changes
+    uses: $/.github/workflows/coverage.yml
+    permissions:
+      contents: read
+      id-token: write # Codecov upload via OIDC
+    with:
+      ub-mode: ${{ needs.changes.outputs.ub-mode == 'true' && needs.changes.outputs.js == 'true' }}
+
   # fmt, clippy, cargo-deny and the tests (run once, with coverage for Codecov).
   rust:
     needs: changes
+    outputs:
+      ub-lcov: ${{ steps.ub-lcov.outputs.artifact-id }}
     if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -199,6 +219,15 @@ jobs:
         run: |
           rustup component add llvm-tools-preview
           cargo llvm-cov --locked --workspace --lcov --output-path rust.lcov
+
+      - id: ub-lcov
+        if: needs.changes.outputs.ub-mode == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ub-lcov-rust-${{ github.run_attempt }}
+          path: rust.lcov
+          retention-days: 1
 
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
@@ -408,6 +437,52 @@ jobs:
         env:
           EXAMPLE: ${{ matrix.example }}
         run: pnpm --filter "./examples/$EXAMPLE" run test:e2e
+
+  ub-mode:
+    if: ${{ !cancelled() && needs.changes.outputs.ub-mode == 'true' }}
+    needs: [changes, rust, js-coverage]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+
+      - if: needs.rust.outputs.ub-lcov != ''
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.rust.outputs.ub-lcov }}
+          path: ${{ runner.temp }}/ub-lcov/rust
+
+      - if: needs.js-coverage.outputs.ub-lcov != ''
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.js-coverage.outputs.ub-lcov }}
+          path: ${{ runner.temp }}/ub-lcov/js/packages
+
+      - name: Analyze source changes
+        run: |
+          printf 'Analysis unavailable. See the UB-mode job log.\n' > "$RUNNER_TEMP/ub-mode.txt"
+          python3 -m venv "$RUNNER_TEMP/ub-venv"
+          "$RUNNER_TEMP/ub-venv/bin/pip" install --disable-pip-version-check \
+            'tree-sitter==0.26.1' 'tree-sitter-language-pack==1.25.2' \
+            'crapper @ git+https://github.com/unclebob/crapper.git@c757ec79a6c15dc815238bbd9c2f4601eb54d3cc' \
+            'dryer @ git+https://github.com/unclebob/dryer.git@66ff6d21a42c04afcad89c78a80066176d1294b0'
+          "$RUNNER_TEMP/ub-venv/bin/python" .github/scripts/ub_mode_report.py \
+            --coverage "$RUNNER_TEMP/ub-lcov" --output "$RUNNER_TEMP/ub-mode.txt"
+
+      - if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ub-mode-report-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ub-mode.txt
+          if-no-files-found: error
+          retention-days: 1
 
   # The one check the `main` ruleset requires, so jobs and example matrices can change freely.
   required:
