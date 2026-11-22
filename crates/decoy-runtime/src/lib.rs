@@ -14,7 +14,6 @@ pub mod grpc;
 pub mod http;
 pub mod matching;
 mod pipeline;
-pub mod plugins;
 pub mod protos;
 pub mod request;
 pub mod schema;
@@ -24,6 +23,7 @@ pub mod template;
 mod time;
 pub mod tls;
 pub mod watch;
+pub mod workers;
 pub mod ws;
 mod yaml;
 

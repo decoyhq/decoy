@@ -523,7 +523,7 @@ fn write_json_worker_frames(fixture: &Fixture, direction: &str) {
         ),
     ] {
         let mut msg = Vec::new();
-        rmpv::encode::write_value(&mut msg, &decoy_runtime::plugins::value::to_msgpack(&value))
+        rmpv::encode::write_value(&mut msg, &decoy_runtime::workers::value::to_msgpack(&value))
             .unwrap();
         let mut frame = u32::try_from(msg.len()).unwrap().to_be_bytes().to_vec();
         frame.extend(msg);

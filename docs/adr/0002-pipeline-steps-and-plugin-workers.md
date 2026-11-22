@@ -8,7 +8,7 @@ its own matcher or config field would make the order of decoding ambiguous and c
 definitions to wire formats.
 
 We chose an ordered Pipeline between the transport and the values a Case matches. Cases and
-Behavior templates use JMESPath over decoded data. A Plugin can run as a persistent external
+Behavior templates use JMESPath over decoded data. A Transformer can run as a persistent external
 worker, so authors can use their language's libraries while Decoy keeps control of matching,
 Behavior selection, and Sessions.
 

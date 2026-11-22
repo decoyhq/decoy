@@ -1,0 +1,19 @@
+{
+  "name": "@acme/decoy-transformer-binary-rpc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A Decoy transformer for a small binary RPC framing: [kind][topic][id][protobuf payload]. Stands in for a third-party package.",
+  "type": "module",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "dependencies": {
+    "@decoyhq/transformer": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  }
+}

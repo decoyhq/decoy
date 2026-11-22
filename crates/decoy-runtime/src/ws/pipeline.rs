@@ -6,8 +6,8 @@ use rmpv::Value as Msgpack;
 use serde_json::Value;
 
 pub use crate::pipeline::{Pipeline as WsPipeline, PipelineError, check_routes};
-use crate::plugins::value::{to_json, to_msgpack};
-use crate::plugins::{CallConnection, Frame, Op};
+use crate::workers::value::{to_json, to_msgpack};
+use crate::workers::{CallConnection, Frame, Op};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Encoded {
@@ -22,7 +22,7 @@ pub(crate) struct Codec {
 }
 
 impl Codec {
-    /// The inbound message a frame stands for; `None` after a plugin error (logged).
+    /// The inbound message a frame stands for; `None` after a worker error (logged).
     pub(crate) async fn decode<'a>(&self, frame: Frame, payload: &'a [u8]) -> Option<Inbound<'a>> {
         let Some(pipeline) = self
             .pipeline
@@ -70,7 +70,7 @@ impl Codec {
         }
     }
 
-    /// The frame for `message`; `None` after a plugin error (logged).
+    /// The frame for `message`; `None` after a worker error (logged).
     pub(crate) async fn encode(&self, message: &Value, origin: &str) -> Option<Encoded> {
         let Some(pipeline) = self
             .pipeline
@@ -109,10 +109,10 @@ impl Codec {
         format!("ws `{route}` connection {id} (session {session}), {doing}: {error}{value}{stack}")
     }
 
-    /// Lets the plugins drop what they kept for this connection.
+    /// Lets the workers drop what they kept for this connection.
     pub(crate) fn closed(&self) {
-        for plugin in self.pipeline.iter().flat_map(WsPipeline::plugins) {
-            plugin.close(&self.call.id);
+        for worker in self.pipeline.iter().flat_map(WsPipeline::workers) {
+            worker.close(&self.call.id);
         }
     }
 }

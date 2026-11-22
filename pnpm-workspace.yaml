@@ -1,8 +1,8 @@
 packages:
   - 'packages/*'
   - 'examples/*'
-  # Stand-in third-party plugin packages the ws-plugin-node example depends on.
-  - 'examples/ws-plugin-node/acme/*'
+  # Stand-in third-party Transformer packages the ws-transformer-node example depends on.
+  - 'examples/ws-transformer-node/acme/*'
 # Versions shared by several workspaces; reference them as "catalog:" in package.json.
 catalog:
   '@grpc/grpc-js': ^1.14.0

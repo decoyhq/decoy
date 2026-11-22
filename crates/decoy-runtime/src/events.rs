@@ -183,7 +183,7 @@ pub enum SessionSource {
     ControlApi,
 }
 
-/// A runtime log line: a warning or error (a predicate that failed to evaluate), or a line a plugin
+/// A runtime log line: a warning or error (a predicate that failed to evaluate), or a line a worker
 /// wrote to its stderr.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LogEvent {
@@ -193,7 +193,7 @@ pub struct LogEvent {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {
-    /// Plain output, e.g. a plugin's stderr.
+    /// Plain output, e.g. a worker's stderr.
     Info,
     Warn,
     Error,

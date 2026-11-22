@@ -106,8 +106,7 @@ identity, and bindings captured while matching the Route and Case.
 _Avoid_: exposing arbitrary internals such as logs, route definitions, environment, or server state.
 
 **Standard function**:
-A built-in portable function available to matching/template expressions. **Plugins** may add
-named functions later.
+A built-in portable function available to matching/template expressions. Future extensions may add named functions.
 _Avoid_: "helper", "custom JS function" for portable semantics.
 
 ### Invariants
@@ -139,7 +138,7 @@ _Avoid_: "admin", "manager".
 **Control API**:
 The cross-process mirror of the **Controller** plus catalog/read-model inspection, and `wait` (for a
 live **Connection**) and `send` (to it). Resolution, recording, other Connection controls (close,
-wait for a message), and plugin capabilities are roadmap/experimental until intentionally frozen.
+wait for a message) are roadmap/experimental until intentionally frozen.
 _Avoid_: letting UI-only endpoints become the public adapter contract accidentally.
 
 **Router**:
@@ -168,6 +167,6 @@ A named definition for one reusable input or output transformation. A Transforme
 One use of a Transformer in a Pipeline direction, or one of the built-in gRPC transforms.
 _Avoid_: "codec stage", "middleware".
 
-**Plugin**:
-A persistent external Transformer worker. The worker formats data and can be written with the SDK or any implementation of the worker protocol.
+**Transformer worker**:
+A persistent external process that implements the worker protocol for a **Transformer**, with or without the SDK.
 _Avoid_: "hook", "extension" for this concept.

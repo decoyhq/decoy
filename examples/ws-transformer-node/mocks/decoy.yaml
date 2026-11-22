@@ -1,0 +1,32 @@
+routes: routes
+collections: collections.yaml
+port: 8095 # WebSocket upgrades and the Control API share this port
+
+protos:
+  roots: [../proto] # workers reach these through ctx.protobuf; they load no .proto files
+
+transformers:
+  env:
+    worker: [node, ../workers/typed-envelope.ts]
+  rpc:
+    worker: [node, ../workers/binary-rpc.ts]
+    timeout: 2s
+  gzip:
+    input: [gzip, -dc]
+    output: [gzip, -c]
+  http-context:
+    worker: [node, ../workers/http-context.ts]
+
+pipelines:
+  typed-approvals:
+    input: [env]
+    output: [env]
+  compressed-approvals:
+    input: [gzip, env]
+    output: [env, gzip]
+  rpc:
+    input: [rpc]
+    output: [rpc]
+  http-context:
+    input: [http-context]
+    output: [http-context]

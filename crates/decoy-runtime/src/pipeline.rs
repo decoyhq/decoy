@@ -10,9 +10,9 @@ use serde_json::Value;
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
 
 use crate::http::RuntimeConfig;
-use crate::plugins::value::{to_json, to_msgpack};
-use crate::plugins::{Call, CallConnection, CallError, CallRequest, Frame, Op, Plugin};
 use crate::schema::{PipelineStep, Route, Transport};
+use crate::workers::value::{to_json, to_msgpack};
+use crate::workers::{Call, CallConnection, CallError, CallRequest, Frame, Op, Worker};
 
 #[derive(Debug, Clone)]
 pub struct Pipeline {
@@ -29,7 +29,7 @@ struct Step {
 #[derive(Debug, Clone)]
 enum Runner {
     Builtin(PipelineStep),
-    Worker(Arc<Plugin>),
+    Worker(Arc<Worker>),
     Command { argv: Vec<String>, dir: PathBuf },
 }
 
@@ -155,7 +155,7 @@ impl Pipeline {
     }
 
     /// Returns each worker used by the Pipeline once.
-    pub fn plugins(&self) -> impl Iterator<Item = &Arc<Plugin>> {
+    pub fn workers(&self) -> impl Iterator<Item = &Arc<Worker>> {
         let mut seen = HashSet::new();
         self.input
             .iter()
@@ -282,7 +282,7 @@ impl Step {
     /// Selects the worker or command for this direction.
     fn resolve(runtime: &RuntimeConfig, name: &str, op: Op) -> Result<Self, String> {
         let unsupported = || format!("Transformer `{name}` does not provide `{}`", op.name());
-        let runner = if let Some(worker) = runtime.plugins.get(name) {
+        let runner = if let Some(worker) = runtime.workers.get(name) {
             if !worker.supports(op) {
                 return Err(unsupported());
             }
@@ -425,7 +425,7 @@ async fn run_command(
         )
     };
     let (_, stdout, stderr, status) =
-        tokio::time::timeout(crate::config::DEFAULT_PLUGIN_TIMEOUT, collect)
+        tokio::time::timeout(crate::config::DEFAULT_TRANSFORM_TIMEOUT, collect)
             .await
             .map_err(|_| format!("`{}` timed out after 5s", argv[0]))?
             .map_err(|err| format!("`{}`: {err}", argv[0]))?;
@@ -461,10 +461,10 @@ async fn limited_output(
 /// so a typo in a payload fails startup instead of a test. Host `protobuf.encode` calls only
 /// validate while it runs.
 pub async fn check_routes(catalog: &crate::engine::Catalog) -> Result<(), String> {
-    let plugins = &catalog.runtime().plugins;
-    plugins.set_checking(true);
+    let workers = &catalog.runtime().workers;
+    workers.set_checking(true);
     let checked = check_each(catalog).await;
-    plugins.set_checking(false);
+    workers.set_checking(false);
     checked
 }
 

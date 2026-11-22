@@ -203,9 +203,9 @@ For example, this worker normalizes IDs before matching and adds a prefix to eac
 
 ```js
 // approval-ids.mjs, next to decoy.yaml
-import { definePlugin } from '@decoyhq/plugin'
+import { defineTransformer } from '@decoyhq/transformer'
 
-definePlugin({
+defineTransformer({
   name: 'approval-ids',
   version: '1',
   input: (request) => ({ ...request, id: request.id.toLowerCase() }),

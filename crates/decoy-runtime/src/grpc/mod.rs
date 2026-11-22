@@ -272,8 +272,8 @@ mod tests {
     #[tokio::test]
     async fn named_input_misses_try_other_routes_and_worker_errors_end_the_call() {
         use crate::{
-            config::{PipelineConfig, PluginConfig},
-            plugins,
+            config::{PipelineConfig, WorkerConfig},
+            workers,
         };
 
         // A worker replying to the handshake and three consecutive input calls.
@@ -298,24 +298,24 @@ mod tests {
         ];
         for (name, message) in frames {
             let mut body = Vec::new();
-            rmpv::encode::write_value(&mut body, &plugins::value::to_msgpack(&message)).unwrap();
+            rmpv::encode::write_value(&mut body, &workers::value::to_msgpack(&message)).unwrap();
             let mut frame = u32::try_from(body.len()).unwrap().to_be_bytes().to_vec();
             frame.extend(body);
             std::fs::write(dir.path().join(name), frame).unwrap();
         }
-        let worker = PluginConfig {
+        let worker = WorkerConfig {
             command: vec!["sh".into(), "-c".into(), "for reply in ready miss1 miss2 failed; do dd bs=4096 count=1 of=/dev/null 2>/dev/null; cat \"$reply\"; done; dd bs=4096 count=1 of=/dev/null 2>/dev/null".into()],
             dir: dir.path().to_owned(),
-            timeout: crate::config::DEFAULT_PLUGIN_TIMEOUT,
+            timeout: crate::config::DEFAULT_TRANSFORM_TIMEOUT,
         };
-        let (plugins, supervisor) = plugins::start(
+        let (workers, supervisor) = workers::start(
             &BTreeMap::from([("filter".into(), worker)]),
             &crate::events::channel(),
         )
         .await
         .unwrap();
         let mut runtime = runtime();
-        runtime.plugins = plugins;
+        runtime.workers = workers;
         runtime.pipelines.insert(
             "filtered".into(),
             PipelineConfig {

@@ -899,14 +899,14 @@ cases:
             unknown.contains("unknown pipeline step `msgpack`"),
             "{unknown}"
         );
-        let plugin = Route::from_yaml(
+        let error = Route::from_yaml(
             "id: r\ntransport: grpc\nmatch: { service: s, method: m }\npipeline: [grpc-frame, env/envelope]\ncases: {}\n",
         )
         .unwrap_err()
         .to_string();
         assert!(
-            plugin.contains("an inline gRPC step list takes only `grpc-frame` and `protobuf`"),
-            "{plugin}"
+            error.contains("an inline gRPC step list takes only `grpc-frame` and `protobuf`"),
+            "{error}"
         );
 
         let http = Route::from_yaml(

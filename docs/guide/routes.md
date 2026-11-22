@@ -173,7 +173,7 @@ Built-in functions, next to [JMESPath's own](https://jmespath.org/specification.
 
 Set `pipeline` on the Route to transform the request body before Case matching and the
 rendered response body before sending it. For example, the
-[typed envelope example](../../examples/ws-plugin-node/mocks/routes/approvals-post.yaml)
+[typed envelope example](../../examples/ws-transformer-node/mocks/routes/approvals-post.yaml)
 uses the same worker for an HTTP POST and a WebSocket message:
 
 ```yaml
