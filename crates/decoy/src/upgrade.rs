@@ -5,9 +5,6 @@ use semver::Version;
 use std::path::Path;
 use std::process::Command;
 
-// The Latest release's copies install that release's version, unless DECOY_VERSION overrides it.
-const INSTALL_SH: &str = "https://github.com/decoyhq/decoy/releases/latest/download/install.sh";
-const INSTALL_PS1: &str = "https://github.com/decoyhq/decoy/releases/latest/download/install.ps1";
 // Redirects to the Latest release's tag page.
 const LATEST: &str = "https://github.com/decoyhq/decoy/releases/latest";
 
@@ -58,23 +55,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         .parent()
         .ok_or("cannot locate the decoy binary directory")?;
 
-    let mut command = if cfg!(windows) {
-        let mut command = Command::new("powershell");
-        command.args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &format!("irm {INSTALL_PS1} | iex"),
-        ]);
-        command
-    } else {
-        let mut command = Command::new("sh");
-        // Not `curl | sh`: a failed download would pipe nothing into sh, which exits 0.
-        let script = format!("s=\"$(curl -fsSL {INSTALL_SH})\" && printf '%s\\n' \"$s\" | sh");
-        command.args(["-c", &script]);
-        command
-    };
+    let mut command = installer();
     command.env("DECOY_INSTALL_DIR", dir);
     // Install the version just compared, even if Latest moves meanwhile.
     command.env("DECOY_VERSION", latest.to_string());
@@ -83,6 +64,29 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         return Err("upgrade failed".into());
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn installer() -> Command {
+    let mut command = Command::new("powershell");
+    command.args([
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "irm https://github.com/decoyhq/decoy/releases/latest/download/install.ps1 | iex",
+    ]);
+    command
+}
+
+#[cfg(not(windows))]
+fn installer() -> Command {
+    const SCRIPT: &str = "https://github.com/decoyhq/decoy/releases/latest/download/install.sh";
+    let mut command = Command::new("sh");
+    // Not `curl | sh`: a failed download would pipe nothing into sh, which exits 0.
+    let script = format!("s=\"$(curl -fsSL {SCRIPT})\" && printf '%s\\n' \"$s\" | sh");
+    command.args(["-c", &script]);
+    command
 }
 
 #[cfg(test)]
