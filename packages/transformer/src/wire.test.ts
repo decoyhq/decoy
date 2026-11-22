@@ -55,6 +55,38 @@ test('preserves binary values after receiving and consuming more chunks', () => 
   expect(messages).toEqual([first, second])
 })
 
+test('a partial frame does not retain storage from a preceding large frame', () => {
+  const serialized = new PassThrough()
+  const first = { kind: 'call', text: 'x'.repeat(128 * 1024) }
+  const second = { kind: 'call', binary: Buffer.alloc(16, 42) }
+  write(serialized, first)
+  const firstFrame: unknown = serialized.read()
+  ok(Buffer.isBuffer(firstFrame))
+  write(serialized, second)
+  const secondFrame: unknown = serialized.read()
+  ok(Buffer.isBuffer(secondFrame))
+
+  const input = new PassThrough()
+  const messages: WireMessage[] = []
+  read(
+    input,
+    (message) => messages.push(message),
+    (error) => {
+      throw error
+    },
+  )
+  const split = firstFrame.length - 32
+  input.write(firstFrame.subarray(0, split))
+  input.write(Buffer.concat([firstFrame.subarray(split), secondFrame.subarray(0, 8)]))
+  expect(messages).toEqual([first])
+  input.write(secondFrame.subarray(8))
+
+  const binary = messages[1]?.binary
+  expect(binary).toEqual(second.binary)
+  ok(Buffer.isBuffer(binary))
+  expect(binary.buffer.byteLength).toBeLessThan(firstFrame.length)
+})
+
 test('rejects a valid msgpack value without a protocol kind', () => {
   const input = new PassThrough()
   const messages: WireMessage[] = []

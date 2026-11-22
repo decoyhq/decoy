@@ -45,6 +45,7 @@ export function read(
       chunk.copy(buffer, used)
     }
     used += chunk.length
+    const beforeDrain = buffer
 
     while (used >= 4) {
       const length = buffer.readUInt32BE(0)
@@ -55,7 +56,7 @@ export function read(
 
       // Wait for the rest of this message.
       const end = 4 + length
-      if (used < end) return
+      if (used < end) break
 
       const body = buffer.subarray(4, end)
       buffer = buffer.subarray(end)
@@ -76,6 +77,13 @@ export function read(
 
       onMessage(message)
       if (!buffer) return
+    }
+
+    // Drain complete frames before copying any tail. Don't pin a large backing
+    // allocation for a small partial frame, or compact ordinary pooled buffers.
+    const backingSize = buffer.buffer.byteLength
+    if (buffer !== beforeDrain && backingSize > Buffer.poolSize && used * 2 <= backingSize) {
+      buffer = Buffer.from(buffer.subarray(0, used))
     }
   })
 }
