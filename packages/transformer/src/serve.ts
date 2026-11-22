@@ -21,16 +21,25 @@ interface HostCall {
   reject: (error: Error) => void
 }
 
-/** Answers Decoy's messages on `io` for `transformer` (`docs/reference/worker-protocol.md`). */
-export function serve(transformer: Transformer, io: Io = processIo): void {
-  const send = (message: WireMessage) => {
-    write(io.output, message)
+function runOperation(transformer: Transformer, message: WireMessage, ctx: Context) {
+  switch (message.op) {
+    case 'input':
+    case 'output': {
+      const transform = transformer[message.op]
+      if (!transform) {
+        throw new Error(`Transformer worker ${transformer.name} does not provide ${message.op}`)
+      }
+      return transform(message.input, ctx)
+    }
+    case 'check':
+      return transformer.check?.(message.input, ctx)
+    default:
+      throw new Error(`unknown operation ${String(message.op)}`)
   }
+}
 
-  // `ctx.state` of each open connection, by connection id.
-  const states = new Map<string, Map<string, unknown>>()
-
-  // Host calls waiting for Decoy's answer, by the id the worker gave them.
+/** Correlates protobuf host calls with Decoy's replies. */
+function createHostCalls(send: (message: WireMessage) => void) {
   const hostCalls = new Map<number, HostCall>()
   let nextHostId = 1
 
@@ -53,6 +62,28 @@ export function serve(transformer: Transformer, io: Io = processIo): void {
     encode: async (type, value) => (await host('protobuf.encode', [type, value])) as Uint8Array,
   }
 
+  const settle = (message: WireMessage) => {
+    const id = message.id as number
+    const pending = hostCalls.get(id)
+    if (!pending) return
+    hostCalls.delete(id)
+
+    if (message.ok) pending.resolve(message.value)
+    else pending.reject(new Error(String(message.error)))
+  }
+
+  return { protobuf, settle }
+}
+
+/** Answers Decoy's messages on `io` for `transformer` (`docs/reference/worker-protocol.md`). */
+export function serve(transformer: Transformer, io: Io = processIo): void {
+  const send = (message: WireMessage) => {
+    write(io.output, message)
+  }
+  const { protobuf, settle } = createHostCalls(send)
+
+  // `ctx.state` of each open connection, by connection id.
+  const states = new Map<string, Map<string, unknown>>()
   const context = (message: WireMessage): Context => {
     const connection = message.connection as Connection | undefined
 
@@ -68,31 +99,11 @@ export function serve(transformer: Transformer, io: Io = processIo): void {
     return { frame, connection, state, protobuf, ...(request && { request }) }
   }
 
-  /** Runs the transform in the direction requested by Decoy. */
-  const run = (message: WireMessage, ctx: Context) => {
-    switch (message.op) {
-      case 'input':
-      case 'output': {
-        const transform = transformer[message.op]
-
-        if (!transform) {
-          throw new Error(`Transformer worker ${transformer.name} does not provide ${message.op}`)
-        }
-
-        return transform(message.input, ctx)
-      }
-      case 'check':
-        return transformer.check?.(message.input, ctx)
-      default:
-        throw new Error(`unknown operation ${String(message.op)}`)
-    }
-  }
-
   const call = async (message: WireMessage) => {
     const { id } = message
 
     try {
-      const value = await run(message, context(message))
+      const value = await runOperation(transformer, message, context(message))
 
       // `check` only passes or throws; what it returns means nothing.
       send({ kind: 'result', id, ok: true, value: message.op === 'check' ? null : (value ?? null) })
@@ -127,14 +138,9 @@ export function serve(transformer: Transformer, io: Io = processIo): void {
         void call(message)
         return
 
-      case 'hostResult': {
-        const pending = hostCalls.get(message.id as number)
-        hostCalls.delete(message.id as number)
-
-        if (message.ok) pending?.resolve(message.value)
-        else pending?.reject(new Error(String(message.error)))
+      case 'hostResult':
+        settle(message)
         return
-      }
 
       case 'close':
         states.delete(message.connection as string)
