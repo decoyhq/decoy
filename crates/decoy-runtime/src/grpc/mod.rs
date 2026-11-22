@@ -350,6 +350,57 @@ mod tests {
         supervisor.shutdown().await;
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn protobuf_output_step_reads_json_from_the_preceding_command() {
+        use crate::config::{CommandsConfig, PipelineConfig};
+
+        let route = Route::from_yaml("id: get\ntransport: grpc\npipeline: named\nmatch: { service: approvals.v1.Approvals, method: GetApproval }\ncases: { any: { behaviors: { ok: { message: { id: original } } } } }").unwrap();
+        let collections =
+            CollectionsFile::from_yaml("- id: default\n  routes: [get:any:ok]").unwrap();
+        for (command_output, valid) in [(r#"{"id":"transformed"}"#, true), ("not JSON", false)] {
+            let mut runtime = runtime();
+            runtime.commands.insert(
+                "replace".into(),
+                CommandsConfig {
+                    input: None,
+                    output: Some(
+                        ["sh", "-c", "printf '%s' \"$1\"", "replace", command_output]
+                            .into_iter()
+                            .map(str::to_owned)
+                            .collect(),
+                    ),
+                    dir: std::env::temp_dir(),
+                },
+            );
+            runtime.pipelines.insert(
+                "named".into(),
+                PipelineConfig {
+                    input: vec![],
+                    output: vec!["replace".into(), "protobuf".into(), "grpc-frame".into()],
+                },
+            );
+            let catalog = Catalog::new(vec![route.clone()], collections.clone(), runtime).unwrap();
+            let response = catalog
+                .execute_grpc("default", &[], request(&catalog, json!({})), false)
+                .await
+                .response;
+            if valid {
+                assert_eq!(response.status, OK, "{response:?}");
+                assert_eq!(decoded(&catalog, &response), json!({"id": "transformed"}));
+            } else {
+                assert_eq!(response.status, INTERNAL, "{response:?}");
+                assert!(response.body.is_empty());
+                assert!(
+                    response
+                        .status_message
+                        .contains("transformer `protobuf` output failed:"),
+                    "{response:?}"
+                );
+            }
+        }
+    }
+
     #[tokio::test]
     async fn answers_a_matched_call_with_a_rendered_message() {
         let catalog = catalog(

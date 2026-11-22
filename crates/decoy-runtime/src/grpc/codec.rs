@@ -116,24 +116,7 @@ pub async fn encode_response_async(
     };
     let value = named
         .run_grpc(Op::Output, to_msgpack(&message), |step, value| {
-            let bytes = match step {
-                PipelineStep::GrpcFrame => {
-                    let Msgpack::Binary(bytes) = value else {
-                        return Err("gRPC output step `grpc-frame` requires bytes".into());
-                    };
-                    frame(&bytes)
-                }
-                PipelineStep::Protobuf => {
-                    let json = match value {
-                        Msgpack::Binary(bytes) => {
-                            serde_json::from_slice(&bytes).map_err(|error| error.to_string())?
-                        }
-                        value => to_json(&value)?,
-                    };
-                    encode(json, &[step], descriptor).map_err(|error| error.to_string())?
-                }
-            };
-            Ok(Msgpack::Binary(bytes))
+            encode_output_step(step, value, descriptor).map(Msgpack::Binary)
         })
         .await
         .map_err(|error| GrpcCodecError::Transform(error.to_string()))?;
@@ -142,6 +125,26 @@ pub async fn encode_response_async(
         _ => Err(GrpcCodecError::Transform(
             "gRPC output Pipeline must return bytes".into(),
         )),
+    }
+}
+
+fn encode_output_step(
+    step: PipelineStep,
+    value: Msgpack,
+    descriptor: &MessageDescriptor,
+) -> Result<Vec<u8>, String> {
+    match (step, value) {
+        (PipelineStep::GrpcFrame, Msgpack::Binary(bytes)) => Ok(frame(&bytes)),
+        (PipelineStep::GrpcFrame, _) => Err("gRPC output step `grpc-frame` requires bytes".into()),
+        (PipelineStep::Protobuf, value) => {
+            let json = match value {
+                Msgpack::Binary(bytes) => {
+                    serde_json::from_slice(&bytes).map_err(|error| error.to_string())?
+                }
+                value => to_json(&value)?,
+            };
+            encode_protobuf(json, descriptor).map_err(|error| error.to_string())
+        }
     }
 }
 
@@ -190,20 +193,23 @@ pub(super) fn encode(
     for step in steps.iter().rev() {
         data = match (step, data) {
             (PipelineStep::Protobuf, Data::Json(value)) => {
-                let message =
-                    DynamicMessage::deserialize(output.clone(), value).map_err(|error| {
-                        GrpcCodecError::DoesNotFit {
-                            message: output.full_name().to_owned(),
-                            error,
-                        }
-                    })?;
-                Data::Bytes(message.encode_to_vec())
+                Data::Bytes(encode_protobuf(value, output)?)
             }
             (PipelineStep::GrpcFrame, data) => Data::Bytes(frame(&bytes(data)?)),
             (PipelineStep::Protobuf, Data::Bytes(_)) => unreachable!("no step follows `protobuf`"),
         };
     }
     bytes(data)
+}
+
+fn encode_protobuf(value: Value, output: &MessageDescriptor) -> Result<Vec<u8>, GrpcCodecError> {
+    let message = DynamicMessage::deserialize(output.clone(), value).map_err(|error| {
+        GrpcCodecError::DoesNotFit {
+            message: output.full_name().to_owned(),
+            error,
+        }
+    })?;
+    Ok(message.encode_to_vec())
 }
 
 fn bytes(data: Data) -> Result<Vec<u8>, GrpcCodecError> {
