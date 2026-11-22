@@ -59,6 +59,51 @@ impl PipelineError {
 }
 
 impl Pipeline {
+    pub(crate) fn validate_route(route: &Route, runtime: &RuntimeConfig) -> Result<(), String> {
+        let Some(pipeline) = Self::of(route, runtime)? else {
+            return Ok(());
+        };
+        if route.transport != Transport::Grpc {
+            return Ok(());
+        }
+        let failure = |direction, reason| {
+            format!(
+                "route `{}`: Pipeline `{}` {direction}: {reason}",
+                route.id,
+                route.pipeline_name.as_deref().expect("named Pipeline")
+            )
+        };
+        // Workers and commands may change types, so only check transitions between adjacent built-ins.
+        if pipeline.input.windows(2).any(|pair| {
+            matches!(pair[0].runner, Runner::Builtin(PipelineStep::Protobuf))
+                && matches!(pair[1].runner, Runner::Builtin(_))
+        }) {
+            return Err(failure(
+                "input",
+                "`protobuf` produces JSON, but the next built-in needs bytes",
+            ));
+        }
+        if matches!(
+            pipeline.output.first().map(|step| &step.runner),
+            Some(Runner::Builtin(PipelineStep::GrpcFrame))
+        ) {
+            return Err(failure(
+                "output",
+                "`grpc-frame` requires bytes, not the rendered message",
+            ));
+        }
+        if pipeline.output.windows(2).any(|pair| {
+            matches!(pair[0].runner, Runner::Builtin(PipelineStep::GrpcFrame))
+                && matches!(pair[1].runner, Runner::Builtin(PipelineStep::Protobuf))
+        }) {
+            return Err(failure(
+                "output",
+                "`protobuf` cannot encode a gRPC frame as a message",
+            ));
+        }
+        Ok(())
+    }
+
     /// Looks up the Route’s Pipeline and validates its Transformer references in both directions.
     pub fn of(route: &Route, runtime: &RuntimeConfig) -> Result<Option<Self>, String> {
         let Some(name) = &route.pipeline_name else {

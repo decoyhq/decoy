@@ -30,9 +30,9 @@ impl Catalog {
     ) -> Result<Self, CatalogError> {
         for (index, route) in routes.iter().enumerate() {
             route.validate()?;
-            crate::pipeline::Pipeline::of(route, &runtime)
+            crate::pipeline::Pipeline::validate_route(route, &runtime)
                 .map_err(|reason| CatalogError::Pipeline { reason })?;
-            crate::grpc::schema::check_route(route, &runtime.protos)
+            crate::grpc::schema::check_configured_route(route, &runtime)
                 .map_err(|reason| CatalogError::GrpcRoute { reason })?;
             if let Some(other) = crate::ws::schema::find_tie(&routes[..index], route) {
                 return Err(CatalogError::WsRoute {

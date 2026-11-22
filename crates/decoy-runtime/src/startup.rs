@@ -114,7 +114,7 @@ pub fn load_catalog_from_files(
             StartupError::new(StartupDiagnosticKind::Io, &route_path, error.to_string())
         })?;
         let route = decode_route(&route_path, &input, &runtime)?;
-        crate::grpc::schema::check_route(&route, &runtime.protos).map_err(|reason| {
+        crate::grpc::schema::check_configured_route(&route, &runtime).map_err(|reason| {
             StartupError::new(StartupDiagnosticKind::Schema, &route_path, reason)
         })?;
         if let Some(first_path) = seen_route_paths.insert(route.id.clone(), route_path.clone()) {
@@ -264,7 +264,7 @@ fn decode_route(path: &Path, input: &str, runtime: &RuntimeConfig) -> Result<Rou
         )
     })?;
     route.validate().map_err(|error| route_error(path, error))?;
-    crate::pipeline::Pipeline::of(&route, runtime)
+    crate::pipeline::Pipeline::validate_route(&route, runtime)
         .map_err(|reason| StartupError::new(StartupDiagnosticKind::Schema, path, reason))?;
     Ok(route)
 }

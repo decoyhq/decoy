@@ -17,7 +17,7 @@ use prost_reflect::{
 use serde_json::Value;
 
 use crate::matching::value_matches;
-use crate::schema::{Behavior, PipelineStep, ResponseBehavior, Route, RouteMatch};
+use crate::schema::{Behavior, Case, PipelineStep, ResponseBehavior, Route, RouteMatch};
 use crate::template::{validate_string, validate_value};
 
 /// gRPC status codes by name, indexed by numeric code.
@@ -201,6 +201,31 @@ fn status_kind(response: &ResponseBehavior) -> StatusKind {
 /// Check a gRPC Route against the loaded protos. Errors name the Route, Case, or Behavior and the
 /// field path.
 pub fn check_route(route: &Route, pool: &DescriptorPool) -> Result<(), String> {
+    check_route_directions(route, pool, false, false)
+}
+
+pub(crate) fn check_configured_route(
+    route: &Route,
+    runtime: &crate::http::RuntimeConfig,
+) -> Result<(), String> {
+    let named = route
+        .pipeline_name
+        .as_ref()
+        .and_then(|name| runtime.pipelines.get(name));
+    check_route_directions(
+        route,
+        &runtime.protos,
+        named.is_some_and(|pipeline| pipeline.input.is_empty()),
+        named.is_some_and(|pipeline| pipeline.output.is_empty()),
+    )
+}
+
+fn check_route_directions(
+    route: &Route,
+    pool: &DescriptorPool,
+    default_input: bool,
+    default_output: bool,
+) -> Result<(), String> {
     let RouteMatch::Grpc(address) = &route.route_match else {
         return Ok(());
     };
@@ -222,23 +247,36 @@ pub fn check_route(route: &Route, pool: &DescriptorPool) -> Result<(), String> {
 
     // Named Transformers may change the logical shape before matching and before encoding.
     let decoded = route.decodes_protobuf();
-
     for (case_id, case) in &route.cases {
-        if decoded
+        if (decoded || default_input)
             && let Some(pattern) = case.case_match.get("message")
             && !is_template(pattern)
         {
             check_message(pattern, &method.input(), "message", Form::Canonical)
                 .map_err(|reason| format!("case `{}:{case_id}` match: {reason}", route.id))?;
         }
-        for (behavior_id, behavior) in &case.behaviors {
-            let Behavior::Response(response) = behavior else {
-                continue;
-            };
-            check_behavior(response, &method, decoded).map_err(|reason| {
-                format!("behavior `{}:{case_id}:{behavior_id}`: {reason}", route.id)
-            })?;
+        check_case_responses(&route.id, case_id, case, &method, decoded, default_output)?;
+    }
+    Ok(())
+}
+
+fn check_case_responses(
+    route_id: &str,
+    case_id: &str,
+    case: &Case,
+    method: &MethodDescriptor,
+    decoded: bool,
+    default_output: bool,
+) -> Result<(), String> {
+    for (behavior_id, behavior) in &case.behaviors {
+        let Behavior::Response(response) = behavior else {
+            continue;
+        };
+        let context = |reason| format!("behavior `{route_id}:{case_id}:{behavior_id}`: {reason}");
+        if default_output {
+            validate_response(response, true).map_err(context)?;
         }
+        check_behavior(response, method, decoded || default_output).map_err(context)?;
     }
     Ok(())
 }

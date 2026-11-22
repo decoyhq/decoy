@@ -34,17 +34,6 @@ pub(crate) struct GrpcCall {
 }
 
 impl Catalog {
-    /// Resolve a call with all candidate diagnostics, including named input Transformers.
-    pub async fn resolve_grpc_async(
-        &self,
-        collection_id: &str,
-        overrides: &[Activation],
-        request: &GrpcRequest,
-    ) -> GrpcResolution<'_> {
-        self.select_grpc(collection_id, overrides, request, true, true)
-            .await
-    }
-
     pub(super) async fn select_grpc(
         &self,
         collection_id: &str,
@@ -83,7 +72,7 @@ impl Catalog {
                         response: GrpcResponse::error(
                             INVALID_ARGUMENT,
                             format!(
-                                "route `{}`: use resolve_grpc_async for named Pipelines",
+                                "route `{}`: named input Pipeline requires request execution",
                                 pending.route.id
                             ),
                         ),

@@ -192,6 +192,82 @@ mod tests {
         serde_json::to_value(&message).unwrap()
     }
 
+    #[test]
+    fn named_pipelines_validate_the_default_protobuf_direction() {
+        for (input, output, conditions, message, invalid_field) in [
+            (
+                vec![],
+                vec!["protobuf", "grpc-frame"],
+                "{ unknownInput: true }",
+                "{ id: ok }",
+                "unknownInput",
+            ),
+            (
+                vec!["grpc-frame", "protobuf"],
+                vec![],
+                "{ id: ok }",
+                "{ unknownOutput: true }",
+                "unknownOutput",
+            ),
+        ] {
+            let route = Route::from_yaml(&format!("id: get\ntransport: grpc\npipeline: named\nmatch: {{ service: approvals.v1.Approvals, method: GetApproval }}\ncases: {{ any: {{ match: {{ message: {conditions} }}, behaviors: {{ ok: {{ message: {message} }} }} }} }}")).unwrap();
+            let mut runtime = runtime();
+            runtime.pipelines.insert(
+                "named".into(),
+                crate::config::PipelineConfig {
+                    input: input.into_iter().map(str::to_owned).collect(),
+                    output: output.into_iter().map(str::to_owned).collect(),
+                },
+            );
+            let collections =
+                CollectionsFile::from_yaml("- id: default\n  routes: [get:any:ok]").unwrap();
+            let error = Catalog::new(vec![route], collections, runtime).unwrap_err();
+            assert!(error.to_string().contains(invalid_field), "{error}");
+        }
+    }
+
+    #[test]
+    fn named_grpc_builtins_reject_impossible_transitions_without_reordering_custom_steps() {
+        let route = Route::from_yaml("id: get\ntransport: grpc\npipeline: named\nmatch: { service: approvals.v1.Approvals, method: GetApproval }\ncases: { any: { behaviors: { ok: { message: { id: ok } } } } }").unwrap();
+        let collections =
+            CollectionsFile::from_yaml("- id: default\n  routes: [get:any:ok]").unwrap();
+        for (input, output, valid) in [
+            (vec!["protobuf", "grpc-frame"], vec![], false),
+            (vec!["grpc-frame", "protobuf", "protobuf"], vec![], false),
+            (vec![], vec!["grpc-frame"], false),
+            (vec![], vec!["protobuf", "grpc-frame", "protobuf"], false),
+            (
+                vec!["custom", "grpc-frame", "custom", "protobuf"],
+                vec!["protobuf", "grpc-frame"],
+                true,
+            ),
+            (
+                vec!["grpc-frame", "protobuf", "custom"],
+                vec!["protobuf", "grpc-frame", "custom"],
+                true,
+            ),
+        ] {
+            let mut runtime = runtime();
+            runtime.commands.insert(
+                "custom".into(),
+                crate::config::CommandsConfig {
+                    input: Some(vec!["not-run-during-validation".into()]),
+                    output: Some(vec!["not-run-during-validation".into()]),
+                    dir: std::env::temp_dir(),
+                },
+            );
+            runtime.pipelines.insert(
+                "named".into(),
+                crate::config::PipelineConfig {
+                    input: input.into_iter().map(str::to_owned).collect(),
+                    output: output.into_iter().map(str::to_owned).collect(),
+                },
+            );
+            let result = Catalog::new(vec![route.clone()], collections.clone(), runtime);
+            assert_eq!(result.is_ok(), valid, "{:?}", result.err());
+        }
+    }
+
     #[cfg(unix)]
     #[tokio::test]
     async fn named_input_misses_try_other_routes_and_worker_errors_end_the_call() {

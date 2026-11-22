@@ -136,16 +136,16 @@ async fn named_pipeline_keeps_the_default_grpc_codec_for_each_omitted_direction(
         "transport: grpc",
         "transport: grpc\npipeline: normalize-replies",
     );
-    for (omitted, request_id, reply_id) in [
+    for (omitted, reply_id, approver) in [
         (
             "    output: [normalize, protobuf, grpc-frame]\n",
-            "incoming",
             "a-1",
+            "alice",
         ),
         (
             "    input: [grpc-frame, protobuf, normalize]\n",
-            "a-1",
-            "outgoing",
+            "incoming",
+            "carol",
         ),
     ] {
         let config = NORMALIZE_PIPELINE.replace(omitted, "");
@@ -153,12 +153,12 @@ async fn named_pipeline_keeps_the_default_grpc_codec_for_each_omitted_direction(
         let reply = server
             .client()
             .await
-            .get(json!({ "id": request_id }), &[])
+            .get(json!({ "id": "incoming" }), &[("x-user", "carol")])
             .await
             .unwrap();
         assert_eq!(
             reply,
-            json!({ "id": reply_id, "state": "PENDING", "approvers": ["alice"] })
+            json!({ "id": reply_id, "state": "PENDING", "approvers": [approver] })
         );
     }
 }

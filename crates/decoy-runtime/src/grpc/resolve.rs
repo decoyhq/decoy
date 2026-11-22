@@ -42,8 +42,7 @@ pub(super) struct PendingDecode<'catalog, 'entry> {
 }
 
 impl Catalog {
-    /// Resolves legacy built-in Pipelines synchronously. Named Pipelines can call external
-    /// Transformers and require `resolve_grpc_async`.
+    /// Resolves synchronously without calling any external Transformers.
     pub fn resolve_grpc(
         &self,
         collection_id: &str,
