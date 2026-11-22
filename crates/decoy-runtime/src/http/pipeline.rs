@@ -6,12 +6,20 @@ use rmpv::Value as Msgpack;
 use serde_json::Value;
 
 use super::forward::ForwardResponse;
-use super::{BodyPlan, HttpResponsePlan, RuntimeConfig};
+use super::{BodyPlan, HttpRequest, HttpResponsePlan, RuntimeConfig};
 use crate::pipeline::{Pipeline, PipelineError};
-use crate::plugins::Op;
 use crate::plugins::value::{to_json, to_msgpack};
+use crate::plugins::{CallRequest, Op};
 use crate::request::RequestEnvelope;
 use crate::schema::Route;
+
+pub(super) fn worker_request(request: &HttpRequest) -> CallRequest<'_> {
+    CallRequest {
+        method: request.method.as_str(),
+        path: &request.path,
+        headers: request.envelope.headers(),
+    }
+}
 
 pub(super) struct PreparedRoute {
     pub pipeline: Pipeline,
@@ -23,14 +31,18 @@ impl PreparedRoute {
     pub async fn prepare(
         route: &Route,
         runtime: &RuntimeConfig,
-        original: &RequestEnvelope,
+        request: &HttpRequest,
     ) -> Result<Self, String> {
+        let original = &request.envelope;
         let pipeline = Pipeline::of(route, runtime)?.expect("Route selects a named Pipeline");
         let input = if pipeline.has_input() {
             let content_type = original.headers.get("content-type").map(String::as_str);
             let encoding = original.headers.get("content-encoding").map(String::as_str);
             let value = decode(content_type, encoding, &original.raw_body);
-            match pipeline.run(Op::Input, value).await {
+            match pipeline
+                .run_http(Op::Input, value, worker_request(request))
+                .await
+            {
                 Ok(value) => {
                     let mut envelope = original.clone();
                     let (bytes, json) = match value {
@@ -146,9 +158,10 @@ async fn output(
     pipeline: &Pipeline,
     response: &mut ForwardResponse,
     value: Msgpack,
+    request: CallRequest<'_>,
 ) -> Result<(), String> {
     let value = pipeline
-        .run(Op::Output, value)
+        .run_http(Op::Output, value, request)
         .await
         .map_err(|error| error.to_string())?;
     let (bytes, content_type) = encode(value, response.header("content-type"))?;
@@ -169,6 +182,7 @@ pub(super) async fn mock_output(
     pipeline: &Pipeline,
     mut plan: HttpResponsePlan,
     explicit_content_type: bool,
+    request: CallRequest<'_>,
 ) -> Result<ForwardResponse, String> {
     let value = match plan.body.take() {
         None => Msgpack::Nil,
@@ -182,7 +196,7 @@ pub(super) async fn mock_output(
         plan.headers.remove("content-type");
     }
     let mut response = ForwardResponse::from(plan);
-    output(pipeline, &mut response, value).await?;
+    output(pipeline, &mut response, value, request).await?;
     Ok(response)
 }
 
@@ -190,6 +204,7 @@ pub(super) async fn passthrough_output(
     pipeline: &Pipeline,
     mut response: ForwardResponse,
     limit: usize,
+    request: CallRequest<'_>,
 ) -> Result<ForwardResponse, String> {
     let mut bytes = Vec::new();
     if let Some(mut stream) = response.stream.take() {
@@ -212,7 +227,7 @@ pub(super) async fn passthrough_output(
         response.header("content-encoding"),
         &bytes,
     );
-    output(pipeline, &mut response, value).await?;
+    output(pipeline, &mut response, value, request).await?;
     if response.body.as_ref() != bytes {
         response
             .headers

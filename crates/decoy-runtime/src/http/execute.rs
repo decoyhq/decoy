@@ -5,7 +5,9 @@ use bytes::Bytes;
 use super::forward::{
     ForwardRequest, ForwardResponse, ForwardingError, forward_passthrough, target_url,
 };
-use super::pipeline::{PreparedRoute, describes_original_body, mock_output, passthrough_output};
+use super::pipeline::{
+    PreparedRoute, describes_original_body, mock_output, passthrough_output, worker_request,
+};
 use super::resolve::{HttpRequest, ResolveOutcome};
 use crate::collections::Activation;
 use crate::engine::{Catalog, MissDiagnostic};
@@ -129,14 +131,19 @@ impl Catalog {
                             let behavior = &self.routes[&activation.route].cases[&activation.case]
                                 .behaviors[&activation.behavior];
                             let explicit_type = matches!(behavior, Behavior::Response(response) if response.headers.keys().any(|key| key.eq_ignore_ascii_case("content-type")));
-                            mock_output(output, plan, explicit_type)
-                                .await
-                                .unwrap_or_else(|error| {
-                                    transform_failure(&format!(
-                                        "route `{}` output: {error}",
-                                        activation.route
-                                    ))
-                                })
+                            mock_output(
+                                output,
+                                plan,
+                                explicit_type,
+                                worker_request(&resolve_request),
+                            )
+                            .await
+                            .unwrap_or_else(|error| {
+                                transform_failure(&format!(
+                                    "route `{}` output: {error}",
+                                    activation.route
+                                ))
+                            })
                         } else {
                             plan.into()
                         };
@@ -193,6 +200,7 @@ impl Catalog {
                                         self.runtime
                                             .max_body_bytes
                                             .unwrap_or(crate::config::DEFAULT_MAX_BODY_BYTES),
+                                        worker_request(&resolve_request),
                                     )
                                     .await
                                     .unwrap_or_else(|error| {
@@ -273,7 +281,7 @@ impl Catalog {
                     Ok(Some(hit)) => return Ok(hit),
                     Ok(None) => break,
                     Err((route, activation)) => {
-                        let input = PreparedRoute::prepare(route, &self.runtime, &request.envelope)
+                        let input = PreparedRoute::prepare(route, &self.runtime, request)
                             .await
                             .map_err(|reason| format!("route `{}` input: {reason}", route.id))?;
                         prepared.insert(route.id.clone(), input);

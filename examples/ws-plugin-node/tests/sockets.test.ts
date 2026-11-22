@@ -95,6 +95,25 @@ void test('HTTP shares the compressed Pipeline with the WebSocket Route', async 
   })
 })
 
+void test('HTTP workers can use original request headers in both directions', async () => {
+  const response = await fetch(`${decoyUrl}/http-context?test=1`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Cookie: 'preview=1',
+      'X-Demo-Client': 'example',
+    },
+    body: '{}',
+  })
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), {
+    result: { mode: 'preview' },
+    client: 'example',
+    method: 'POST',
+    path: '/http-context',
+  })
+})
+
 void test('runs a command and a worker in each configured order', async () => {
   const approvals = await open('/ws/compressed-approvals', session())
   const greeting = gunzipSync(await approvals.binary()).toString('utf8')

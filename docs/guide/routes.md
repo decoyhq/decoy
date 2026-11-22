@@ -203,7 +203,9 @@ Cases on a Route share its transformed body and see the original request headers
 Route is tried, its Pipeline starts from the original request. A terminal input command's stdout
 is parsed as JSON for Case matching and templates if possible. Other byte results appear as
 `null` there. A Passthrough Behavior forwards byte results verbatim and serializes other results
-from the winning Route's transformed value.
+from the winning Route's transformed value. HTTP workers can also read the original method, path,
+and headers as `ctx.request` in both directions. This does not change which headers Passthrough
+forwards. Command Transformers still receive only their payload on stdin.
 
 When a Passthrough Route has output steps, Decoy buffers the upstream body and decodes it
 according to its content type before running them. This buffer is limited by `maxBodyBytes`.

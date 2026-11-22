@@ -32,13 +32,13 @@ and [WebSocket](../guide/websocket.md#transformers) guides.
 
 Decoy → plugin:
 
-| kind         | fields                                                                    |
-| ------------ | ------------------------------------------------------------------------- |
-| `hello`      | `protocol: 1`, `decoy: "<version>"`                                       |
-| `call`       | `id`, `op` (`input`, `output`, `check`), `input`, `frame?`, `connection?` |
-| `hostResult` | `id` (of the plugin's `host`), `ok: true, value` or `ok: false, error`    |
-| `close`      | `connection` (an id): drop the state kept for it                          |
-| `shutdown`   | (none): exit now                                                          |
+| kind         | fields                                                                                |
+| ------------ | ------------------------------------------------------------------------------------- |
+| `hello`      | `protocol: 1`, `decoy: "<version>"`                                                   |
+| `call`       | `id`, `op` (`input`, `output`, `check`), `input`, `frame?`, `connection?`, `request?` |
+| `hostResult` | `id` (of the plugin's `host`), `ok: true, value` or `ok: false, error`                |
+| `close`      | `connection` (an id): drop the state kept for it                                      |
+| `shutdown`   | (none): exit now                                                                      |
 
 Plugin → Decoy:
 
@@ -59,6 +59,10 @@ Decoy writes `hello` first. The worker answers `ready` with the directions it pr
   out, so a step that keeps state per connection sees its messages in order unless one timed out.
   After a timeout the late call may still run, even after the connection's `close`.
 - WebSocket calls carry `connection: { id, route, session }`. HTTP, gRPC, and startup checks omit it. WebSocket `input` also carries `frame` (`"text"` or `"binary"`).
+- HTTP `input` and `output` calls carry `request: { method, path, headers }` alongside the payload.
+  `path` excludes the query. `headers` is the original request's normalized header map (lowercase
+  names, string values), including `cookie` and `authorization` when present. Workers should not
+  log those values. Non-HTTP calls and startup checks omit `request`.
 - `input` runs before Case matching. On WebSocket the first step gets the frame payload as `bin`. Each later step gets the previous step's result. The final result must be suitable for the transport's Message envelope.
 - `output` runs on the rendered Behavior payload, an HTTP Passthrough response body, or a Control API push. Each later step gets the previous step's result. WebSocket sends a final `str` as text or `bin` as binary.
 - `check` optionally validates a startup literal for the first worker in the output direction when that worker receives the untransformed value. A worker without a `check` callback answers `ok: true`.

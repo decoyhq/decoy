@@ -64,7 +64,8 @@ export function serve(plugin: Plugin, io: Io = processIo): void {
     }
 
     const frame = message.frame as Context['frame']
-    return { frame, connection, state, protobuf }
+    const request = message.request as Context['request']
+    return { frame, connection, state, protobuf, ...(request && { request }) }
   }
 
   /** Runs the transform in the direction requested by Decoy. */

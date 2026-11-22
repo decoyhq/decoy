@@ -21,7 +21,18 @@ export interface Connection {
   session: string
 }
 
+export interface HttpRequestContext {
+  readonly method: string
+  /** Path without the query string. */
+  readonly path: string
+  /** Original request headers, with lowercase names. May include credentials. */
+  readonly headers: Readonly<Partial<Record<string, string>>>
+}
+
 export interface Context {
+  /** Original request metadata on HTTP input and output calls. */
+  readonly request?: HttpRequestContext
+
   /** Frame type of the incoming WebSocket message. */
   frame: 'text' | 'binary' | undefined
 

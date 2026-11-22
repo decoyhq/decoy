@@ -2,6 +2,7 @@
   routes:
     - approvals-post:watch:approved
     - compressed-approvals-post:watch:approved
+    - http-context:preview:ok
     - approvals-live:hello:ping
     - approvals-live:watch:approved
     - compressed-approvals:hello:ping

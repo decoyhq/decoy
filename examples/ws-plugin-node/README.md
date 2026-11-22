@@ -7,6 +7,8 @@ the typed-envelope Pipeline with the WebSocket Route at `/ws/approvals`. `POST /
 and `/ws/compressed-approvals` also share a Pipeline: `gzip` decompresses incoming bytes before
 `env` decodes them for Case matching. The reply goes through `env` and then `gzip`. The HTTP
 Route declares `Content-Encoding: gzip` so the client knows to decompress it.
+[`POST /http-context`](mocks/routes/http-context.yaml) shows a worker selecting a Case based on a
+`preview=1` cookie and using the original request metadata again on output.
 
 ```sh
 pnpm --filter ./examples/ws-plugin-node test:e2e

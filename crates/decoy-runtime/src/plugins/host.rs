@@ -1,7 +1,7 @@
 //! One plugin process: the handshake, calls matched to their results by id, host calls, and its
 //! stderr. `docs/reference/plugin-protocol.md` is the contract.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -50,6 +50,20 @@ pub struct CallConnection {
     pub session: String,
 }
 
+/// `ctx.request` of an HTTP call. Header values may contain credentials.
+#[derive(Clone, Copy)]
+pub struct CallRequest<'a> {
+    pub method: &'a str,
+    pub path: &'a str,
+    pub headers: &'a BTreeMap<String, String>,
+}
+
+impl std::fmt::Debug for CallRequest<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CallRequest").finish_non_exhaustive()
+    }
+}
+
 /// One `call` to a step.
 #[derive(Debug, Clone)]
 pub struct Call<'a> {
@@ -57,6 +71,7 @@ pub struct Call<'a> {
     pub input: Msgpack,
     pub frame: Option<Frame>,
     pub connection: Option<&'a CallConnection>,
+    pub request: Option<CallRequest<'a>>,
 }
 
 /// Why a call returned no value. The text reaches error events and Control API bodies.
@@ -152,6 +167,25 @@ impl Plugin {
                     ("id".into(), connection.id.as_str().into()),
                     ("route".into(), connection.route.as_str().into()),
                     ("session".into(), connection.session.as_str().into()),
+                ]),
+            ));
+        }
+        if let Some(request) = call.request {
+            fields.push((
+                "request",
+                Msgpack::Map(vec![
+                    ("method".into(), request.method.into()),
+                    ("path".into(), request.path.into()),
+                    (
+                        "headers".into(),
+                        Msgpack::Map(
+                            request
+                                .headers
+                                .iter()
+                                .map(|(name, value)| (name.as_str().into(), value.as_str().into()))
+                                .collect(),
+                        ),
+                    ),
                 ]),
             ));
         }
@@ -538,6 +572,7 @@ mod tests {
             input,
             frame: Some(Frame::Binary),
             connection: None,
+            request: None,
         };
 
         let huge = Msgpack::Binary(vec![0; wire::MAX_MESSAGE]);
@@ -570,6 +605,7 @@ mod tests {
                 input: Msgpack::Nil,
                 frame: None,
                 connection: None,
+                request: None,
             });
             tokio::select! {
                 _ = call => panic!("worker has not replied"),
@@ -592,6 +628,7 @@ mod tests {
                 input: Msgpack::Binary(vec![0; 128 * 1024]),
                 frame: None,
                 connection: None,
+                request: None,
             };
             assert_eq!(plugin.call(call).await, Err(CallError::Timeout(timeout)));
         }
@@ -618,6 +655,7 @@ mod tests {
             input: input.into(),
             frame: Some(Frame::Binary),
             connection: Some(&connection),
+            request: None,
         };
 
         let (first, second, third, fourth, ()) = tokio::join!(
@@ -712,6 +750,7 @@ mod tests {
             input: Msgpack::Nil,
             frame: None,
             connection: None,
+            request: None,
         });
         let (result, ()) = tokio::join!(call, async {
             fake.next().await;

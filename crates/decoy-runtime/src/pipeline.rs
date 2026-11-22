@@ -11,7 +11,7 @@ use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWriteExt as _};
 
 use crate::http::RuntimeConfig;
 use crate::plugins::value::{to_json, to_msgpack};
-use crate::plugins::{Call, CallConnection, CallError, Frame, Op, Plugin};
+use crate::plugins::{Call, CallConnection, CallError, CallRequest, Frame, Op, Plugin};
 use crate::schema::{PipelineStep, Route, Transport};
 
 #[derive(Debug, Clone)]
@@ -136,6 +136,7 @@ impl Pipeline {
                 to_msgpack(payload),
                 None,
                 None,
+                None,
                 Self::unsupported_builtin,
             )
             .await?;
@@ -144,9 +145,21 @@ impl Pipeline {
     }
 
     /// Run HTTP steps in their authored order, preserving each Transformer's result type.
-    pub(crate) async fn run(&self, op: Op, value: Msgpack) -> Result<Msgpack, PipelineError> {
-        self.transform(op, value, None, None, Self::unsupported_builtin)
-            .await
+    pub(crate) async fn run_http(
+        &self,
+        op: Op,
+        value: Msgpack,
+        request: CallRequest<'_>,
+    ) -> Result<Msgpack, PipelineError> {
+        self.transform(
+            op,
+            value,
+            None,
+            None,
+            Some(request),
+            Self::unsupported_builtin,
+        )
+        .await
     }
 
     pub(crate) async fn run_grpc(
@@ -155,7 +168,7 @@ impl Pipeline {
         value: Msgpack,
         builtin: impl FnMut(PipelineStep, Msgpack) -> Result<Msgpack, String>,
     ) -> Result<Msgpack, PipelineError> {
-        self.transform(op, value, None, None, builtin).await
+        self.transform(op, value, None, None, None, builtin).await
     }
 
     async fn transform(
@@ -164,10 +177,13 @@ impl Pipeline {
         mut value: Msgpack,
         frame: Option<Frame>,
         connection: Option<&CallConnection>,
+        request: Option<CallRequest<'_>>,
         mut builtin: impl FnMut(PipelineStep, Msgpack) -> Result<Msgpack, String>,
     ) -> Result<Msgpack, PipelineError> {
         for step in self.steps(op) {
-            value = step.run(op, value, frame, connection, &mut builtin).await?;
+            value = step
+                .run(op, value, frame, connection, request, &mut builtin)
+                .await?;
         }
         Ok(value)
     }
@@ -202,6 +218,7 @@ impl Pipeline {
             value,
             frame,
             Some(connection),
+            None,
             Self::unsupported_builtin,
         )
         .await
@@ -263,6 +280,7 @@ impl Step {
         input: Msgpack,
         frame: Option<Frame>,
         connection: Option<&CallConnection>,
+        request: Option<CallRequest<'_>>,
         mut builtin: impl FnMut(PipelineStep, Msgpack) -> Result<Msgpack, String>,
     ) -> Result<Msgpack, PipelineError> {
         match &self.runner {
@@ -275,6 +293,7 @@ impl Step {
                     input,
                     frame,
                     connection,
+                    request,
                 })
                 .await
                 .map_err(|error| match error {
