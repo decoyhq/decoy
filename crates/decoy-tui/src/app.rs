@@ -337,54 +337,68 @@ impl App {
 
     fn on_key(&mut self, key: KeyEvent) -> Vec<Effect> {
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-        let copy_chord = match key.code {
-            KeyCode::Char('c' | 'C') => ctrl || key.modifiers.contains(KeyModifiers::SUPER),
-            KeyCode::Insert => ctrl,
-            _ => false,
-        };
         if !(ctrl && key.code == KeyCode::Char('c')) {
             self.ctrl_c_armed = false;
         }
         self.hint = None;
 
         if let Some(row) = self.picker {
-            match key.code {
-                KeyCode::Esc => self.picker = None,
-                KeyCode::Char('c') if ctrl => self.picker = None,
-                KeyCode::Up => self.picker = Some((row + 1).min(self.records.len() - 1)),
-                KeyCode::Down => self.picker = Some(row.saturating_sub(1)),
-                KeyCode::Enter => {
-                    self.picker = None;
-                    if let Some(id) = self.records.iter().rev().nth(row).map(|record| record.id) {
-                        self.open(id);
-                    }
-                }
-                _ => {}
-            }
+            self.on_picker_key(key.code, ctrl, row);
             return vec![];
         }
-
-        if self.selected.is_some() {
-            match key.code {
-                _ if copy_chord => {
-                    self.ctrl_c_armed = false;
-                    return self.copy_selection();
-                }
-                KeyCode::Enter => {
-                    let effects = self.copy_selection();
-                    self.follow();
-                    return effects;
-                }
-                KeyCode::Esc => {
-                    self.selected = None;
-                    return vec![];
-                }
-                _ => {}
-            }
+        if self.selected.is_some()
+            && let Some(effects) = self.on_selection_key(key, ctrl)
+        {
+            return effects;
         }
+        self.on_edit_key(key.code, ctrl)
+            .or_else(|| self.on_completion_key(key.code))
+            .unwrap_or_else(|| self.on_navigation_key(key, ctrl))
+    }
 
-        let items = self.completions();
+    fn on_picker_key(&mut self, code: KeyCode, ctrl: bool, row: usize) {
+        match code {
+            KeyCode::Esc => self.picker = None,
+            KeyCode::Char('c') if ctrl => self.picker = None,
+            KeyCode::Up => self.picker = Some((row + 1).min(self.records.len() - 1)),
+            KeyCode::Down => self.picker = Some(row.saturating_sub(1)),
+            KeyCode::Enter => {
+                self.picker = None;
+                if let Some(id) = self.records.iter().rev().nth(row).map(|record| record.id) {
+                    self.open(id);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn on_selection_key(&mut self, key: KeyEvent, ctrl: bool) -> Option<Vec<Effect>> {
+        let copy_chord = match key.code {
+            KeyCode::Char('c' | 'C') => ctrl || key.modifiers.contains(KeyModifiers::SUPER),
+            KeyCode::Insert => ctrl,
+            _ => false,
+        };
         match key.code {
+            _ if copy_chord => {
+                self.ctrl_c_armed = false;
+                Some(self.copy_selection())
+            }
+            KeyCode::Enter => {
+                let effects = self.copy_selection();
+                self.follow();
+                Some(effects)
+            }
+            KeyCode::Esc => {
+                self.selected = None;
+                Some(vec![])
+            }
+            _ => None,
+        }
+    }
+
+    /// `None` leaves the key for completion or navigation; `Some` consumes it.
+    fn on_edit_key(&mut self, code: KeyCode, ctrl: bool) -> Option<Vec<Effect>> {
+        match code {
             KeyCode::Char('o') if ctrl => {
                 if self.records.is_empty() {
                     self.hint = Some("no requests yet".to_owned());
@@ -397,34 +411,66 @@ impl App {
                     self.edit(String::clear);
                     self.ctrl_c_armed = true;
                 } else if self.ctrl_c_armed {
-                    return vec![Effect::Quit];
+                    return Some(vec![Effect::Quit]);
                 } else {
                     self.ctrl_c_armed = true;
                 }
                 self.hint = Some("Ctrl+C again to quit".to_owned());
             }
-            KeyCode::Char('d') if ctrl && self.input.is_empty() => return vec![Effect::Quit],
+            KeyCode::Char('d') if ctrl && self.input.is_empty() => return Some(vec![Effect::Quit]),
             KeyCode::Char('u') if ctrl => self.edit(String::clear),
             KeyCode::Char(c) if !ctrl => self.edit(|input| input.push(c)),
             KeyCode::Backspace => self.edit(|input| {
                 input.pop();
             }),
-            KeyCode::Esc if !items.is_empty() => self.popup_closed = true,
-            KeyCode::Esc if self.detail.is_some() => self.detail = None,
-            KeyCode::Esc => self.follow(),
-            KeyCode::Down if !items.is_empty() => self.popup = (self.popup + 1) % items.len(),
-            KeyCode::Up | KeyCode::BackTab if !items.is_empty() => {
+            _ => return None,
+        }
+        Some(vec![])
+    }
+
+    fn on_completion_key(&mut self, code: KeyCode) -> Option<Vec<Effect>> {
+        if !matches!(
+            code,
+            KeyCode::Esc
+                | KeyCode::Down
+                | KeyCode::Up
+                | KeyCode::BackTab
+                | KeyCode::Tab
+                | KeyCode::Right
+                | KeyCode::Enter
+        ) {
+            return None;
+        }
+        let items = self.completions();
+        if items.is_empty() {
+            return None;
+        }
+        match code {
+            KeyCode::Esc => self.popup_closed = true,
+            KeyCode::Down => self.popup = (self.popup + 1) % items.len(),
+            KeyCode::Up | KeyCode::BackTab => {
                 self.popup = (self.popup + items.len() - 1) % items.len();
             }
-            KeyCode::Tab | KeyCode::Right if !items.is_empty() => {
+            KeyCode::Tab | KeyCode::Right => {
                 self.accept(&items);
             }
             // A typed session id may be new, so Enter runs it as typed; Tab takes a seen one.
-            KeyCode::Enter if !items.is_empty() && !self.naming_session() => {
-                if self.accept(&items) {
-                    return self.submit();
-                }
+            KeyCode::Enter if !self.naming_session() => {
+                return Some(if self.accept(&items) {
+                    self.submit()
+                } else {
+                    Vec::new()
+                });
             }
+            _ => return None,
+        }
+        Some(vec![])
+    }
+
+    fn on_navigation_key(&mut self, key: KeyEvent, ctrl: bool) -> Vec<Effect> {
+        match key.code {
+            KeyCode::Esc if self.detail.is_some() => self.detail = None,
+            KeyCode::Esc => self.follow(),
             KeyCode::Up if !self.history.is_empty() => {
                 let at = self
                     .history_at
