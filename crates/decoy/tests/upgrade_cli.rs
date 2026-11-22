@@ -13,9 +13,19 @@ fn upgrade(latest: &str, download: &str) -> Output {
     fs::write(
         &curl,
         r#"#!/bin/sh
-for url do :; done
+url=
+write_redirect=no
+for arg do
+    if [ "$url" = -w ] && [ "$arg" = '%{redirect_url}' ]; then
+        write_redirect=yes
+    fi
+    url=$arg
+done
 case "$url" in
-    */releases/latest) printf '%s/v%s' 'https://github.com/decoyhq/decoy/releases/tag' "$TEST_LATEST" ;;
+    */releases/latest)
+        if [ "$write_redirect" = yes ]; then
+            printf '%s/v%s' 'https://github.com/decoyhq/decoy/releases/tag' "$TEST_LATEST"
+        fi ;;
     */install.sh)
         [ "$TEST_DOWNLOAD" = ok ] || exit 22
         printf '%s\n' 'printf "%s\n%s\n" "$DECOY_VERSION" "$DECOY_INSTALL_DIR"' ;;
