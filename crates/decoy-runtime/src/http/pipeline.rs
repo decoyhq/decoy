@@ -183,7 +183,7 @@ async fn output(
     response: &mut ForwardResponse,
     value: Msgpack,
     request: CallRequest<'_>,
-) -> Result<(), String> {
+) -> Result<&'static str, String> {
     let value = pipeline
         .run_http(Op::Output, value, request)
         .await
@@ -199,7 +199,7 @@ async fn output(
             .headers
             .push(("content-type".into(), content_type.into()));
     }
-    Ok(())
+    Ok(content_type)
 }
 
 pub(super) async fn mock_output(
@@ -254,7 +254,7 @@ pub(super) async fn passthrough_output(
         response.header("content-encoding"),
         &bytes,
     );
-    output(pipeline, &mut response, value, request)
+    let content_type = output(pipeline, &mut response, value, request)
         .await
         .map_err(PassthroughOutputError::Transform)?;
     if response.body.as_ref() != bytes {
@@ -266,6 +266,14 @@ pub(super) async fn passthrough_output(
         response
             .headers
             .retain(|(name, _)| !describes_original_body(name));
+        if content_type == "application/json" && !is_json(mime(response.header("content-type"))) {
+            response
+                .headers
+                .retain(|(name, _)| !name.eq_ignore_ascii_case("content-type"));
+            response
+                .headers
+                .push(("content-type".into(), content_type.into()));
+        }
     }
     Ok(response)
 }

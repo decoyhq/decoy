@@ -365,7 +365,7 @@ pipelines:
             .text()
             .await
             .unwrap()
-            .contains("transformer `replace` input failed")
+            .contains("HTTP Pipeline failed")
     );
 }
 
@@ -465,23 +465,7 @@ async fn passthrough_preserves_an_existing_vendor_json_media_type() {
 async fn assert_passthrough_input_type(incoming_type: &str, forwarded_type: &str) {
     let (target, captured, upstream) = spawn_upstream();
     let fixture = Fixture::new();
-    for (name, value) in [
-        (
-            "ready",
-            serde_json::json!({"kind":"ready","protocol":1,"name":"parse","version":"1","directions":["input"]}),
-        ),
-        (
-            "reply",
-            serde_json::json!({"kind":"result","id":1,"ok":true,"value":{"sku":"abc"}}),
-        ),
-    ] {
-        let mut msg = Vec::new();
-        rmpv::encode::write_value(&mut msg, &decoy_runtime::plugins::value::to_msgpack(&value))
-            .unwrap();
-        let mut frame = u32::try_from(msg.len()).unwrap().to_be_bytes().to_vec();
-        frame.extend(msg);
-        fs::write(fixture.temp.path().join(name), frame).unwrap();
-    }
+    write_json_worker_frames(&fixture, "input");
     fixture.write_route(
         "json.yaml",
         format!(
@@ -527,10 +511,109 @@ pipelines:
 }
 
 #[cfg(unix)]
+fn write_json_worker_frames(fixture: &Fixture, direction: &str) {
+    for (name, value) in [
+        (
+            "ready",
+            serde_json::json!({"kind":"ready","protocol":1,"name":"parse","version":"1","directions":[direction]}),
+        ),
+        (
+            "reply",
+            serde_json::json!({"kind":"result","id":1,"ok":true,"value":{"sku":"abc"}}),
+        ),
+    ] {
+        let mut msg = Vec::new();
+        rmpv::encode::write_value(&mut msg, &decoy_runtime::plugins::value::to_msgpack(&value))
+            .unwrap();
+        let mut frame = u32::try_from(msg.len()).unwrap().to_be_bytes().to_vec();
+        frame.extend(msg);
+        fs::write(fixture.temp.path().join(name), frame).unwrap();
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn passthrough_labels_structured_output_as_json() {
+    let (target, _received, upstream) = spawn_upstream_with_response(
+        b"HTTP/1.1 200 OK\r\ncontent-type: application/msgpack\r\ncontent-length: 3\r\n\r\nabc",
+    );
+    let fixture = Fixture::new();
+    write_json_worker_frames(&fixture, "output");
+    fixture.write_route(
+        "json.yaml",
+        format!(
+            r#"
+id: json
+transport: http
+pipeline: parse
+match: {{ method: GET, path: /orders }}
+cases:
+  any:
+    behaviors:
+      forward: {{ kind: passthrough, target: {{ baseUrl: {target} }} }}
+"#
+        ),
+    );
+    fixture.write_collections("- id: default\n  routes: [json:any:forward]");
+    fixture.write_config(r#"
+routes: routes
+collections: collections.yaml
+port: 0
+transformers:
+  parse:
+    worker: [sh, -c, 'for reply in ready reply; do dd bs=4096 count=1 of=/dev/null 2>/dev/null; cat "$reply"; done; dd bs=4096 count=1 of=/dev/null 2>/dev/null']
+pipelines:
+  parse: { output: [parse] }
+"#);
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let url = format!("http://127.0.0.1:{}/orders", server.port("port"));
+    let response = reqwest::get(url).await.unwrap();
+    assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["content-type"], "application/json");
+    assert_eq!(
+        response.json::<serde_json::Value>().await.unwrap(),
+        serde_json::json!({"sku":"abc"})
+    );
+    upstream.join().unwrap();
+    server.shutdown().await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn http_transformer_diagnostics_do_not_reach_the_client() {
+    let fixture = Fixture::new();
+    fixture.write_route("fail.yaml", "id: fail\ntransport: http\npipeline: fail\nmatch: { method: POST, path: /fail }\ncases: { any: { behaviors: { ok: { body: ok } } } }");
+    fixture.write_collections("- id: default\n  routes: [fail:any:ok]");
+    fixture.write_config(r#"
+routes: routes
+collections: collections.yaml
+port: 0
+transformers:
+  fail:
+    input: [sh, -c, 'data=$(cat); if [ "$data" = input ]; then echo internal-input >&2; exit 1; fi; printf "%s" "$data"']
+    output: [sh, -c, 'cat >/dev/null; echo internal-output >&2; exit 1']
+pipelines:
+  fail: { input: [fail], output: [fail] }
+"#);
+    let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
+    let url = format!("http://127.0.0.1:{}/fail", server.port("port"));
+    let client = reqwest::Client::new();
+    for body in ["input", "output"] {
+        let response = client.post(&url).body(body).send().await.unwrap();
+        assert_eq!(response.status(), 500);
+        assert_eq!(
+            response.json::<serde_json::Value>().await.unwrap(),
+            serde_json::json!({"error": "HTTP Pipeline failed"})
+        );
+    }
+    server.shutdown().await;
+}
+
+#[cfg(unix)]
 #[tokio::test]
 async fn passthrough_output_rejects_changed_ranges_and_distinguishes_upstream_read_errors() {
     for (upstream_response, status, error) in [
-        (&b"HTTP/1.1 206 Partial Content\r\ncontent-range: bytes 0-2/10\r\ncontent-length: 3\r\n\r\nabc"[..], 500, "partial response"),
+        (&b"HTTP/1.1 206 Partial Content\r\ncontent-range: bytes 0-2/10\r\ncontent-length: 3\r\n\r\nabc"[..], 500, "HTTP Pipeline failed"),
         (&b"HTTP/1.1 200 OK\r\ncontent-length: 8\r\n\r\nabc"[..], 502, "passthrough forwarding failed"),
     ] {
         let (target, _captured, upstream) = spawn_upstream_with_response(upstream_response);

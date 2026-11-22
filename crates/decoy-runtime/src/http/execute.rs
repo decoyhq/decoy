@@ -84,8 +84,8 @@ impl Catalog {
             .await;
         let (resolved, render_failed) = match selection {
             Ok(resolved) => resolved,
-            Err(reason) => {
-                let response = transform_failure(&reason);
+            Err(()) => {
+                let response = transform_failure();
                 return (
                     HttpExecutionOutcome::Response {
                         activation: None,
@@ -94,7 +94,7 @@ impl Catalog {
                     explain.then(|| {
                         Outcome::Miss(MissDiagnostic {
                             collection: collection_id.to_owned(),
-                            reason,
+                            reason: PIPELINE_FAILURE.into(),
                             candidates: Vec::new(),
                         })
                     }),
@@ -199,7 +199,7 @@ impl Catalog {
         let explicit_type = matches!(behavior, Behavior::Response(response) if response.headers.keys().any(|key| key.eq_ignore_ascii_case("content-type")));
         mock_output(output, plan, explicit_type, context)
             .await
-            .unwrap_or_else(|error| output_failure(&activation.route, &error))
+            .unwrap_or_else(|_| pipeline_failure(&activation.route, "output"))
     }
 
     /// Run input I/O only when resolution reaches that Route. The diagnostic pass on a miss
@@ -212,7 +212,7 @@ impl Catalog {
         metadata: &RequestMetadata,
         mut explain: bool,
         prepared: &mut BTreeMap<String, PreparedRoute>,
-    ) -> Result<(ResolveOutcome<'_>, bool), String> {
+    ) -> Result<(ResolveOutcome<'_>, bool), ()> {
         loop {
             let mut candidates = explain.then(Vec::new);
             let mut entries = match self.activations(collection, overrides) {
@@ -243,7 +243,7 @@ impl Catalog {
                     Err((route, activation)) => {
                         let input = PreparedRoute::prepare(route, &self.runtime, request)
                             .await
-                            .map_err(|reason| format!("route `{}` input: {reason}", route.id))?;
+                            .map_err(|_| log_pipeline_failure(&route.id, "input"))?;
                         prepared.insert(route.id.clone(), input);
                         pending = Some(activation);
                     }
@@ -312,8 +312,8 @@ async fn execute_passthrough(
                 .await
                 .or_else(|error| match error {
                     PassthroughOutputError::Upstream(source) => Err(source),
-                    PassthroughOutputError::Transform(reason) => {
-                        Ok(output_failure(&activation.route, &reason))
+                    PassthroughOutputError::Transform(_) => {
+                        Ok(pipeline_failure(&activation.route, "output"))
                     }
                 })
         }
@@ -329,16 +329,24 @@ async fn execute_passthrough(
     (outcome, upstream_status)
 }
 
-fn output_failure(route: &str, reason: &str) -> ForwardResponse {
-    crate::events::error(format!("route `{route}` output Pipeline failed"));
-    transform_failure(&format!("route `{route}` output: {reason}"))
+const PIPELINE_FAILURE: &str = "HTTP Pipeline failed";
+
+fn log_pipeline_failure(route: &str, direction: &str) {
+    crate::events::error(format!("route `{route}` {direction} Pipeline failed"));
 }
 
-fn transform_failure(reason: &str) -> ForwardResponse {
+fn pipeline_failure(route: &str, direction: &str) -> ForwardResponse {
+    log_pipeline_failure(route, direction);
+    transform_failure()
+}
+
+fn transform_failure() -> ForwardResponse {
     HttpResponsePlan {
         status: 500,
         headers: BTreeMap::from([("content-type".into(), "application/json".into())]),
-        body: Some(BodyPlan::Json(serde_json::json!({ "error": reason }))),
+        body: Some(BodyPlan::Json(
+            serde_json::json!({ "error": PIPELINE_FAILURE }),
+        )),
     }
     .into()
 }
