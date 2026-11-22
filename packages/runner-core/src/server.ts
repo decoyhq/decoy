@@ -1,4 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -51,6 +52,13 @@ function trimTrailingSlashes(url: string): string {
   return url.slice(0, end)
 }
 
+export function pidFileFor(url: string): string {
+  const origin = new URL(url).origin
+  const key = createHash('sha256').update(origin).digest('hex')
+  // Do not fall back to port-only records: they don't identify the endpoint's process.
+  return join(tmpdir(), `decoy-runner-${key}.json`)
+}
+
 /**
  * Start `command` in `cwd` unless Decoy already answers at `url`. Reuse follows Playwright
  * `webServer`: allowed locally, refused when `CI` is set. The teardown stops Decoy only if this
@@ -62,7 +70,7 @@ export async function startDecoy(
   // Absolute, so the PATH entries and the walk up to the root don't depend on process.cwd().
   const cwd = resolve(options.cwd)
 
-  const pidFile = join(tmpdir(), `decoy-runner-${new URL(options.url).port || '80'}.json`)
+  const pidFile = pidFileFor(options.url)
   await stopOrphan(pidFile, options, cwd)
 
   if (await isHealthy(options.url)) {
