@@ -119,6 +119,26 @@ describe('serve', () => {
     expect(await transformer.next()).toMatchObject({ id: 6, value: { a: 1 } })
   })
 
+  test.each([false, 0, ''])('preserves the transform result %j', async (value) => {
+    const transformer = start({ name: 'identity', version: '1', input: (input) => input })
+    transformer.send({ kind: 'call', id: 1, op: 'input', input: value })
+    expect(await transformer.next()).toEqual({ kind: 'result', id: 1, ok: true, value })
+  })
+
+  test('provides request metadata only on calls that carry it', async () => {
+    const transformer = start({
+      name: 'request',
+      version: '1',
+      input: (_value, ctx) => ('request' in ctx ? ctx.request : 'absent'),
+    })
+    const request = { method: 'POST', path: '/users', headers: { 'content-type': 'text/plain' } }
+    transformer.send({ kind: 'call', id: 1, op: 'input', input: 'Ada', request })
+    expect(await transformer.next()).toMatchObject({ id: 1, ok: true, value: request })
+
+    transformer.send({ kind: 'call', id: 2, op: 'input', input: 'Ada' })
+    expect(await transformer.next()).toMatchObject({ id: 2, ok: true, value: 'absent' })
+  })
+
   test('reports a miss, a thrown error with its stack, and an unavailable direction', async () => {
     const transformer = start({
       name: envelope.name,
@@ -181,6 +201,10 @@ describe('serve', () => {
       value: { name: 'Ada' },
     })
 
+    // The host call is already settled. Duplicate replies must not interrupt later calls.
+    transformer.send({ kind: 'hostResult', id: ask.id, ok: true, value: null })
+    transformer.send({ kind: 'hostResult', id: ask.id, ok: false, error: 'late reply' })
+
     transformer.send({
       kind: 'call',
       id: 2,
@@ -202,6 +226,30 @@ describe('serve', () => {
     })
   })
 
+  test('matches out-of-order host replies to the waiting calls', async () => {
+    const transformer = start({
+      name: 'lookup',
+      version: '1',
+      input: (value, ctx) => ctx.protobuf.has(String(value)),
+    })
+    transformer.send({ kind: 'call', id: 1, op: 'input', input: 'Missing' })
+    transformer.send({ kind: 'call', id: 2, op: 'input', input: 'Present' })
+    const missing = await transformer.next()
+    const present = await transformer.next()
+    expect(missing).toMatchObject({ kind: 'host', op: 'protobuf.has', args: ['Missing'] })
+    expect(present).toMatchObject({ kind: 'host', op: 'protobuf.has', args: ['Present'] })
+
+    transformer.send({ kind: 'hostResult', id: present.id, ok: true, value: true })
+    expect(await transformer.next()).toMatchObject({ kind: 'result', id: 2, ok: true, value: true })
+    transformer.send({ kind: 'hostResult', id: missing.id, ok: true, value: false })
+    expect(await transformer.next()).toMatchObject({
+      kind: 'result',
+      id: 1,
+      ok: true,
+      value: false,
+    })
+  })
+
   test('preserves JSON fields named __proto__', async () => {
     const transformer = start(envelope)
     const value: unknown = JSON.parse('{"__proto__":{"field":1},"_keep":2}')
@@ -219,6 +267,14 @@ describe('serve', () => {
     expect(await transformer.next()).toMatchObject({ id: 1, ok: false })
     transformer.send({ kind: 'call', id: 2, op: 'output', input: 'small' })
     expect(await transformer.next()).toEqual({ kind: 'result', id: 2, ok: true, value: 'small' })
+  })
+
+  test('exits with an error on an oversized incoming frame', () => {
+    const transformer = start(envelope)
+    const length = Buffer.alloc(4)
+    length.writeUInt32BE(MAX_MESSAGE + 1)
+    transformer.input.write(length)
+    expect(transformer.exits).toEqual([1])
   })
 
   test('exits on shutdown, and when Decoy closes its stdin', () => {
