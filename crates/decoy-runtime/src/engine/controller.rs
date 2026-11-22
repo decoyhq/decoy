@@ -55,7 +55,7 @@ impl Controller {
         }
     }
 
-    /// Publishes events on `events`, a channel made before the Controller (plugins log to it).
+    /// Publishes events on `events`, a channel made before the Controller (workers log to it).
     pub(crate) fn with_events(mut self, events: crate::events::Sender) -> Self {
         self.events = events;
         self

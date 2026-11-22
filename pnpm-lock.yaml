@@ -305,17 +305,17 @@ importers:
         specifier: 'catalog:'
         version: 24.19.2
 
-  examples/ws-plugin-node:
+  examples/ws-transformer-node:
     dependencies:
-      '@acme/decoy-plugin-binary-rpc':
+      '@acme/decoy-transformer-binary-rpc':
         specifier: workspace:*
-        version: link:acme/decoy-plugin-binary-rpc
-      '@acme/decoy-plugin-typed-envelope':
+        version: link:acme/decoy-transformer-binary-rpc
+      '@acme/decoy-transformer-typed-envelope':
         specifier: workspace:*
-        version: link:acme/decoy-plugin-typed-envelope
-      '@decoyhq/plugin':
+        version: link:acme/decoy-transformer-typed-envelope
+      '@decoyhq/transformer':
         specifier: workspace:*
-        version: link:../../packages/plugin
+        version: link:../../packages/transformer
     devDependencies:
       '@msgpack/msgpack':
         specifier: ^3.1.2
@@ -327,21 +327,21 @@ importers:
         specifier: ^7.6.0
         version: 7.6.6
 
-  examples/ws-plugin-node/acme/decoy-plugin-binary-rpc:
+  examples/ws-transformer-node/acme/decoy-transformer-binary-rpc:
     dependencies:
-      '@decoyhq/plugin':
+      '@decoyhq/transformer':
         specifier: workspace:*
-        version: link:../../../../packages/plugin
+        version: link:../../../../packages/transformer
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
         version: 24.19.2
 
-  examples/ws-plugin-node/acme/decoy-plugin-typed-envelope:
+  examples/ws-transformer-node/acme/decoy-transformer-typed-envelope:
     dependencies:
-      '@decoyhq/plugin':
+      '@decoyhq/transformer':
         specifier: workspace:*
-        version: link:../../../../packages/plugin
+        version: link:../../../../packages/transformer
       '@msgpack/msgpack':
         specifier: ^3.1.2
         version: 3.1.3
@@ -374,7 +374,7 @@ importers:
         specifier: ^1.4.0
         version: 1.4.0
 
-  packages/plugin:
+  packages/transformer:
     dependencies:
       '@msgpack/msgpack':
         specifier: ^3.1.2

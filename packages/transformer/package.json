@@ -1,0 +1,46 @@
+{
+  "name": "@decoyhq/transformer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Write Decoy transformer steps in TypeScript: defineTransformer, miss, and the stdio protocol.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/decoyhq/decoy.git",
+    "directory": "packages/transformer"
+  },
+  "exports": {
+    ".": {
+      "@decoyhq/source": "./src/index.ts",
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rslib build",
+    "test": "rstest run",
+    "typecheck": "tsc",
+    "check:package": "publint --strict && attw --pack . --profile node16"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "^3.1.2"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  },
+  "types": "./dist/index.d.ts",
+  "sideEffects": false,
+  "engines": {
+    "node": ">=24"
+  }
+}

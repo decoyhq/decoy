@@ -1,0 +1,31 @@
+# Binary RPC frames, [kind][topic][id][protobuf payload] (binary-rpc transformer).
+id: rpc
+transport: ws
+match: { path: /ws/rpc }
+pipeline: rpc
+cases:
+  hello:
+    on: connect
+    behaviors:
+      welcome:
+        message: # no `id`: the transformer numbers events per connection
+          kind: EVENT
+          topic: users.updated
+          payload: { id: me, name: Current User }
+      silent: { messages: [] }
+  get-user:
+    match:
+      message: { kind: REQUEST, topic: users.get, payload: { id: u-1 } }
+    behaviors:
+      ann:
+        message:
+          kind: REPLY
+          topic: users.get
+          id: '${ message.id }' # the reply carries the request's id
+          payload: { id: u-1, name: Ann }
+      not-found:
+        message:
+          kind: ERROR
+          topic: users.get
+          id: '${ message.id }'
+          error: { code: 404, reason: no user u-1 }

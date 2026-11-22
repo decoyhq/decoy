@@ -38,15 +38,15 @@ pub struct ServeConfig {
     pub protos: ProtoSources,
     pub max_body_bytes: usize,
     /// Transformers configured with a persistent worker.
-    pub plugins: BTreeMap<String, PluginConfig>,
+    pub workers: BTreeMap<String, WorkerConfig>,
     /// Named step lists a Route uses with `pipeline: <name>`.
     pub pipelines: BTreeMap<String, PipelineConfig>,
     pub commands: BTreeMap<String, CommandsConfig>,
 }
 
-/// One plugin process (`docs/reference/plugin-protocol.md`).
+/// One worker process (`docs/reference/worker-protocol.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PluginConfig {
+pub struct WorkerConfig {
     pub command: Vec<String>,
     /// Directory containing the Decoy config file.
     pub dir: PathBuf,
@@ -54,8 +54,8 @@ pub struct PluginConfig {
     pub timeout: std::time::Duration,
 }
 
-/// A plugin call's timeout when its entry sets none.
-pub const DEFAULT_PLUGIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+/// A worker call's timeout when its entry sets none.
+pub const DEFAULT_TRANSFORM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -76,7 +76,7 @@ pub struct CommandsConfig {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(try_from = "TransformerFields")]
 enum TransformerFile {
-    Worker(PluginFile),
+    Worker(WorkerFile),
     Commands(CommandFile),
 }
 
@@ -107,7 +107,7 @@ impl TryFrom<TransformerFields> for TransformerFile {
     fn try_from(fields: TransformerFields) -> Result<Self, Self::Error> {
         match fields.worker {
             Some(worker) if fields.input.is_none() && fields.output.is_none() => {
-                Ok(Self::Worker(PluginFile {
+                Ok(Self::Worker(WorkerFile {
                     worker,
                     timeout: fields.timeout.flatten(),
                 }))
@@ -130,7 +130,7 @@ struct CommandFile {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct PluginFile {
+struct WorkerFile {
     worker: Vec<String>,
     timeout: Option<String>,
 }
@@ -419,7 +419,7 @@ impl ServeConfig {
             .as_ref()
             .and_then(|config| config.max_body_bytes)
             .unwrap_or(DEFAULT_MAX_BODY_BYTES);
-        let mut plugins = BTreeMap::new();
+        let mut workers = BTreeMap::new();
         let mut commands = BTreeMap::new();
         for (name, transformer) in file_config
             .as_ref()
@@ -428,8 +428,8 @@ impl ServeConfig {
         {
             match transformer {
                 TransformerFile::Worker(worker) => {
-                    let worker = plugin_config(&name, worker, &config_base)?;
-                    plugins.insert(name, worker);
+                    let worker = worker_config(&name, worker, &config_base)?;
+                    workers.insert(name, worker);
                 }
                 TransformerFile::Commands(command) => {
                     commands.insert(
@@ -478,7 +478,7 @@ impl ServeConfig {
             passthrough_base_url,
             protos,
             max_body_bytes,
-            plugins,
+            workers,
             pipelines,
             commands,
         })
@@ -486,8 +486,8 @@ impl ServeConfig {
 }
 
 /// Validates the configuration for a persistent worker.
-fn plugin_config(key: &str, plugin: PluginFile, dir: &Path) -> Result<PluginConfig, ConfigError> {
-    let invalid = |reason: String| ConfigError::InvalidPlugin {
+fn worker_config(key: &str, file: WorkerFile, dir: &Path) -> Result<WorkerConfig, ConfigError> {
+    let invalid = |reason: String| ConfigError::InvalidTransformer {
         key: key.to_owned(),
         reason,
     };
@@ -500,17 +500,17 @@ fn plugin_config(key: &str, plugin: PluginFile, dir: &Path) -> Result<PluginConf
             "a key takes only letters, digits, `-` and `_`".to_owned(),
         ));
     }
-    if plugin.worker.first().is_none_or(String::is_empty) {
+    if file.worker.first().is_none_or(String::is_empty) {
         return Err(invalid("`worker` needs an executable".to_owned()));
     }
-    let timeout = match plugin.timeout {
-        None => DEFAULT_PLUGIN_TIMEOUT,
+    let timeout = match file.timeout {
+        None => DEFAULT_TRANSFORM_TIMEOUT,
         Some(text) => parse_duration(&text)
             .filter(|timeout| !timeout.is_zero())
             .ok_or_else(|| invalid(format!("`timeout: {text}` is not a duration like `5s`")))?,
     };
-    Ok(PluginConfig {
-        command: plugin.worker,
+    Ok(WorkerConfig {
+        command: file.worker,
         dir: dir.to_path_buf(),
         timeout,
     })
@@ -590,8 +590,8 @@ pub enum ConfigError {
     InvalidPassthroughBaseUrl { name: &'static str, url: String },
     #[error("missing required serve {name}; pass --{name} or set it in --config")]
     MissingValue { name: &'static str },
-    #[error("plugin `{key}`: {reason}")]
-    InvalidPlugin { key: String, reason: String },
+    #[error("Transformer `{key}`: {reason}")]
+    InvalidTransformer { key: String, reason: String },
 }
 
 #[cfg(test)]
@@ -1091,7 +1091,7 @@ listeners:
     }
 
     #[test]
-    fn plugin_timeouts_use_milliseconds_or_seconds() {
+    fn worker_timeouts_use_milliseconds_or_seconds() {
         let dir = tempdir().unwrap();
         let base = dir.path();
         let path = base.join("decoy.yaml");
@@ -1114,14 +1114,14 @@ listeners:
 
         for (value, millis) in [("500ms", 500), ("1.5s", 1_500)] {
             assert_eq!(
-                load(value).unwrap().plugins["demo"].timeout,
+                load(value).unwrap().workers["demo"].timeout,
                 std::time::Duration::from_millis(millis)
             );
         }
         for value in ["1m", "0s"] {
             assert!(matches!(
                 load(value),
-                Err(ConfigError::InvalidPlugin { .. })
+                Err(ConfigError::InvalidTransformer { .. })
             ));
         }
     }

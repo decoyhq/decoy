@@ -8,10 +8,10 @@ use serde_json::Value;
 use super::forward::{ForwardResponse, ForwardingError};
 use super::{BodyPlan, HttpRequest, HttpResponsePlan, RuntimeConfig};
 use crate::pipeline::{Pipeline, PipelineError};
-use crate::plugins::value::{to_json, to_msgpack};
-use crate::plugins::{CallRequest, Op};
 use crate::request::RequestEnvelope;
 use crate::schema::Route;
+use crate::workers::value::{to_json, to_msgpack};
+use crate::workers::{CallRequest, Op};
 
 pub(super) fn worker_request(request: &HttpRequest) -> CallRequest<'_> {
     CallRequest {

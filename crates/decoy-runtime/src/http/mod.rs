@@ -26,8 +26,8 @@ pub struct RuntimeConfig {
     /// `pipelines:` from the config file, for Routes that name one.
     pub pipelines: std::collections::BTreeMap<String, crate::config::PipelineConfig>,
     pub commands: std::collections::BTreeMap<String, crate::config::CommandsConfig>,
-    /// The running plugins; Routes' plugin steps must name one of their steps.
-    pub plugins: crate::plugins::Plugins,
+    /// Running Transformer workers, indexed by Transformer name.
+    pub workers: crate::workers::Workers,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

@@ -1,6 +1,6 @@
 use crate::http::RuntimeConfig;
 use crate::pipeline::{Pipeline, PipelineError};
-use crate::plugins::{
+use crate::workers::{
     Op,
     value::{to_json, to_msgpack},
 };

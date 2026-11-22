@@ -1,0 +1,21 @@
+{
+  "name": "@decoyhq-examples/ws-transformer-node",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "cargo run --quiet -p decoy -- serve --config mocks/decoy.yaml",
+    "test:e2e": "node --test \"workers/*.test.ts\" \"tests/*.test.ts\"",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@acme/decoy-transformer-binary-rpc": "workspace:*",
+    "@acme/decoy-transformer-typed-envelope": "workspace:*",
+    "@decoyhq/transformer": "workspace:*"
+  },
+  "devDependencies": {
+    "@msgpack/msgpack": "^3.1.2",
+    "@types/node": "catalog:",
+    "protobufjs": "^7.6.0"
+  }
+}

@@ -14,9 +14,9 @@ pub struct Reloader {
     pub(super) controller: Arc<RwLock<Controller>>,
     pub(super) max_body_bytes: Arc<AtomicUsize>,
     pub(super) listeners: Arc<ListenerFields>,
-    pub(super) plugins: crate::plugins::Plugins,
+    pub(super) workers: crate::workers::Workers,
     /// The Transformer workers started with; a reload doesn't restart them.
-    pub(super) plugin_configs: Arc<BTreeMap<String, crate::config::PluginConfig>>,
+    pub(super) worker_configs: Arc<BTreeMap<String, crate::config::WorkerConfig>>,
     /// One reload at a time (`/reload` and `--watch`).
     pub(super) running: Arc<tokio::sync::Mutex<()>>,
 }
@@ -28,7 +28,7 @@ pub struct Reloaded {
     pub catalog: Arc<Catalog>,
     /// What a Session that never picked a Collection now uses.
     pub default_collection: String,
-    /// `listener changes need restart`, `plugin changes need restart`, then one line per Selection fallback or dropped override.
+    /// `listener changes need restart`, `Transformer worker changes need restart`, then one line per Selection fallback or dropped override.
     pub warnings: Vec<String>,
 }
 
@@ -75,10 +75,10 @@ impl Reloader {
     ) -> Result<Reloaded, ServeError> {
         let _running = self.running.lock().await;
         // File IO and the proto compile block, so keep them off the async workers.
-        let plugins = self.plugins.clone();
+        let workers = self.workers.clone();
         let (config, startup) = tokio::task::spawn_blocking(move || {
             let config = read_config()?;
-            let startup = load(&config, &plugins)?;
+            let startup = load(&config, &workers)?;
             Ok::<_, ServeError>((config, startup))
         })
         .await??;
@@ -86,10 +86,10 @@ impl Reloader {
         if ListenerFields::of(&config) != *self.listeners {
             warnings.push("listener changes need restart".to_owned());
         }
-        if config.plugins != *self.plugin_configs {
-            warnings.push("plugin changes need restart".to_owned());
+        if config.workers != *self.worker_configs {
+            warnings.push("Transformer worker changes need restart".to_owned());
         }
-        self.plugins
+        self.workers
             .set_protos(startup.catalog.runtime().protos.clone());
         let mut controller = self.controller.write().await;
         warnings.extend(controller.reload(startup.catalog, startup.default_collection));

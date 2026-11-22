@@ -38,7 +38,7 @@ pub struct Server {
     reloader: Reloader,
     events: crate::events::Sender,
     connections: crate::connections::Connections,
-    plugins: crate::plugins::Supervisor,
+    workers: crate::workers::Supervisor,
     shutdown: Pin<Box<dyn Future<Output = ()> + Send>>,
     stop_all: tokio::sync::watch::Sender<()>,
     servers: tokio::task::JoinSet<std::io::Result<()>>,
@@ -63,7 +63,7 @@ pub enum ServeError {
     #[error(transparent)]
     Task(#[from] tokio::task::JoinError),
     #[error(transparent)]
-    Plugin(#[from] crate::plugins::PluginError),
+    Worker(#[from] crate::workers::WorkerError),
 }
 
 /// Loads `config`, binds every listener and starts serving. `shutdown` is awaited by
@@ -73,13 +73,13 @@ pub async fn serve(
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<Server, ServeError> {
     let events = crate::events::channel();
-    // Before the Catalog: Routes name plugin steps.
-    let (plugins, supervisor) = crate::plugins::start(&config.plugins, &events).await?;
-    let startup = load(&config, &plugins)?;
-    plugins.set_protos(startup.catalog.runtime().protos.clone());
+    // Before the Catalog: Routes name Transformer steps.
+    let (workers, supervisor) = crate::workers::start(&config.workers, &events).await?;
+    let startup = load(&config, &workers)?;
+    workers.set_protos(startup.catalog.runtime().protos.clone());
     crate::pipeline::check_routes(&startup.catalog)
         .await
-        .map_err(crate::plugins::PluginError::Check)?;
+        .map_err(crate::workers::WorkerError::Check)?;
     let controller =
         Controller::new(startup.catalog, startup.default_collection).with_events(events.clone());
     let mut notices = Vec::new();
@@ -152,8 +152,8 @@ pub async fn serve(
         controller: controller.clone(),
         max_body_bytes,
         listeners: Arc::new(ListenerFields::of(&config)),
-        plugins,
-        plugin_configs: Arc::new(config.plugins.clone()),
+        workers,
+        worker_configs: Arc::new(config.workers.clone()),
         running: Arc::default(),
     };
     Ok(Server {
@@ -163,7 +163,7 @@ pub async fn serve(
         reloader,
         events,
         connections,
-        plugins: supervisor,
+        workers: supervisor,
         shutdown: Box::pin(shutdown),
         stop_all,
         servers,
@@ -171,7 +171,7 @@ pub async fn serve(
 }
 
 /// Builds the Catalog from `config`'s protos, Routes and Collections.
-fn load(config: &ServeConfig, plugins: &crate::plugins::Plugins) -> Result<Startup, ServeError> {
+fn load(config: &ServeConfig, workers: &crate::workers::Workers) -> Result<Startup, ServeError> {
     let protos = load_descriptor_pool(&config.protos).map_err(ServeError::Protos)?;
     Ok(load_catalog_from_files(
         &config.routes,
@@ -185,7 +185,7 @@ fn load(config: &ServeConfig, plugins: &crate::plugins::Plugins) -> Result<Start
             protos,
             pipelines: config.pipelines.clone(),
             commands: config.commands.clone(),
-            plugins: plugins.clone(),
+            workers: workers.clone(),
         },
         config.collection.as_deref(),
     )?)
@@ -206,18 +206,18 @@ impl Server {
         let Self {
             events,
             connections,
-            mut plugins,
+            mut workers,
             shutdown,
             stop_all,
             mut servers,
             ..
         } = self;
-        // A plugin that exits stops Decoy (ADR 0004); its error is the result, after the drain.
+        // A worker that exits stops Decoy (ADR 0004); its error is the result, after the drain.
         let mut stopped_by = None;
         tokio::select! {
             _ = shutdown => {}
             Some(result) = servers.join_next() => result??,
-            error = plugins.exited() => stopped_by = Some(error),
+            error = workers.exited() => stopped_by = Some(error),
         }
         drop(stop_all);
         // Open streams would otherwise wait for `send` until the drain timeout.
@@ -245,7 +245,7 @@ impl Server {
                 servers.abort_all();
             }
         }
-        plugins.shutdown().await;
+        workers.shutdown().await;
         match stopped_by {
             Some(error) => Err(error.into()),
             None => Ok(()),

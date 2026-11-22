@@ -12,7 +12,7 @@ The layout below is the target; code still in flat files moves there in behaviou
 | outbound adapter | `http/forward.rs`                                                                  | passthrough to a real upstream                                                          |
 | inbound adapter  | `server/`, `control_api.rs`                                                        | axum ingress, lifecycle, reload, Control API dispatch                                   |
 | load and model   | `schema`, `config`, `startup`, `collections`, `matching`, `expression`, `template` | decoy.yaml, Route files, Cases, JMESPath                                                |
-| shared (flat)    | `events`, `request`, `protos`, `tls`, `watch`, `connections`, `plugins`            | event capture, request envelope, protos, TLS, watch, live connections, plugin processes |
+| shared (flat)    | `events`, `request`, `protos`, `tls`, `watch`, `connections`, `workers`            | event capture, request envelope, protos, TLS, watch, live connections, worker processes |
 
 ## Rules
 

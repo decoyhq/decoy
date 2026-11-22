@@ -21,8 +21,8 @@ use serde_json::Value;
 
 use crate::connections::{Connections, Registration};
 use crate::engine::Controller;
-use crate::plugins::{CallConnection, Frame};
 use crate::schema::WsClose;
+use crate::workers::{CallConnection, Frame};
 use crate::ws::pipeline::{Codec, Encoded, WsPipeline};
 use crate::ws::{Inbound, WsConnection, WsReply};
 
@@ -85,7 +85,7 @@ pub(super) async fn accept(
     })
 }
 
-/// `c-1`, `c-2`, …: a connection's id in plugin calls and error events.
+/// `c-1`, `c-2`, …: a connection's id in worker calls and error events.
 fn next_connection_id() -> String {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     format!(
@@ -156,8 +156,8 @@ async fn serve_socket(
         let view = controller.read().await.session_view(&session);
         view.execute_ws(&connection, inbound)
     };
-    // Frames are decoded and messages encoded here, one at a time, so a connection's plugin
-    // calls run in order (`docs/reference/plugin-protocol.md`).
+    // Frames are decoded and messages encoded here, one at a time, so a connection's worker
+    // calls run in order (`docs/reference/worker-protocol.md`).
     let receive =
         async |frame: Frame, payload: &[u8], stream: &mut Stream, queued: &mut BufferedFrames| {
             match while_connected(stream, queued, codec.decode(frame, payload)).await {

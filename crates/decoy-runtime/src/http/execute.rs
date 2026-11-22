@@ -15,9 +15,9 @@ use crate::engine::{Catalog, MissDiagnostic};
 use crate::events::{Match, Outcome};
 use crate::http::{BodyPlan, HttpResponsePlan, PassthroughPlan, RequestMetadata, ResponsePlan};
 use crate::pipeline::Pipeline;
-use crate::plugins::CallRequest;
 use crate::request::RequestEnvelope;
 use crate::schema::{Behavior, HttpMethod};
+use crate::workers::CallRequest;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpExecutionRequest {

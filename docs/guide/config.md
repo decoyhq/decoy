@@ -108,7 +108,7 @@ name as a gRPC built-in takes precedence.
 ```yaml
 transformers:
   approvals:
-    worker: [node, ../plugins/approvals.ts]
+    worker: [node, ../workers/approvals.ts]
   gzip:
     input: [gzip, -dc]
     output: [gzip, -c]
@@ -124,8 +124,8 @@ See the [HTTP](routes.md#http-body-pipelines), [gRPC](grpc.md#pipelines), and
 Paths in the file resolve relative to the file; flag paths resolve relative to the working
 directory. Unknown keys in the config, Routes or Collections, unreadable files, invalid Routes or Collections, duplicate Route or Collection ids,
 a port used twice or already taken, missing proto roots, a proto `files` pattern that matches nothing, protos that don't compile, unreadable or mismatched TLS cert/key, an unreadable `.decoy/` CA, an unknown
-startup Collection, a plugin that doesn't start, an unknown Transformer or unsupported Pipeline direction, and an outbound
-literal a plugin's `check` rejects all fail at startup with a diagnostic.
+startup Collection, a worker that doesn't start, an unknown Transformer or unsupported Pipeline direction, and an outbound
+literal a worker's `check` rejects all fail at startup with a diagnostic.
 
 ## Reloading
 
@@ -144,7 +144,8 @@ Behavior is gone is dropped with a warning, a Session whose Collection is gone f
 default `collection`, and Sessions that never picked a Collection follow a new default. If a file
 doesn't parse or validate, the old config stays live and the error is printed once per save.
 `port`, `host`, `listeners` and `tls` need a restart; changing them prints
-`listener changes need restart` and applies everything else. When the config points `routes`,
+`listener changes need restart`. Changes to Transformer worker definitions also need a restart
+and print `Transformer worker changes need restart`. When the config points `routes`,
 `collections` or `protos` somewhere else, the watch follows it.
 
 Changes are picked up within about a second of the last write. On network filesystems and on

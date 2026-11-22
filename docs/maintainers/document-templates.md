@@ -133,7 +133,7 @@ Use `docs/guide/`. See [Configuration](../guide/config.md).
 
 ## Implementation contract
 
-Use `docs/reference/`. See [Plugin protocol](../reference/plugin-protocol.md).
+Use `docs/reference/`. See [Transformer worker protocol](../reference/worker-protocol.md).
 
 ```markdown
 # <Protocol name and version>
@@ -159,7 +159,7 @@ Use `docs/reference/`. See [Plugin protocol](../reference/plugin-protocol.md).
 
 ## Package README
 
-Use `packages/<name>/README.md`. See [Plugin SDK](../../packages/plugin/README.md).
+Use `packages/<name>/README.md`. See [Transformer SDK](../../packages/transformer/README.md).
 
 ```markdown
 # <Package name>
@@ -197,7 +197,7 @@ Use `examples/<name>/README.md`. See [WebSocket example](../../examples/ws-node/
 
 ## Benchmark report
 
-Keep this report alongside the measured example. See [Transformer benchmarks](../../examples/ws-plugin-node/transformer-benchmarks.md).
+Keep this report alongside the measured example. See [Transformer benchmarks](../../examples/ws-transformer-node/transformer-benchmarks.md).
 
 ```markdown
 # <Question being measured>
