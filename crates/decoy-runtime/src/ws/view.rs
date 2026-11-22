@@ -34,21 +34,10 @@ impl SessionView {
     pub fn execute_ws(&self, connection: &WsConnection, inbound: Inbound<'_>) -> Option<WsReply> {
         let capture = self.events.receiver_count() > 0;
         let started = capture.then(|| self.start(METHOD, &connection.url, &connection.headers));
-        let (trigger, message, body) = match inbound {
-            Inbound::Open => (Trigger::Connect, None, CapturedBody::raw(&[])),
-            Inbound::Text(text) => {
-                let message = decode_text(text);
-                let body = if message.is_string() {
-                    CapturedBody::raw(text.as_bytes())
-                } else {
-                    CapturedBody::decoded(&message)
-                };
-                (Trigger::Message, Some(message), body)
-            }
-            Inbound::Decoded(message) => {
-                let body = CapturedBody::decoded(&message);
-                (Trigger::Message, Some(message), body)
-            }
+        let (trigger, message, raw_text) = match inbound {
+            Inbound::Open => (Trigger::Connect, None, None),
+            Inbound::Text(text) => (Trigger::Message, Some(decode_text(text)), Some(text)),
+            Inbound::Decoded(message) => (Trigger::Message, Some(message), None),
             Inbound::Binary(payload) => {
                 let reason = "binary frames need a `pipeline` on the Route".to_owned();
                 self.missed(connection, started, payload, reason);
@@ -76,6 +65,11 @@ impl SessionView {
         match (started, call.outcome) {
             (Some(_), Some(Outcome::Miss(_))) if trigger == Trigger::Connect => {}
             (Some(started), Some(outcome)) => {
+                let body = match (message.as_ref(), raw_text) {
+                    (Some(Value::String(_)), Some(text)) => CapturedBody::raw(text.as_bytes()),
+                    (Some(message), _) => CapturedBody::decoded(message),
+                    (None, _) => CapturedBody::raw(&[]),
+                };
                 self.emit(
                     Transport::Ws,
                     started,
@@ -151,5 +145,50 @@ fn response(reply: Option<&WsReply>) -> CapturedResponse {
         status: SWITCHING_PROTOCOLS,
         headers: headers.collect(),
         body: CapturedBody::decoded(&Value::Array(frames)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::collections::CollectionsFile;
+    use crate::engine::{Catalog, Controller};
+    use crate::events::Event;
+    use crate::schema::Route;
+    use serde_json::json;
+
+    #[test]
+    fn subscribers_see_text_frames_verbatim_and_json_frames_decoded() {
+        let route = Route::from_yaml("id: live\ntransport: ws\nmatch: { path: /live }\ncases: { any: { behaviors: { ok: { message: ok } } } }").unwrap();
+        let catalog = Catalog::new(
+            vec![route],
+            CollectionsFile::from_yaml("- id: default\n  routes: [live:any:ok]").unwrap(),
+            Default::default(),
+        )
+        .unwrap();
+        let controller = Controller::new(catalog, "default");
+        let view = controller.session_view("default");
+        let connection = view
+            .catalog
+            .ws_upgrade("/live", &Default::default())
+            .unwrap();
+        let mut events = controller.subscribe();
+        for (inbound, bytes, decoded) in [
+            (Inbound::Text(r#" "hi" "#), r#" "hi" "#, false),
+            (Inbound::Text(r#" {"id": 1} "#), r#"{"id":1}"#, true),
+            (Inbound::Decoded(json!("hi")), r#""hi""#, true),
+        ] {
+            assert!(view.execute_ws(&connection, inbound).is_some());
+            let Event::Request(event) = events.try_recv().unwrap() else {
+                panic!("expected request event");
+            };
+            assert_eq!(event.body.bytes, bytes.as_bytes());
+            assert_eq!(event.body.decoded, decoded);
+        }
+        drop(events);
+        assert!(
+            view.execute_ws(&connection, Inbound::Decoded(json!("hi")))
+                .is_some()
+        );
     }
 }
