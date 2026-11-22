@@ -6,6 +6,11 @@ import subprocess
 from pathlib import Path, PurePosixPath
 
 JS_SOURCE = {'.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'}
+FORMAT_TYPES = JS_SOURCE | {
+    '.css', '.flow', '.gql', '.graphql', '.hbs', '.html', '.json', '.json5', '.jsonc',
+    '.less', '.md', '.mdx', '.scss', '.vue', '.yaml', '.yml',
+}
+RUST_CHECK_CONFIGS = {'deny.toml', 'rustfmt.toml', '.rustfmt.toml', 'clippy.toml', '.clippy.toml'}
 
 
 def changed_paths():
@@ -22,17 +27,18 @@ def classify(paths, *, full=False):
     rust_inputs = shared or any(path.startswith(('crates/', '.cargo/')) for path in files) or bool(
         files & {'Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'rust-toolchain'}
     )
-    js_inputs = shared or bool(files & {'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc'}) or any(
-        path.startswith('tsconfig') and path.endswith('.json') for path in files
-    )
+    js_inputs = shared or bool(files & {
+        'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.npmrc', '.pnpmfile.cjs', 'pnpmfile.cjs',
+    }) or any(path.startswith('tsconfig') and path.endswith('.json') for path in files)
     packages = any(path.startswith('packages/') for path in files)
     examples = any(path.startswith('examples/') for path in files)
     js_source = {path for path in files if PurePosixPath(path).suffix in JS_SOURCE}
     js_scripts = any(path.startswith('scripts/') for path in js_source)
     js = js_inputs or packages or examples or js_scripts
     js_lint = js or any(path.startswith('eslint.config.') for path in files)
-    format_check = bool(docs or files & {'.editorconfig', '.prettierignore'}) or any(
-        path.startswith(('.prettierrc', 'prettier.config.')) for path in files
+    format_check = bool(files & {'.editorconfig', '.prettierignore'}) or any(
+        PurePosixPath(path).suffix.lower() in FORMAT_TYPES or path.startswith(('.prettierrc', 'prettier.config.'))
+        for path in paths
     )
     scans = {
         'actions': any(path.startswith(('.github/workflows/', '.github/actions/')) for path in files),
@@ -42,7 +48,8 @@ def classify(paths, *, full=False):
     return {
         'lint': full or js_lint or format_check,
         'js-lint': full or js_lint,
-        'rust': full or rust_inputs or 'deny.toml' in files,
+        'rust': full or rust_inputs or bool(files & RUST_CHECK_CONFIGS),
+        'versions': full or 'Cargo.toml' in files,
         'js': full or js,
         'js-coverage': full or js_inputs or packages or js_scripts or bool(
             files & {'.github/workflows/coverage.yml', 'codecov.yml'}

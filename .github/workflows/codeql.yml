@@ -4,38 +4,23 @@ name: CodeQL
 on:
   push:
     branches: [main]
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
   schedule:
     - cron: '17 4 * * 1'
+  workflow_call:
+    inputs:
+      languages:
+        type: string
+        required: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  changes:
-    name: Select CodeQL languages
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      languages: ${{ steps.scope.outputs.codeql }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          fetch-depth: 2
-      - id: scope
-        env:
-          CI_FULL: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:full') }}
-        run: python3 .github/scripts/ci_scope.py
-
   analyze:
-    needs: changes
-    if: needs.changes.outputs.languages != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -44,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: ${{ fromJSON(needs.changes.outputs.languages) }}
+        language: ${{ fromJSON(inputs.languages || '["actions","javascript-typescript","rust"]') }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

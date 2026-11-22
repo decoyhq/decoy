@@ -50,16 +50,17 @@ choose **Only select repositories → decoy**, save. All are free for public rep
 - Optional: **Allow auto-merge**, so a PR merges once its required checks pass.
 
 **Settings → Rules → Rulesets → New branch ruleset** for `main` (optional but recommended):
-require a pull request and the status checks `required` (the aggregate of blocking CI jobs),
-`conventional`, and `autofix`. Don't require individual CodeQL matrix jobs, coverage, `zizmor`,
-or Release jobs: they can be absent on a PR that doesn't affect them. CodeRabbit and Codecov
-report; they don't gate.
+require a pull request and the status checks `required` (the aggregate of blocking CI jobs,
+including affected CodeQL and coverage jobs), `conventional`, and `autofix`. Don't require
+individual CodeQL matrix jobs, coverage, `zizmor`, or Release jobs: they can be absent on a PR
+that doesn't affect them. CodeRabbit and Codecov report; they don't gate.
 
 ### Full validation on a pull request
 
-By default, CI and CodeQL select jobs from the diff of the tested merge commit. Editing a workflow
-runs Actions scanning, not the entire product test suite; editing the coverage workflow also runs
-coverage. Pushes to `main` and scheduled CodeQL runs still use the full suite.
+By default, CI uses the base branch's path policy to select jobs from the tested merge diff.
+A change to the policy triggers a full run instead. Editing another workflow runs Actions scanning,
+not the entire product test suite; editing the coverage workflow also runs coverage. Pushes to
+`main` and scheduled CodeQL runs still use the full suite.
 
 To exercise every job before merging a CI change, add the `ci:full` label before a push or when the
 PR is reopened or marked ready for review. Adding the label alone (or rerunning an earlier run)
