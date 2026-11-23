@@ -1,6 +1,6 @@
 //! Serving WebSocket Routes: pick the Route for an upgrade, match Cases over each inbound message
 //! (or the open, for an `on: connect` Case), and render the Behavior into timed text frames. The
-//! socket itself is the server's job. See `apps/docs/content/docs/websocket/index.md`.
+//! socket itself is the server's job. See `apps/docs/content/en/docs/websocket/index.md`.
 
 pub mod execute;
 pub mod pipeline;

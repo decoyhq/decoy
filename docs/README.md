@@ -1,6 +1,6 @@
 # Decoy documentation
 
-Start with the [user guide](../apps/docs/content/docs/index.md). The [quickstart](../apps/docs/content/docs/quick-start/index.mdx) walks through
+Start with the [user guide](../apps/docs/content/en/docs/index.md). The [quickstart](../apps/docs/content/en/docs/quick-start/index.mdx) walks through
 serving an HTTP request and switching its response. For a complete project, browse the
 [runnable examples](../examples/README.md).
 
@@ -10,7 +10,7 @@ serving an HTTP request and switching its response. For a complete project, brow
 - [Glossary](../CONTEXT.md) defines the terms used in code, issues, and documentation.
 - [Architectural decisions](adr/README.md) record choices the project has accepted and why.
 - [Documentation guidelines](../CONTRIBUTING.md#where-documentation-goes) explain where to publish a spec and when to write an ADR. Use the [copyable templates](maintainers/document-templates.md) when writing or revising a document.
-- [Transformer worker protocol](../apps/docs/content/docs/transformer-worker-protocol/index.md) specifies the worker messages for SDK authors.
+- [Transformer worker protocol](../apps/docs/content/en/docs/transformer-worker-protocol/index.md) specifies the worker messages for SDK authors.
 
 ## For maintainers
 

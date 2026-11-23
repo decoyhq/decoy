@@ -1,5 +1,5 @@
 //! Worker processes: started with Decoy, one per `transformers` worker, spoken to over stdin/stdout
-//! (`apps/docs/content/docs/transformer-worker-protocol/index.md`). A worker exiting stops Decoy; nothing restarts it
+//! (`apps/docs/content/en/docs/transformer-worker-protocol/index.md`). A worker exiting stops Decoy; nothing restarts it
 //! (ADR 0004).
 
 mod host;
