@@ -62,10 +62,11 @@ For a new ADR, take the next four-digit number in [the index](docs/adr/README.md
 If a later decision changes it, give the new decision its own number and link both records,
 stating which part changed.
 
-When a user-visible change ships, update the relevant [guide](docs/guide/README.md) in the same PR.
-Keep wire-level contracts for other implementations in [reference](docs/reference/) and link to
-them from the guide. When moving or retiring a page, update its index and check for references in
-package READMEs and source comments.
+When a user-visible change ships, update the relevant [guide](apps/docs/content/docs/index.md) in the same PR.
+Keep wire-level contracts for other implementations in the manual as well; see the
+[Transformer worker protocol](apps/docs/content/docs/transformer-worker-protocol/index.md).
+When moving or retiring a page, update its index and check for references in package READMEs and
+source comments.
 
 ### Formats by document type
 

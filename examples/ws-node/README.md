@@ -3,9 +3,14 @@
 Node's built-in `WebSocket` opens two sockets on one path, told apart by the `service` query param,
 the way a page talks to two backend services. Decoy answers from `mocks/`.
 
-```sh
+```sh title="Run the WebSocket tests"
 pnpm --filter ./examples/ws-node test:e2e
-pnpm --filter ./examples/ws-node dev    # serve the mocks on 127.0.0.1:8094 by hand
+```
+
+To serve the mocks by hand on `127.0.0.1:8094`:
+
+```sh title="Start the WebSocket example server"
+pnpm --filter ./examples/ws-node dev
 ```
 
 The test starts Decoy with `cargo run -p decoy -- serve --config mocks/decoy.yaml` (port 8094), or
@@ -22,4 +27,4 @@ reuses one already serving there.
 | `close`                        | The `unauthorized` Behavior sends its error, then closes with `4001`.                                          |
 | unmatched upgrade              | A `service` no Route lists is refused with the HTTP miss.                                                      |
 
-See the [WebSocket guide](../../docs/guide/websocket.md).
+See the [WebSocket guide](../../apps/docs/content/docs/websocket/index.md).

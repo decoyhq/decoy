@@ -6,7 +6,7 @@ if (process.env.DECOY_TRANSFORMER === '1') {
   console.log = console.info = console.debug = console.error
 }
 
-/** Protocol version this SDK speaks (`docs/reference/worker-protocol.md`). */
+/** Protocol version this SDK speaks (`apps/docs/content/docs/transformer-worker-protocol/index.md`). */
 export const PROTOCOL = 1
 
 /** JSON data, as Cases and Behaviors see it. */

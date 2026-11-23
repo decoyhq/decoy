@@ -75,7 +75,7 @@ function createHostCalls(send: (message: WireMessage) => void) {
   return { protobuf, settle }
 }
 
-/** Answers Decoy's messages on `io` for `transformer` (`docs/reference/worker-protocol.md`). */
+/** Answers Decoy's messages on `io` for `transformer` (`apps/docs/content/docs/transformer-worker-protocol/index.md`). */
 export function serve(transformer: Transformer, io: Io = processIo): void {
   const send = (message: WireMessage) => {
     write(io.output, message)

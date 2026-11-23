@@ -11,6 +11,8 @@ export default defineConfig(
     '**/test-results/',
     '**/playwright-report/',
     '**/.rstack/',
+    '**/.rspress/',
+    '**/doc-build/',
   ]),
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,

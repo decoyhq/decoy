@@ -3,9 +3,14 @@
 A plain `@grpc/grpc-js` client calls `approvals.v1.Approvals/GetApproval`. Decoy answers from
 `mocks/` using the proto in `proto/`. There's no real Approvals service and no generated code.
 
-```sh
+```sh title="Run the gRPC tests"
 pnpm --filter ./examples/grpc-node test:e2e
-pnpm --filter ./examples/grpc-node dev    # serve the mocks on 127.0.0.1:8091 by hand
+```
+
+To serve the mocks by hand on `127.0.0.1:8091`:
+
+```sh title="Start the gRPC example server"
+pnpm --filter ./examples/grpc-node dev
 ```
 
 The test starts Decoy with `cargo run -p decoy -- serve --config mocks/decoy.yaml` (port
@@ -13,7 +18,7 @@ The test starts Decoy with `cargo run -p decoy -- serve --config mocks/decoy.yam
 
 The Route selects `pipeline: approval-ids` in [`mocks/decoy.yaml`](mocks/decoy.yaml):
 
-```yaml
+```yaml title="mocks/decoy.yaml (excerpt)"
 pipelines:
   approval-ids:
     input: [grpc-frame, protobuf, approval-id]
@@ -32,4 +37,4 @@ rendered ID with `ref-` before the built-ins encode and frame the reply.
 | useRoute                         | One Session overrides `approvals-get:pending` to `approved`.                                                                                 |
 | unmapped call                    | A method no Route serves fails closed with `UNIMPLEMENTED` and `x-mock-miss: true`.                                                          |
 
-See the [gRPC guide](../../docs/guide/grpc.md).
+See the [gRPC guide](../../apps/docs/content/docs/grpc/index.md).

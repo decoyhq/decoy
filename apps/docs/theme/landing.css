@@ -1,0 +1,172 @@
+.pond-page {
+  --ink: #203447;
+  --ground: #f1f6f5;
+  --quiet: #455f6b;
+  background: var(--ground);
+  color: var(--ink);
+  min-height: calc(100svh - 4rem);
+  display: grid;
+  align-items: center;
+  padding: clamp(3rem, 7vw, 7rem) clamp(1.1rem, 5vw, 5rem);
+}
+.rp-dark .pond-page {
+  --ground: #172935;
+  --ink: #ecf5f4;
+  --quiet: #b8cbd0;
+}
+.pond-layout {
+  width: min(100%, 72rem);
+  margin-inline: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(2rem, 5vw, 6rem);
+}
+.pond-intro h1 {
+  font:
+    720 clamp(2.8rem, 5.35vw, 5.1rem)/1.02 Montserrat,
+    system-ui,
+    sans-serif;
+  letter-spacing: -0.07em;
+  margin: 0;
+}
+.pond-intro p {
+  max-width: 37ch;
+  margin: 1.5rem 0 2rem;
+  color: var(--quiet);
+  font-size: clamp(1rem, 1.5vw, 1.18rem);
+  line-height: 1.6;
+}
+.pond-links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1.3rem;
+  font-weight: 600;
+  font-size: 0.94rem;
+}
+.pond-links a:first-child {
+  background: var(--ink);
+  color: var(--ground);
+  border-radius: 0.45rem;
+  padding: 0.8rem 1rem;
+}
+.pond-links a:last-child {
+  text-decoration: underline;
+  text-underline-offset: 0.25em;
+}
+.pond-links a:hover {
+  text-decoration: underline;
+}
+.pond-page :focus-visible {
+  outline: 3px solid #ce723c;
+  outline-offset: 4px;
+}
+.pond-demo {
+  background: #a9ced6;
+  color: #203447;
+  border-radius: 0.85rem;
+  overflow: hidden;
+  padding: 0 clamp(0.8rem, 2vw, 1.5rem) clamp(0.8rem, 2vw, 1.5rem);
+}
+.pond-water {
+  margin: 0.75rem -1rem 0;
+  color: #709eaa;
+}
+.pond-water svg {
+  width: 100%;
+  height: clamp(6rem, 11vw, 9rem);
+  display: block;
+}
+.pond-inspector {
+  background: #203447;
+  color: #ebf4f6;
+  padding: 1.2rem 1.35rem;
+  border-radius: 0.5rem;
+}
+.pond-request,
+.pond-response,
+.pond-command,
+.pond-inspector label {
+  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
+}
+.pond-request {
+  font-size: 1rem;
+}
+.pond-request strong {
+  color: #a9ced6;
+}
+.pond-response {
+  padding: 0.9rem 0 0.8rem 1rem;
+  margin: 1rem 0;
+  border-left: 2px solid #567789;
+  background: #1b2e3e;
+  font-size: 0.88rem;
+}
+.pond-ok {
+  color: #b7dfbf;
+}
+.pond-miss {
+  color: #ffc09d;
+}
+.pond-response pre {
+  min-height: 5.4em;
+  font: inherit;
+  line-height: 1.35;
+  margin: 0.45rem 0 0;
+  color: #d4e3e8;
+}
+.pond-inspector fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.pond-inspector legend {
+  font-size: 0.9rem;
+  margin-bottom: 0.5rem;
+}
+.pond-inspector label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.65rem;
+  border: 1px solid #778d98;
+  border-radius: 0.35rem;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+.pond-inspector label:has(:checked) {
+  color: #203447;
+  background: #cee5e8;
+  border-color: #cee5e8;
+}
+.pond-inspector input {
+  margin: 0;
+  accent-color: #294c61;
+}
+.pond-command {
+  display: block;
+  color: #b4cbd4;
+  font-size: 0.8rem;
+  margin-top: 0.7rem;
+}
+@media (max-width: 48rem) {
+  .pond-page {
+    align-items: start;
+    padding-block: 2.5rem;
+  }
+  .pond-layout {
+    max-width: 31rem;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2rem;
+  }
+  .pond-intro h1 {
+    font-size: clamp(2.45rem, 8.9vw, 4rem);
+  }
+  .pond-intro p {
+    margin: 1rem 0 1.35rem;
+  }
+}

@@ -14,7 +14,10 @@ class ScopeTest(TestCase):
         self.assertEqual(result['codeql'], list(codeql))
 
     def test_docs_even_under_source_roots(self):
-        self.assert_scope(['docs/guide/http.md', 'crates/decoy-runtime/AGENTS.md', 'packages/cli/README.md'], jobs=['lint'])
+        self.assert_scope(['apps/docs/content/docs/routes/index.md', 'crates/decoy-runtime/AGENTS.md', 'packages/cli/README.md'], jobs=['lint'])
+
+    def test_docs_app_sources_run_eslint_without_product_tests(self):
+        self.assert_scope(['apps/docs/theme/landing.tsx'], jobs=['lint', 'js-lint'], codeql=['javascript-typescript'])
 
     def test_unrelated_automation_does_not_run_product_jobs(self):
         self.assert_scope(['.github/scripts/ub_mode_report.py'])

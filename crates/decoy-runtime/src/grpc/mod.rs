@@ -1,6 +1,6 @@
 //! Serving gRPC Routes: decode the call through the Route's Pipeline, match Cases over the message
 //! envelope, render the Behavior, and encode the answer. Transport framing (HTTP/2, trailers) is
-//! the server's job; this module works on bytes. See `docs/guide/grpc.md`.
+//! the server's job; this module works on bytes. See `apps/docs/content/docs/grpc/index.md`.
 
 mod codec;
 pub mod execute;

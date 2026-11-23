@@ -4,8 +4,10 @@ The static page and mocks of `playwright-ts-e2e` (plus an echo Route and a popup
 [Testplane](https://testplane.io).
 The only Decoy wiring is one `plugins` entry in `.testplane.conf.ts`.
 
-```sh
-pnpm --filter ./examples/testplane-ts-e2e test:e2e   # downloads Chrome for Testing on first run
+The first run downloads Chrome for Testing.
+
+```sh title="Run the Testplane tests"
+pnpm --filter ./examples/testplane-ts-e2e test:e2e
 ```
 
 What happens:
