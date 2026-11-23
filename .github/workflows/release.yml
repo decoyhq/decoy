@@ -14,6 +14,7 @@ on:
       - 'scripts/install.*'
       - 'packages/cli/**'
       - 'packages/playwright/**'
+      - 'packages/transformer/**'
   workflow_dispatch:
 
 permissions:
@@ -215,11 +216,11 @@ jobs:
             (cd "$dir" && npm pack --pack-destination "$GITHUB_WORKSPACE/npm-tarballs")
           done
           # pnpm pack rewrites `catalog:`/`workspace:` ranges; npm pack would ship them verbatim.
-          (cd packages/cli && pnpm pack --pack-destination "$GITHUB_WORKSPACE/npm-tarballs")
-          (cd packages/playwright && pnpm pack --pack-destination "$GITHUB_WORKSPACE/npm-tarballs")
-          (cd packages/testplane && pnpm pack --pack-destination "$GITHUB_WORKSPACE/npm-tarballs")
+          for pkg in cli playwright testplane transformer; do
+            (cd "packages/$pkg" && pnpm pack --pack-destination "$GITHUB_WORKSPACE/npm-tarballs")
+          done
           ls -l npm-tarballs
-          for pkg in cli playwright testplane; do
+          for pkg in cli playwright testplane transformer; do
             if tar -xOzf "npm-tarballs/decoyhq-$pkg-$VERSION.tgz" package/package.json | grep -E '"(catalog|workspace):'; then
               echo "packed @decoyhq/$pkg manifest still has catalog:/workspace: ranges" >&2
               exit 1
@@ -239,7 +240,8 @@ jobs:
           npm init -y > /dev/null
           npm install --no-audit --no-fund \
             "$tarballs/decoyhq-cli-linux-x64-$VERSION.tgz" "$tarballs/decoyhq-cli-$VERSION.tgz" \
-            "$tarballs/decoyhq-playwright-$VERSION.tgz" "$tarballs/decoyhq-testplane-$VERSION.tgz"
+            "$tarballs/decoyhq-playwright-$VERSION.tgz" "$tarballs/decoyhq-testplane-$VERSION.tgz" \
+            "$tarballs/decoyhq-transformer-$VERSION.tgz"
           out="$(node_modules/.bin/decoy --version)"
           echo "$out"
           [ "$out" = "decoy $VERSION" ]
@@ -249,6 +251,8 @@ jobs:
           # Testplane loads plugins with require; tests import `decoy` as ESM.
           node --input-type=module -e "await import('@decoyhq/testplane')"
           node -e "require('@decoyhq/testplane')"
+          node --input-type=module -e "import { defineTransformer } from '@decoyhq/transformer'; if (typeof defineTransformer !== 'function') process.exit(1)"
+          node -e "if (typeof require('@decoyhq/transformer').defineTransformer !== 'function') process.exit(1)"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -279,19 +283,19 @@ jobs:
           name: npm-tarballs
           path: npm-tarballs
 
-      - name: Publish (platform packages first, then @decoyhq/cli and the test-runner packages)
+      - name: Publish (platform packages first, then the CLI, adapters, and Transformer SDK)
         env:
           VERSION: ${{ needs.version.outputs.version }}
         # No token: each package trusts this repo's release.yml on npmjs.com (Trusted Publisher).
-        # A new package (e.g. @decoyhq/testplane) must be published once by hand and given that
-        # Trusted Publisher before its first tag, or this loop fails at it.
+        # A new package must be published once by hand and given that Trusted Publisher
+        # before its first automated publish.
         # Trusted publishing needs npm >= 11.5.1; npm is pinned in .prototools.
         run: |
           npm --version
           tag=latest
           case "$VERSION" in *-*) tag=next ;; esac
           cd npm-tarballs
-          for tarball in decoyhq-cli-*-*-"$VERSION".tgz "decoyhq-cli-$VERSION.tgz" "decoyhq-playwright-$VERSION.tgz" "decoyhq-testplane-$VERSION.tgz"; do
+          for tarball in decoyhq-cli-*-*-"$VERSION".tgz "decoyhq-cli-$VERSION.tgz" "decoyhq-playwright-$VERSION.tgz" "decoyhq-testplane-$VERSION.tgz" "decoyhq-transformer-$VERSION.tgz"; do
             name="$(tar -xOzf "$tarball" package/package.json | node -p 'JSON.parse(require("fs").readFileSync(0)).name')"
             # A rerun after a partial publish skips what already made it to the registry.
             if npm view "$name@$VERSION" version > /dev/null 2>&1; then
