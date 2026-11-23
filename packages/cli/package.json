@@ -4,6 +4,7 @@
   "description": "The decoy command: a portable local mock tool. Installs the native binary for your platform.",
   "type": "module",
   "license": "MIT",
+  "homepage": "https://usedecoy.dev",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/decoyhq/decoy.git",

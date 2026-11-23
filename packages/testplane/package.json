@@ -4,6 +4,7 @@
   "description": "Testplane plugin for the native Decoy runtime.",
   "type": "module",
   "license": "MIT",
+  "homepage": "https://usedecoy.dev",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/decoyhq/decoy.git",
