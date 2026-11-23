@@ -21,8 +21,9 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # All tagged releases share one queue; dry runs stay separate by ref.
+  group: release-${{ github.ref_type == 'tag' && 'tags' || github.ref }}
+  queue: max
 
 jobs:
   version:
@@ -55,8 +56,8 @@ jobs:
         include:
           - { target: x86_64-unknown-linux-musl, runner: ubuntu-24.04, musl: true }
           - { target: aarch64-unknown-linux-musl, runner: ubuntu-24.04-arm, musl: true }
-          - { target: x86_64-apple-darwin, runner: macos-14 }
-          - { target: aarch64-apple-darwin, runner: macos-14 }
+          - { target: x86_64-apple-darwin, runner: macos-15-intel }
+          - { target: aarch64-apple-darwin, runner: macos-15 }
           - { target: x86_64-pc-windows-msvc, runner: windows-latest }
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -102,7 +103,6 @@ jobs:
           fi
 
       - name: Smoke test
-        if: ${{ !startsWith(matrix.target, 'x86_64-apple') }}
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
@@ -251,7 +251,7 @@ jobs:
           # Testplane loads plugins with require; tests import `decoy` as ESM.
           node --input-type=module -e "await import('@decoyhq/testplane')"
           node -e "require('@decoyhq/testplane')"
-          node --input-type=module -e "import { defineTransformer } from '@decoyhq/transformer'; if (typeof defineTransformer !== 'function') process.exit(1)"
+          node --conditions=@decoyhq/source --input-type=module -e "import { defineTransformer } from '@decoyhq/transformer'; if (typeof defineTransformer !== 'function') process.exit(1)"
           node -e "if (typeof require('@decoyhq/transformer').defineTransformer !== 'function') process.exit(1)"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
