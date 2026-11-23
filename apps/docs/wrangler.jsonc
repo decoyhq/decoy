@@ -1,0 +1,8 @@
+{
+  "name": "decoy-docs",
+  "compatibility_date": "2026-11-23",
+  "assets": {
+    "directory": "./doc-build",
+    "not_found_handling": "404-page",
+  },
+}
