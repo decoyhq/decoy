@@ -55,7 +55,7 @@ export { expect } from '@playwright/test'
 | `timeout`             | `60000`                       | Сколько миллисекунд `setup` ждёт успешной проверки.                                |
 | `urls`                | Нет                           | Glob, RegExp или их список для перенаправления запросов браузера.                  |
 | `webSocketUrls`       | Нет                           | Glob, RegExp или их список для перенаправления WebSocket страницы.                 |
-| `collection`          | Collection Decoy по умолчанию | Коллекция, с которой начинается каждый тест.                                        |
+| `collection`          | Collection Decoy по умолчанию | Коллекция, с которой начинается каждый тест.                                       |
 
 В проектах без `decoyOptions` интеграция отключена. Проекты с одинаковым `url` используют один экземпляр Decoy. Для каждого нового `url` функция `setup` запускает свою `command`. Перед запуском она ищет `node_modules/.bin` от `cwd` вверх по дереву каталогов и добавляет в `PATH`. В конце прогона `setup` отправляет SIGTERM. Если Decoy не остановился за 8 секунд, она отправляет SIGKILL, а в Windows вызывает `taskkill /T /F`. Проекты с общим `url` должны иметь одинаковые `command`, `cwd`, `reuseExistingServer` и `timeout`, иначе `setup` завершится ошибкой.
 
