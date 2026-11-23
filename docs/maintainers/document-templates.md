@@ -47,7 +47,7 @@ Use `README.md`. See [Decoy](../../README.md).
 
 ## Documentation index
 
-Use `README.md` in the directory it indexes. See [Guide index](../guide/README.md).
+Use `README.md` in the directory it indexes. See [Documentation index](../README.md).
 
 ```markdown
 # <Subject>
