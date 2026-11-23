@@ -59,6 +59,20 @@ const russianLabels = {
   Reference: 'Справочник',
   'Sessions and the Control API': 'Сессии и Control API',
 }
+const landingMessages = {
+  'landing.sameRequest': { en: 'Same request.', ru: 'Тот же запрос.' },
+  'landing.differentAnswer': { en: 'Different answer.', ru: 'Другой ответ.' },
+  'landing.description': {
+    en: 'Decoy mocks HTTP, gRPC, and WebSocket services on your machine. Define responses in YAML and switch between them while your app runs.',
+    ru: 'Decoy подменяет HTTP, gRPC и WebSocket-сервисы на вашей машине. Задайте ответы в YAML и меняйте их без перезапуска приложения.',
+  },
+  'landing.quickStart': { en: 'Mock your first request', ru: 'Настроить первый мок' },
+  'landing.docs': { en: 'Read the docs', ru: 'Документация' },
+  'landing.exampleResponse': { en: 'Example response', ru: 'Пример ответа' },
+  'landing.switchCollection': { en: 'Switch collection', ru: 'Выберите коллекцию' },
+}
+export type LandingMessages = typeof landingMessages
+
 const sidebar = Object.entries(groups).map(([text, pages]) => ({
   text,
   items: Object.entries(pages).map(([slug, title]) => ({
@@ -77,7 +91,10 @@ export default defineConfig({
     { lang: 'en', label: 'English' },
     { lang: 'ru', label: 'Русский' },
   ],
-  i18nSource: Object.fromEntries(Object.entries(russianLabels).map(([en, ru]) => [en, { en, ru }])),
+  i18nSource: {
+    ...Object.fromEntries(Object.entries(russianLabels).map(([en, ru]) => [en, { en, ru }])),
+    ...landingMessages,
+  },
   base,
   builderConfig: { performance: { buildCache: { cacheDigest: [base] } } },
   logo: '/brand/decoy.svg',

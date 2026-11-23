@@ -1,32 +1,29 @@
 import { useState } from 'react'
-import { useLang, withBase } from '@rspress/core/runtime'
+import { useI18n, useLang, useSite, withBase } from '@rspress/core/runtime'
+import type { LandingMessages } from '../rspress.config'
 
 export function Landing() {
   const [missing, setMissing] = useState(false)
-  const russian = useLang() === 'ru'
-  const docs = russian ? '/ru/docs/' : '/docs/'
+  const t = useI18n<LandingMessages>()
+  const lang = useLang()
+  const { site } = useSite()
+  const docs = lang === site.lang ? '/docs/' : `/${lang}/docs/`
   return (
     <main className="pond-page">
       <div className="pond-layout">
         <div className="pond-intro">
           <h1>
-            {russian ? 'Тот же запрос.' : 'Same request.'}
+            {t('landing.sameRequest')}
             <br />
-            {russian ? 'Другой ответ.' : 'Different answer.'}
+            {t('landing.differentAnswer')}
           </h1>
-          <p>
-            {russian
-              ? 'Decoy подменяет HTTP, gRPC и WebSocket-сервисы на вашей машине. Задайте ответы в YAML и меняйте их без перезапуска приложения.'
-              : 'Decoy mocks HTTP, gRPC, and WebSocket services on your machine. Define responses in YAML and switch between them while your app runs.'}
-          </p>
+          <p>{t('landing.description')}</p>
           <div className="pond-links">
-            <a href={withBase(`${docs}quick-start/`)}>
-              {russian ? 'Настроить первый мок' : 'Mock your first request'}
-            </a>
-            <a href={withBase(docs)}>{russian ? 'Документация' : 'Read the docs'}</a>
+            <a href={withBase(`${docs}quick-start/`)}>{t('landing.quickStart')}</a>
+            <a href={withBase(docs)}>{t('landing.docs')}</a>
           </div>
         </div>
-        <section className="pond-demo" aria-label={russian ? 'Пример ответа' : 'Example response'}>
+        <section className="pond-demo" aria-label={t('landing.exampleResponse')}>
           <div className="pond-water" aria-hidden="true">
             <svg viewBox="0 0 460 145" preserveAspectRatio="xMidYMax meet">
               <g fill="none" stroke="currentColor">
@@ -52,7 +49,7 @@ export function Landing() {
               </pre>
             </div>
             <fieldset>
-              <legend>{russian ? 'Выберите коллекцию' : 'Switch collection'}</legend>
+              <legend>{t('landing.switchCollection')}</legend>
               {['happy-path', 'no-users'].map((name, i) => (
                 <label key={name}>
                   <input
