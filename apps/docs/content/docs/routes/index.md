@@ -1,0 +1,297 @@
+# Routes, Cases, and Behaviors
+
+```text title="How a Collection selects a Behavior"
+collection → route → case → behavior
+```
+
+A **Route** is one YAML file with an `id`, one `transport`, and a `match` saying _where_ the
+interaction happens. Its **Cases** say _which request shape_ matched, and each Case owns named
+**Behaviors**: what Decoy does.
+
+```yaml title="mocks/routes/users.yaml"
+id: users-by-id # stable id; no ':' allowed
+transport: http # or grpc (gRPC guide), ws (WebSocket guide)
+match:
+  method: GET # GET POST PUT PATCH DELETE HEAD OPTIONS
+  path: /api/users/{id} # {name} captures one whole path segment; /files/{name}.json fails startup
+
+cases:
+  user-1:
+    match:
+      pathParams:
+        id: '1' # exact value; '*' matches any value
+
+    behaviors:
+      ada:
+        status: 200
+        body:
+          id: '1'
+          name: Ada Lovelace
+
+      missing:
+        status: 404
+        body:
+          error: user not found
+```
+
+Decoy loads every `.yaml`/`.yml` file under the routes directory, recursively, so you can group
+files in folders. Duplicate Route ids fail startup.
+
+## Reuse a mapping with YAML anchors
+
+In a Route file, a Collections file, or `decoy.yaml`, mark a mapping with `&name` and
+merge it elsewhere in the same file with `<<: *name`. Here both Behaviors return the same body:
+
+```yaml title="Route excerpt: YAML anchors"
+behaviors:
+  ok: &ok
+    status: 200
+    body: { saved: true }
+
+  created:
+    <<: *ok
+    status: 201
+```
+
+Keys written directly in the mapping take precedence, wherever they appear. To merge several
+mappings, use `<<: [*first, *second]`. When both supply the same key, the first wins. Merging
+is shallow, so setting `body` on `created` replaces the whole inherited body.
+
+## Case match
+
+A Case with no `match` matches every request to its Route. Otherwise `match` is a mapping of
+fields, and **all** fields must match:
+
+```yaml title="Route excerpt: request fields"
+cases:
+  vip:
+    match:
+      pathParams: { id: '*' } # '*' = present, any value
+      query: { priority: high } # ?priority=high (other params ignored)
+      headers: { X-Tier: '*' } # header names are case-insensitive
+      cookies: { sid: abc }
+      body: { items: [{ sku: gold }] } # deep partial match
+```
+
+| field                                       | how it matches                                                                                                                                                                |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pathParams`, `query`, `headers`, `cookies` | each listed key must be present; values are strings, numbers or booleans and compare as strings (`page: 5` matches `?page=5`); a repeated query key matches if any value does |
+| `body`                                      | objects: listed keys must match, others are ignored. Arrays: the request array must contain each listed element, in any order. Scalars: exactly equal (`1` ≠ `"1"`)           |
+
+Path segments and `pathParams` compare percent-decoded, like `query` (`/users/a%20b` gives `id: a
+b`; `%2F` stays inside one segment). The envelope `path` stays as sent.
+
+`body` is the parsed JSON when the request's `content-type` is JSON (`application/json`,
+`*+json`), otherwise the raw text. Repeated request headers are joined with `", "`. An unknown
+field, such as a misspelled `querry`, fails startup, and so does a list or null value in
+`pathParams`, `query`, `headers` or `cookies`, or a `pathParams` key the Route path doesn't define.
+
+### Predicates
+
+When a literal pattern isn't enough, use a [JMESPath](https://jmespath.org) predicate: a string
+that is exactly `${ <expression> }`. It can replace the whole `match` or any single field, and it
+always sees the whole request:
+
+```yaml title="Route excerpt: predicates"
+cases:
+  get-user: # GraphQL: same path, different operation
+    match:
+      headers: { x-client: web } # literal fields and predicates are ANDed
+      body: "${ body.operationName == 'GetUser' }"
+
+  big-order:
+    match: '${ body.variables.amount > `1000` }'
+```
+
+The **request envelope**, what predicates and templates see:
+
+```yaml title="HTTP request envelope"
+method: POST
+url: http://127.0.0.1:8080/graphql?verbose=true
+path: /graphql
+
+pathParams: {}
+query: { verbose: 'true' } # a repeated key becomes a list: { tag: [a, b] }
+headers: { content-type: application/json, x-client: web } # names lowercased
+cookies: { sid: abc }
+
+body: { operationName: GetUser } # parsed JSON, or text, or null
+```
+
+Truthiness follows JMESPath: `null`, `false`, `""`, `[]`, and `{}` don't match, and anything else
+does. Literals inside expressions use backticks (`` `1000` ``) or quotes (`'GetUser'`). Header names
+with dashes need quotes: `headers."x-tier"`. Invalid expressions fail startup, naming the
+`route:case`.
+
+## Response Behavior
+
+The default `kind`. All fields are optional:
+
+| field     | default | notes                                                                               |
+| --------- | ------- | ----------------------------------------------------------------------------------- |
+| `status`  | `200`   |                                                                                     |
+| `headers` | none    | string map                                                                          |
+| `body`    | empty   | object/array → JSON with `content-type: application/json` unless set; string → text |
+
+### Delay
+
+Any Behavior, Response or Passthrough, can wait before answering. Set `delay` to an integer in milliseconds or to a duration with `ms` or `s`, such as `500ms`, `2s`, or `1.5s`. Other requests can proceed while one waits.
+
+```yaml title="Route excerpt: delayed response"
+behaviors:
+  slow:
+    delay: 2s
+    status: 504
+```
+
+### Templates
+
+Any string in `status`, `headers`, or `body`, at any depth, can use `${ <jmespath> }` over the same
+request shape as [predicates](#predicates). Keys are never templated.
+
+```yaml title="Route excerpt: response templates"
+behaviors:
+  echo:
+    status: '${ query.status || `201` }'
+    headers:
+      x-user: 'user-${ pathParams.id }'
+
+    body:
+      id: '${ pathParams.id }' # exactly one ${ } keeps the type: here a string
+      age: '${ body.age }' # …here a number
+      greeting: 'Hello, ${ body.name }!' # mixed text interpolates (null → "")
+      requestId: '${ uuid() }'
+      literal: '\${ not a template }' # \${ is a literal ${
+```
+
+A templated `status` must render an integer from 100 to 599; otherwise the request gets a `500`
+explaining which Behavior failed. Invalid expressions fail startup, naming the `route:case:behavior`.
+Behaviors without `${` are served as written.
+
+Built-in functions, next to [JMESPath's own](https://jmespath.org/specification.html#built-in-functions):
+
+| function                | returns                                       |
+| ----------------------- | --------------------------------------------- |
+| `uuid()`                | random v4 UUID string                         |
+| `now()` / `now('unix')` | RFC 3339 UTC timestamp / seconds since epoch  |
+| `random_int(min, max)`  | random integer, both bounds inclusive         |
+| `random_item(array)`    | one random element, `null` for an empty array |
+
+## HTTP body Pipelines
+
+Set `pipeline` on the Route to transform the request body before Case matching and the
+rendered response body before sending it. For example, the
+[typed envelope example](https://github.com/decoyhq/decoy/blob/main/examples/ws-transformer-node/mocks/routes/approvals-post.yaml)
+uses the same worker for an HTTP POST and a WebSocket message:
+
+```yaml title="mocks/routes/approvals-post.yaml (excerpt)"
+id: approvals-post
+transport: http
+match: { method: POST, path: /approvals }
+pipeline: typed-approvals
+
+cases:
+  watch:
+    match:
+      body: { type: approvals.v1.WatchRequest, data: { ids: [a-1] } }
+
+    behaviors:
+      approved:
+        headers: { content-type: application/msgpack }
+        body:
+          type: approvals.v1.Approval
+          data:
+            id: '${ body.data.ids[0] }'
+            state: APPROVED
+```
+
+The first worker receives parsed JSON for `application/json` and `+json` media types,
+UTF-8 text for `text/*`, or the original bytes for binary content or bodies Decoy cannot parse.
+In the example the client posts
+`application/msgpack`. The worker decodes those bytes, so the Case can match on
+`body.data.ids` and the template can read the ID. The output worker encodes the rendered
+object as MessagePack bytes. Decoy sends those bytes verbatim with the authored content type.
+
+Cases on a Route share its transformed body and see the original request headers. If another
+Route is tried, its Pipeline starts from the original request. A terminal input command's stdout
+is parsed as JSON for Case matching and templates if possible. Other byte results appear as
+`null` there. A Passthrough Behavior forwards byte results verbatim and serializes other results
+from the winning Route's transformed value. If Decoy serializes that value as JSON, it uses
+`application/json` upstream unless the original media type already identifies JSON.
+HTTP workers can also read the original method, path,
+and headers as `ctx.request` in both directions. This does not change which headers Passthrough
+forwards. Command Transformers still receive only their payload on stdin.
+
+When a Passthrough Route has output steps, Decoy buffers the upstream body and decodes it
+according to its content type before running them. This buffer is limited by `maxBodyBytes`.
+A non-identity `Content-Encoding` gives the first Transformer bytes, including for JSON
+media types. When a Passthrough transform changes the wire bytes, Decoy drops the sender's
+`Content-Encoding`, `ETag`, and digest headers and sends the new body length. If the bytes
+are identical, those headers stay in place. Mock responses keep their authored media type and
+encoding. Decoy skips output steps for bodyless upstream responses such as HEAD and 204.
+An HTTP `206 Partial Content` response can only pass through if the output steps leave its bytes
+unchanged; otherwise Decoy returns `500` rather than sending an invalid byte range.
+Upstream body read failures are reported as Passthrough forwarding failures, not Transformer errors.
+An input worker can call `miss` to skip its Route. A Transformer error returns HTTP 500.
+An input error occurs before Decoy contacts an upstream.
+
+## Passthrough Behavior
+
+Forwards the matched request (method, path and query, headers, body) to a real upstream instead of
+mocking it:
+
+```yaml title="mocks/routes/profile.yaml"
+id: profile
+transport: http
+match:
+  method: GET
+  path: /api/profile
+
+cases:
+  any:
+    match: {}
+    behaviors:
+      upstream:
+        kind: passthrough
+        target:
+          baseUrl: http://127.0.0.1:4174
+```
+
+The target is the first one set, in this order: the Behavior's `target`, the Route's top-level
+`passthrough: { baseUrl }`, `decoy serve --passthrough-base-url`, then the request's own `Host`. If
+forwarding fails, Decoy answers `502` with `{"error":"passthrough forwarding failed", ...}`, which
+is never confused with a mock miss. Without output transforms the upstream's body streams through as it arrives, so SSE,
+long-poll and large downloads work. An upstream that doesn't connect within 10s or sends no response
+headers for 60s gets `504`; a body that stalls for 60s is cut off. A request that comes back to the
+same Decoy (e.g. the request's own `Host` is Decoy) gets `508` instead of looping: each Decoy adds
+its id to `x-decoy-via`. `x-mock-session` is not forwarded, so a Decoy further down a chain answers
+from its default Session. Every repeated response header (such as `set-cookie`) comes back. A path
+with a `.` or `..` segment, even percent-encoded (`%2e%2e`, `..%2f`) or split by `\`, gets `502`
+instead of reaching the upstream, so it can't leave the base path.
+
+## Misses are fail-closed
+
+A request no active Case matches gets `501` with `x-mock-miss: true` and a body that says why each
+active route entry, checked bottom-to-top, did not match:
+
+```json title="HTTP 501 mock-miss response"
+{
+  "error": "no active route case matched request",
+  "candidates": [
+    {
+      "address": "get-user:user-123:success",
+      "reason": "condition",
+      "field": "pathParams.id",
+      "expected": "123",
+      "actual": "456"
+    },
+    { "address": "list-users:any:ok", "reason": "path", "expected": "/users" }
+  ]
+}
+```
+
+`reason` is one of `method`, `path` (with the Route's `expected` value), `condition` (the first
+failed Case condition: `field`, `expected`, and the request's `actual`, `null` when absent; `field`
+is `match` for a whole-Case predicate, and a predicate that failed to evaluate adds its `error`),
+`decode` (a gRPC decode failure or an HTTP input Transformer that reported
+a miss, with the `error`), `transport`, `missingRoute`, `missingCase`, or `missingBehavior`. Decoy never forwards a request unless a Passthrough Behavior is selected.

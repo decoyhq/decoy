@@ -5,5 +5,4 @@ target/
 **/playwright-report/
 **/.rstack/
 **/.rspress/
-**/.rspress-content/
-**/doc_build/
+**/doc-build/

@@ -2,7 +2,7 @@
 
 The normative dictionary for Decoy. When a term below is used in code, docs, or discussion, it
 means _exactly_ this — one line per term, plus the synonyms to avoid. The prose explanation of how
-the terms fit together lives in the [user guide](apps/docs/content/index.md). Name = `decoy`; packages publish scoped as
+the terms fit together lives in the [user guide](apps/docs/content/docs/index.md). Name = `decoy`; packages publish scoped as
 `@decoyhq/*`, CLI bin `decoy`.
 
 ## Language
@@ -97,7 +97,7 @@ _Avoid_: "context", "request object".
 **Message envelope**:
 The request envelope's counterpart for one inbound message on a long-lived connection (WebSocket,
 SSE subscription, streaming gRPC): the decoded message plus the connection's path, query, headers,
-and cookies. See the [WebSocket guide](apps/docs/content/guide/websocket.md#behaviors).
+and cookies. See the [WebSocket guide](apps/docs/content/docs/websocket/index.md#behaviors).
 _Avoid_: "context", "frame" (a frame is the wire unit before the pipeline decodes it).
 
 **Template context**:

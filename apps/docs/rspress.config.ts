@@ -1,14 +1,11 @@
 import { resolve } from 'node:path'
 import { defineConfig } from '@rspress/core'
-import { importGuides } from './scripts/import-guides.mjs'
-
-importGuides()
 
 const groups = {
   'Get started': {
     '': 'Overview',
     install: 'Install',
-    quickstart: 'Quick start',
+    'quick-start': 'Quick start',
     examples: 'Runnable examples',
     terms: 'Glossary',
   },
@@ -40,46 +37,11 @@ const groups = {
     'sessions-and-control': 'Sessions and the Control API',
   },
 }
-const russian: Record<string, string> = {
-  'Get started': 'Начало работы',
-  Overview: 'Обзор',
-  Install: 'Установка',
-  'Quick start': 'Первый мок',
-  'Runnable examples': 'Готовые примеры',
-  Glossary: 'Термины',
-  'Write mocks': 'Написание моков',
-  Routes: 'Route',
-  Collections: 'Collection',
-  Transformers: 'Трансформации',
-  'Configure a Pipeline': 'Настройка Pipeline',
-  'TypeScript SDK': 'SDK для TypeScript',
-  'Worker protocol': 'Протокол воркера',
-  'Run Decoy': 'Запуск Decoy',
-  Configuration: 'Конфигурация',
-  'Terminal UI': 'Терминальный интерфейс',
-  Troubleshooting: 'Устранение неполадок',
-  'Set up Playwright': 'Настройка Playwright',
-  'Set up Testplane': 'Настройка Testplane',
-  'Switch responses in a test': 'Смена ответа в тесте',
-  'Bridge browser WebSockets': 'WebSocket в браузере',
-  Reference: 'Справочник',
-  'Sessions and the Control API': 'Session и Control API',
-}
-function sidebar(prefix: string, labels: Record<string, string> = {}) {
-  return {
-    [prefix]: Object.entries(groups).map(([text, pages]) => ({
-      text: labels[text] ?? text,
-      items: Object.entries(pages).map(([slug, title]) => ({
-        text: labels[title] ?? title,
-        link: prefix + (slug ? slug + '/' : ''),
-      })),
-    })),
-  }
-}
 const base = process.env.DOCS_BASE ?? '/'
 
 export default defineConfig({
-  root: '.rspress-content',
+  root: 'content',
+  outDir: 'doc-build',
   title: 'Decoy',
   lang: 'en',
   base,
@@ -87,7 +49,16 @@ export default defineConfig({
   logo: '/brand/decoy.svg',
   logoText: 'Decoy',
   icon: '/brand/decoy.svg',
-  route: { cleanUrls: true, localeRedirect: 'never' },
+  head: [
+    [
+      'link',
+      {
+        rel: 'stylesheet',
+        href: 'https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=Montserrat:wght@100..900&display=swap',
+      },
+    ],
+  ],
+  route: { cleanUrls: true },
   llms: true,
   webMcp: false,
   globalStyles: resolve('theme/site.css'),
@@ -98,19 +69,15 @@ export default defineConfig({
       { icon: 'npm', mode: 'link', content: 'https://www.npmjs.com/package/@decoyhq/cli' },
     ],
     llmsUI: { placement: 'outline', viewOptions: ['viewMarkdown'] },
-    locales: [
-      {
-        lang: 'en',
-        label: 'English',
-        sidebar: sidebar('/docs/'),
-        nav: [{ text: 'Docs', link: '/docs/' }],
-      },
-      {
-        lang: 'ru',
-        label: 'Русский',
-        sidebar: sidebar('/ru/docs/', russian),
-        nav: [{ text: 'Документация', link: '/ru/docs/' }],
-      },
-    ],
+    nav: [{ text: 'Docs', link: '/docs/' }],
+    sidebar: {
+      '/docs/': Object.entries(groups).map(([text, pages]) => ({
+        text,
+        items: Object.entries(pages).map(([slug, title]) => ({
+          text: title,
+          link: slug ? `/docs/${slug}/` : '/docs/',
+        })),
+      })),
+    },
   },
 })
