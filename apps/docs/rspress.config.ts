@@ -9,6 +9,7 @@ const groups = {
     '': 'Overview',
     install: 'Install',
     quickstart: 'Quick start',
+    examples: 'Runnable examples',
     terms: 'Glossary',
   },
   'Write mocks': {
@@ -23,7 +24,12 @@ const groups = {
     'transformer-sdk': 'TypeScript SDK',
     'transformer-worker-protocol': 'Worker protocol',
   },
-  'Run Decoy': { config: 'Configuration', tls: 'TLS', tui: 'Terminal UI' },
+  'Run Decoy': {
+    config: 'Configuration',
+    tls: 'TLS',
+    tui: 'Terminal UI',
+    troubleshooting: 'Troubleshooting',
+  },
   Playwright: {
     playwright: 'Set up Playwright',
     'playwright/responses': 'Switch responses in a test',
@@ -39,6 +45,7 @@ const russian: Record<string, string> = {
   Overview: 'Обзор',
   Install: 'Установка',
   'Quick start': 'Первый мок',
+  'Runnable examples': 'Готовые примеры',
   Glossary: 'Термины',
   'Write mocks': 'Написание моков',
   Routes: 'Route',
@@ -50,6 +57,7 @@ const russian: Record<string, string> = {
   'Run Decoy': 'Запуск Decoy',
   Configuration: 'Конфигурация',
   'Terminal UI': 'Терминальный интерфейс',
+  Troubleshooting: 'Устранение неполадок',
   'Set up Playwright': 'Настройка Playwright',
   'Set up Testplane': 'Настройка Testplane',
   'Switch responses in a test': 'Смена ответа в тесте',
@@ -84,6 +92,11 @@ export default defineConfig({
   webMcp: false,
   globalStyles: resolve('theme/site.css'),
   themeConfig: {
+    darkMode: 'dark',
+    socialLinks: [
+      { icon: 'github', mode: 'link', content: 'https://github.com/decoyhq/decoy' },
+      { icon: 'npm', mode: 'link', content: 'https://www.npmjs.com/package/@decoyhq/cli' },
+    ],
     llmsUI: { placement: 'outline', viewOptions: ['viewMarkdown'] },
     locales: [
       {

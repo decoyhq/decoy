@@ -94,3 +94,7 @@ A Transformer takes one value and produces another. It can change the format, th
 ## Pipeline step
 
 A Pipeline step is one use of a Transformer in an input or output list, or a built-in gRPC transformation. Its position determines which value it receives from the previous step.
+
+## Transformer worker
+
+A Transformer worker is a persistent external process that runs the Transformer’s input or output logic. Use the [TypeScript SDK](../../../packages/transformer/README.md) or implement the [worker protocol](../../../docs/reference/worker-protocol.md) directly.

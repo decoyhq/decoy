@@ -3,7 +3,7 @@
 A **Collection** lists the Behaviors that are active together for a Scenario. All Collections
 live in one YAML file.
 
-```yaml
+```yaml title="collections.yaml"
 - id: happy-path
   routes:
     - users-by-id:user-1:ada
@@ -28,7 +28,7 @@ live in one YAML file.
 Active entries are checked bottom-to-top, and the last matching Case wins. Put broad fallbacks
 first and specific Cases after them:
 
-```yaml
+```yaml title="collections.yaml (excerpt)"
 - id: z-default
   routes:
     - users:any:fallback # pathParams id: '*'

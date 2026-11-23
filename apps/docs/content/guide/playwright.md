@@ -7,8 +7,7 @@ exposes the Control API as a fixture.
 npm i -D @decoyhq/cli @decoyhq/playwright
 ```
 
-```ts
-// playwright.config.ts
+```ts title="playwright.config.ts"
 import type { DecoyTestOptions } from '@decoyhq/playwright'
 import { defineConfig } from '@playwright/test'
 
@@ -16,6 +15,7 @@ export default defineConfig<DecoyTestOptions>({
   globalSetup: './global-setup.ts',
   use: {
     baseURL: 'http://127.0.0.1:4173',
+
     decoyOptions: {
       command: 'decoy serve --config mocks/decoy.yaml',
       urls: '**/api/**', // browser requests sent to Decoy
@@ -25,13 +25,11 @@ export default defineConfig<DecoyTestOptions>({
 })
 ```
 
-```ts
-// global-setup.ts
+```ts title="global-setup.ts"
 export { setup as default } from '@decoyhq/playwright'
 ```
 
-```ts
-// tests/fixtures.ts
+```ts title="tests/fixtures.ts"
 import { createDecoyFixtures, type DecoyFixtures } from '@decoyhq/playwright'
 import { test as base } from '@playwright/test'
 

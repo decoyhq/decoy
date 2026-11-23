@@ -6,7 +6,7 @@ From the repository root, run `pnpm install --frozen-lockfile` and `pnpm --filte
 
 The English landing page, manual index, quick start and glossary live in `content/`. Add task guides and reference pages under `content/guide/`, starting each file with a single H1. For example, `content/guide/playwright/responses.md` appears at `/docs/playwright/responses/`. Link to a sibling guide by its relative Markdown filename. Add its slug and sidebar label to `groups` in `rspress.config.ts`.
 
-The site also renders example READMEs, the plugin package README, and the worker protocol directly from their source files. Edit those originals. The generated directory is disposable.
+The site also renders example READMEs, the Transformer SDK README, and the worker protocol directly from their source files. Edit those originals. The generated directory is disposable.
 
 ## Translate a page
 

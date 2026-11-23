@@ -3,8 +3,11 @@
 A static page calls its API with plain `fetch()`. Playwright tests route those calls to native
 Decoy through `@decoyhq/playwright`, so the UI renders mocked data without a backend.
 
-```sh
-pnpm --filter ./examples/playwright-ts-e2e exec playwright install chromium   # once
+```sh title="Install Chromium once"
+pnpm --filter ./examples/playwright-ts-e2e exec playwright install chromium
+```
+
+```sh title="Run the Playwright tests"
 pnpm --filter ./examples/playwright-ts-e2e test:e2e
 ```
 

@@ -9,9 +9,14 @@ Decoy:
 | legacy CRM   | plain http    | `listeners.crm: { port: 8092, tls: false }` |
 | Inventory    | gRPC over TLS | `port: 8443`                                |
 
-```sh
+```sh title="Run the TLS tests"
 pnpm --filter ./examples/tls-bff-node test:e2e
-pnpm --filter ./examples/tls-bff-node dev    # serve the mocks by hand
+```
+
+To serve the mocks by hand:
+
+```sh title="Start the TLS example server"
+pnpm --filter ./examples/tls-bff-node dev
 ```
 
 `tests/run.ts` starts Decoy, then runs the tests with

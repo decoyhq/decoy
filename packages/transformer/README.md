@@ -2,38 +2,45 @@
 
 Write Decoy Transformer workers in TypeScript. A worker can turn an app's wire format (msgpack
 envelopes, binary headers in front of protobuf, compression) into the JSON that Cases match and
-Behaviors render, and back. See the [WebSocket Transformer guide](https://github.com/decoyhq/decoy/blob/main/apps/docs/content/guide/websocket.md#transformers) for configuration.
+Behaviors render, and back. HTTP, gRPC, and WebSocket Routes can use workers. See [Configure a Transformer Pipeline](https://github.com/decoyhq/decoy/blob/main/apps/docs/content/guide/transformer-pipelines.md) for setup.
 
-```ts
-// workers/envelope.ts
+This example adapts binary and text WebSocket messages. Save it as `workers/envelope.ts`:
+
+```ts title="workers/envelope.ts"
 import { decode, encode } from '@msgpack/msgpack'
 import { defineTransformer, miss } from '@decoyhq/transformer'
 
 export default defineTransformer({
   name: 'envelope',
   version: '1.0.0',
+
   async input(bytes, ctx) {
     if (!(bytes instanceof Uint8Array)) return bytes
     if (ctx.frame === 'text') return JSON.parse(new TextDecoder().decode(bytes))
+
     const { type, data } = decode(bytes) as { type: string; data: Uint8Array }
     if (!(await ctx.protobuf.has(type))) miss(`unknown type ${type}`)
     return { type, data: await ctx.protobuf.decode(type, data) }
   },
+
   async output(value, ctx) {
     if (typeof value !== 'object' || value === null || !('type' in value)) {
       return JSON.stringify(value) // a string goes out as a text frame
     }
+
     const { type, data } = value as { type: string; data: unknown }
     return encode({ type, data: await ctx.protobuf.encode(type, data) }) // bytes: binary
   },
 })
 ```
 
-```yaml
-# decoy.yaml
+Register the worker and name its Pipeline in `decoy.yaml`:
+
+```yaml title="decoy.yaml (excerpt)"
 transformers:
   env:
     worker: [node, ./workers/envelope.ts]
+
 pipelines:
   approvals-ws:
     input: [env]

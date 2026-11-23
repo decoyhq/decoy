@@ -1,4 +1,4 @@
-# WebSocket Transformers (Node) E2E
+# HTTP and WebSocket Transformers (Node) E2E
 
 Two binary socket formats, each mocked through a Transformer step. The `acme/` packages export
 Transformer factories. The user's worker files (`workers/`) call those factories, and
@@ -10,21 +10,28 @@ Route declares `Content-Encoding: gzip` so the client knows to decompress it.
 [`POST /http-context`](mocks/routes/http-context.yaml) shows a worker selecting a Case based on a
 `preview=1` cookie and using the original request metadata again on output.
 
-```sh
+```sh title="Run the Transformer tests"
 pnpm --filter ./examples/ws-transformer-node test:e2e
-pnpm --filter ./examples/ws-transformer-node dev    # serve the mocks on 127.0.0.1:8095 by hand
+```
+
+To serve the mocks by hand on `127.0.0.1:8095`:
+
+```sh title="Start the Transformer example server"
+pnpm --filter ./examples/ws-transformer-node dev
 ```
 
 The workers import `@decoyhq/transformer` from its build, so run `pnpm build` once first. The test
 starts its own Decoy process on an ephemeral loopback port, using `DECOY_BINARY_PATH` when set
 and `cargo run -p decoy` otherwise.
 
-```
+```text title="Example files and directories"
 acme/decoy-transformer-typed-envelope/  msgpack { type, data: <protobuf> } envelopes, JSON text frames
 acme/decoy-transformer-binary-rpc/      [kind][topic][id][protobuf payload] frames
+
 workers/typed-envelope.ts              the user's file: export default typedEnvelope()
 workers/binary-rpc.ts                   the user's file: binaryRpc({ topics: { … } })
 workers/binary-rpc.test.ts              unit tests of the steps, no Decoy
+
 mocks/decoy.yaml                        Transformers and named Pipelines
 proto/                                 compiled by Decoy; workers use it through ctx.protobuf
 ```
@@ -44,6 +51,6 @@ Try breaking it: a typo in a payload (`nmae: Ann` in `mocks/routes/rpc.yaml`) fa
 the worker's `check`; a `throw` in a worker's `input` shows up as an error event with the frame's
 bytes and the worker's stack.
 
-See the [WebSocket guide](../../apps/docs/content/guide/websocket.md#transformers).
+See [Configure a Transformer Pipeline](../../apps/docs/content/guide/transformer-pipelines.md) for shared setup.
 
 [Transformer benchmark notes](transformer-benchmarks.md) compare worker and command execution.

@@ -19,7 +19,7 @@ npm i -D @decoyhq/cli
 
 Create a folder for your mock files.
 
-```sh
+```sh title="Terminal: create the Route directory"
 mkdir -p mocks/routes
 ```
 
@@ -29,9 +29,11 @@ Save the following [Route](terms.md#route) as `mocks/routes/users.yaml`. It hand
 id: users-by-id
 transport: http
 match: { method: GET, path: '/users/{id}' }
+
 cases:
   user-123:
     match: { pathParams: { id: '123' } }
+
     behaviors:
       success:
         status: 200
@@ -53,15 +55,17 @@ Run the server from the directory containing `mocks/`. Leave this terminal open.
 npm exec --package=@decoyhq/cli -- decoy serve --routes mocks/routes --collections mocks/collections.yaml --port 8080 --watch
 ```
 
+If you installed the standalone binary, run the same command starting at `decoy serve`.
+
 In a second terminal, request the user.
 
-```sh
+```sh title="Terminal 2: request the user"
 curl -i http://localhost:8080/users/123
 ```
 
 Look for **200 OK** and this response body:
 
-```json
+```json title="200 OK response body"
 { "id": "123", "name": "Ada" }
 ```
 
@@ -73,13 +77,16 @@ Replace the Route file with this version. It adds a second Behavior named `missi
 id: users-by-id
 transport: http
 match: { method: GET, path: '/users/{id}' }
+
 cases:
   user-123:
     match: { pathParams: { id: '123' } }
+
     behaviors:
       success:
         status: 200
         body: { id: '123', name: Ada }
+
       missing:
         status: 404
         body: not found
@@ -87,14 +94,14 @@ cases:
 
 Append a second Collection to `mocks/collections.yaml`. Its [Behavior address](terms.md#behavior-address) ends in `missing`, so the same request now has a different response available.
 
-```yaml
+```yaml title="mocks/collections.yaml (append this entry)"
 - id: user-missing
   routes: [users-by-id:user-123:missing]
 ```
 
 After Decoy reloads the files, switch Collections from the second terminal.
 
-```sh
+```sh title="Terminal 2: switch to user-missing"
 curl -X POST http://localhost:8080/__decoy__/control/useCollection \
   -H 'content-type: application/json' \
   -d '{"collection":"user-missing"}'
@@ -102,10 +109,18 @@ curl -X POST http://localhost:8080/__decoy__/control/useCollection \
 
 Repeat the original request. This time you'll see **404 Not Found** and the body `not found`.
 
-```sh
+```sh title="Terminal 2: request the same user again"
 curl -i http://localhost:8080/users/123
 ```
 
+Try a path you haven't mocked:
+
+```sh title="Terminal 2: request an unmocked path"
+curl -i http://localhost:8080/orders
+```
+
+Look for **501 Not Implemented** and `x-mock-miss: true`. Decoy tells you what failed to match instead of forwarding the request to a real service. See [How mock misses work](guide/routes.md#misses-are-fail-closed).
+
 Stop Decoy with Ctrl-C in the server terminal.
 
-To match another user, add a [Case](guide/routes.md#case-match). To switch this response from a browser test, follow the [Playwright](guide/playwright.md) or [Testplane](guide/testplane.md) setup.
+To keep these settings in your project, [put the flags in `decoy.yaml`](guide/config.md). To match another user, add a [Case](guide/routes.md#case-match). To switch this response from a browser test, follow the [Playwright](guide/playwright.md) or [Testplane](guide/testplane.md) setup.

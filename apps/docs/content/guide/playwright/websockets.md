@@ -3,7 +3,7 @@
 Set `webSocketUrls` to route the page's own sockets to Decoy (Playwright 1.48 or later). The page
 needs no changes:
 
-```ts
+```ts title="playwright.config.ts (use excerpt)"
 decoyOptions: {
   urls: '**/api/**',
   webSocketUrls: '**/live', // matched against the socket URL, e.g. ws://127.0.0.1:4173/live
@@ -20,11 +20,13 @@ decoyOptions: {
 
 To push a message from the test, wait for the page's socket and send to it:
 
-```ts
+```ts title="tests/live.spec.ts (excerpt)"
 test('shows a notice the server pushes', async ({ page, decoy }) => {
   await page.goto('/live.html')
+
   const live = await decoy.connection('friend-socket', { timeout: 5000 })
   await live.send({ type: 'notice', text: 'hello' })
+
   await expect(page.getByRole('listitem')).toHaveText('hello')
 })
 ```

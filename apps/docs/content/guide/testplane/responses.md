@@ -2,8 +2,7 @@
 
 Use `decoy(browser)` to select a Collection before the page makes its request. This test selects `no-users` and checks the error that the page renders.
 
-```ts
-// tests/users.testplane.ts
+```ts title="tests/users.testplane.ts"
 import { decoy } from '@decoyhq/testplane'
 import { it } from 'testplane'
 

@@ -2,36 +2,43 @@
 
 `decoy serve` takes flags, a YAML config file, or both. Flags win over the file.
 
-```yaml
-# mocks/decoy.yaml
+If you've followed the [quick start](../quickstart.mdx), save this next to `collections.yaml` to keep the same settings without repeating the flags:
+
+```yaml title="mocks/decoy.yaml"
 routes: routes # directory of Route files, relative to this file
 collections: collections.yaml
 port: 8080
 ```
 
-```sh
-decoy serve --config mocks/decoy.yaml
+From the project directory, run:
+
+```sh title="Start Decoy and watch for edits"
+decoy serve --config mocks/decoy.yaml --watch
 ```
 
-| file key             | flag                     | default                                           |
-| -------------------- | ------------------------ | ------------------------------------------------- |
-| `routes`             | `--routes <dir>`         | required                                          |
-| `collections`        | `--collections <file>`   | required                                          |
-| `port`               | `--port <port>`          | `8080`                                            |
-| `host`               | `--host <host>`          | `localhost` (`127.0.0.1` and `::1`)               |
-| `listeners`          | none                     | none                                              |
-| `collection`         | `--collection <id>`      | first Collection in the file                      |
-| `passthroughBaseUrl` | `--passthrough-base-url` | none (see [Passthrough](routes.md))               |
-| `protos`             | none                     | none                                              |
-| `tls`                | none                     | none (plain http)                                 |
-| `maxBodyBytes`       | none                     | `33554432` (32 MiB)                               |
-| `transformers`       | none                     | none (see [WebSocket](websocket.md#transformers)) |
-| `pipelines`          | none                     | none                                              |
+Add a one-off flag such as `--port 8081` to override the file without editing it.
+
+## Settings
+
+| file key             | flag                     | default                                               |
+| -------------------- | ------------------------ | ----------------------------------------------------- |
+| `routes`             | `--routes <dir>`         | required                                              |
+| `collections`        | `--collections <file>`   | required                                              |
+| `port`               | `--port <port>`          | `8080`                                                |
+| `host`               | `--host <host>`          | `localhost` (`127.0.0.1` and `::1`)                   |
+| `listeners`          | none                     | none                                                  |
+| `collection`         | `--collection <id>`      | first Collection in the file                          |
+| `passthroughBaseUrl` | `--passthrough-base-url` | none (see [Passthrough](routes.md))                   |
+| `protos`             | none                     | none                                                  |
+| `tls`                | none                     | none (plain http)                                     |
+| `maxBodyBytes`       | none                     | `33554432` (32 MiB)                                   |
+| `transformers`       | none                     | none (see [Pipeline setup](transformer-pipelines.md)) |
+| `pipelines`          | none                     | none (see [Pipeline setup](transformer-pipelines.md)) |
 
 `listeners` opens extra named listeners. Each serves the same Routes, Sessions, and Control API as
 `port`, so a gRPC client and an HTTP client can use different ports but share one Session:
 
-```yaml
+```yaml title="decoy.yaml (excerpt)"
 port: 8080
 listeners: { grpc: 50051 }
 ```
@@ -48,10 +55,11 @@ to. A listener can set its own: `{ port: 9000, host: 0.0.0.0 }`. `--host` replac
 per connection, so gRPC over TLS works on the same port. A listener given as `{ port, tls: false }`
 stays plain http, so you can mix both:
 
-```yaml
+```yaml title="decoy.yaml (excerpt)"
 tls:
   cert: certs/dev.pem
   key: certs/dev-key.pem
+
 port: 8443 # https
 listeners:
   payments: 9443 # https
@@ -67,13 +75,13 @@ reused, so trust it once (`NODE_EXTRA_CA_CERTS=mocks/.decoy/ca.pem`, grpc-js
 `credentials.createSsl(ca)`). `ca.pem` is rebuilt from the key if it goes missing. Decoy writes a
 `.gitignore` into `.decoy/` so the CA key stays out of git.
 
-```yaml
+```yaml title="decoy.yaml (excerpt)"
 tls: auto
 ```
 
 `protos` loads protobuf schemas for gRPC:
 
-```yaml
+```yaml title="decoy.yaml (excerpt)"
 protos:
   roots: [../proto] # import paths; every .proto under them is compiled at startup
   descriptorSets: [build/api.binpb] # optional precompiled FileDescriptorSets
@@ -82,7 +90,7 @@ protos:
 `files` compiles only the matching entry files instead of every `.proto` under the roots. Their
 imports still resolve through `roots`. Each pattern must match at least one `.proto` under a root:
 
-```yaml
+```yaml title="decoy.yaml (excerpt)"
 protos:
   roots: [../proto]
   files: [../proto/services/catalog/**/*.proto]
@@ -92,35 +100,14 @@ protos:
 top folder (`import "v1/keyboards/keyboards.proto";`), list that folder alone. If each folder
 imports its neighbours by bare name (`import "keyboards.proto";`), list every such folder:
 
-```yaml
+```yaml title="decoy.yaml (excerpt)"
 protos:
   roots: [../proto, ../proto/v1/keyboards, ../proto/v2/my-entity]
 ```
 
 ## Transformers and Pipelines
 
-HTTP, gRPC, and WebSocket Routes select a named Pipeline with `pipeline: <name>`.
-Define each Transformer once and reference it in any compatible Pipeline. Both lists
-run from top to bottom. A worker supplies typed values. A command reads stdin and writes
-bytes to stdout. In a named Pipeline, an explicitly configured Transformer with the same
-name as a gRPC built-in takes precedence.
-
-```yaml
-transformers:
-  approvals:
-    worker: [node, ../workers/approvals.ts]
-  gzip:
-    input: [gzip, -dc]
-    output: [gzip, -c]
-pipelines:
-  approvals-feed:
-    input: [gzip, approvals]
-    output: [approvals, gzip]
-```
-
-See the [HTTP](routes.md#http-body-pipelines), [gRPC](grpc.md#pipelines), and
-[WebSocket](websocket.md#transformers) guides for the values each transport passes to its steps.
-For a setup walkthrough, see [Configure a Transformer Pipeline](transformer-pipelines.md).
+Use the top-level `transformers` and `pipelines` keys to define reusable steps and name their input and output order. HTTP, gRPC, and WebSocket Routes can all select a named Pipeline. See [Configure a Transformer Pipeline](transformer-pipelines.md) for setup and transport-specific links.
 
 ## Startup validation
 
@@ -137,7 +124,7 @@ a Route file, a `.proto` file under a proto root (with `files`: a picked file, a
 patterns match) or a descriptor set changes. In the terminal UI
 that bare `decoy` opens, `/reload` does the same on demand.
 
-```sh
+```sh title="Start Decoy and watch for edits"
 decoy serve --config mocks/decoy.yaml --watch
 ```
 

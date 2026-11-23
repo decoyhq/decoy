@@ -3,9 +3,14 @@
 Node's built-in `WebSocket` opens two sockets on one path, told apart by the `service` query param,
 the way a page talks to two backend services. Decoy answers from `mocks/`.
 
-```sh
+```sh title="Run the WebSocket tests"
 pnpm --filter ./examples/ws-node test:e2e
-pnpm --filter ./examples/ws-node dev    # serve the mocks on 127.0.0.1:8094 by hand
+```
+
+To serve the mocks by hand on `127.0.0.1:8094`:
+
+```sh title="Start the WebSocket example server"
+pnpm --filter ./examples/ws-node dev
 ```
 
 The test starts Decoy with `cargo run -p decoy -- serve --config mocks/decoy.yaml` (port 8094), or

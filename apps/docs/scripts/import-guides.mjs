@@ -21,6 +21,7 @@ export function importGuides() {
   const pages = new Map([
     ['packages/transformer/README.md', 'docs/transformer-sdk'],
     ['docs/reference/worker-protocol.md', 'docs/transformer-worker-protocol'],
+    ['examples/README.md', 'docs/examples'],
   ])
   for (const source of globSync('apps/docs/content/guide/**/*.md', { cwd: root })) {
     pages.set(source, source.replace('apps/docs/content/guide/', 'docs/').replace(/\.md$/, ''))
@@ -36,21 +37,13 @@ export function importGuides() {
     ['apps/docs/content/quickstart.mdx', 'docs/quickstart'],
   ])
   function render(slug, title, body) {
-    const tabs = (commands) =>
-      '<Tabs groupId="package-manager">\n' +
-      Object.entries(commands)
-        .map(
-          ([name, command]) =>
-            '<Tab label="' + name + '">\n\n```sh\n' + command + '\n```\n\n</Tab>',
-        )
-        .join('\n') +
-      '\n</Tabs>'
+    const tabs = (commands) => `<PackageManagerTabs command={${JSON.stringify(commands)}} />`
     const install = (packages) =>
       tabs({
         npm: 'npm install -D ' + packages,
         pnpm: 'pnpm add -D ' + packages,
-        Yarn: 'yarn add -D ' + packages,
-        Bun: 'bun add -d ' + packages,
+        yarn: 'yarn add -D ' + packages,
+        bun: 'bun add -d ' + packages,
       })
     const serve =
       'decoy serve --routes mocks/routes --collections mocks/collections.yaml --port 8080 --watch'
@@ -61,14 +54,13 @@ export function importGuides() {
         tabs({
           npm: 'npm exec --package=@decoyhq/cli -- ' + serve,
           pnpm: 'pnpm exec ' + serve,
-          Yarn: 'yarn ' + serve,
-          Bun: 'bun run ' + serve,
-          Standalone: serve,
+          yarn: 'yarn ' + serve,
+          bun: 'bun run ' + serve,
         }),
       )
-    const hasTabs = body.includes('<Tabs ')
+    const hasTabs = body.includes('<PackageManagerTabs ')
     const ext = hasTabs ? 'mdx' : 'md'
-    const prefix = hasTabs ? "import { Tabs, Tab } from '@rspress/core/theme'\n\n" : ''
+    const prefix = hasTabs ? "import { PackageManagerTabs } from '@rspress/core/theme'\n\n" : ''
     const dest = join(output, slug, 'index.' + ext)
     mkdirSync(dirname(dest), { recursive: true })
     const article = '# ' + title + '\n\n' + body
@@ -89,7 +81,10 @@ export function importGuides() {
       const target = repoLink ? path : posix.join(dirname(file), path)
       const route = routes.get(target) || routes.get(target + '/README.md')
       if (!route) {
-        if (/\.(?:ts|yaml)$/.test(target) && existsSync(join(root, target))) {
+        if (
+          target === 'CONTRIBUTING.md' ||
+          (/\.(?:ts|yaml)$/.test(target) && existsSync(join(root, target)))
+        ) {
           return `](${sourceRoot}${target}${fragment ? '#' + fragment : ''})`
         }
         throw new Error(`Missing docs route for ${href} in ${file}`)

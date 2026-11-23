@@ -1,6 +1,6 @@
 # Routes, Cases, and Behaviors
 
-```txt
+```text title="How a Collection selects a Behavior"
 collection → route → case → behavior
 ```
 
@@ -8,23 +8,26 @@ A **Route** is one YAML file with an `id`, one `transport`, and a `match` saying
 interaction happens. Its **Cases** say _which request shape_ matched, and each Case owns named
 **Behaviors**: what Decoy does.
 
-```yaml
+```yaml title="mocks/routes/users.yaml"
 id: users-by-id # stable id; no ':' allowed
 transport: http # or grpc (gRPC guide), ws (WebSocket guide)
 match:
   method: GET # GET POST PUT PATCH DELETE HEAD OPTIONS
   path: /api/users/{id} # {name} captures one whole path segment; /files/{name}.json fails startup
+
 cases:
   user-1:
     match:
       pathParams:
         id: '1' # exact value; '*' matches any value
+
     behaviors:
       ada:
         status: 200
         body:
           id: '1'
           name: Ada Lovelace
+
       missing:
         status: 404
         body:
@@ -39,11 +42,12 @@ files in folders. Duplicate Route ids fail startup.
 In a Route file, a Collections file, or `decoy.yaml`, mark a mapping with `&name` and
 merge it elsewhere in the same file with `<<: *name`. Here both Behaviors return the same body:
 
-```yaml
+```yaml title="Route excerpt: YAML anchors"
 behaviors:
   ok: &ok
     status: 200
     body: { saved: true }
+
   created:
     <<: *ok
     status: 201
@@ -58,7 +62,7 @@ is shallow, so setting `body` on `created` replaces the whole inherited body.
 A Case with no `match` matches every request to its Route. Otherwise `match` is a mapping of
 fields, and **all** fields must match:
 
-```yaml
+```yaml title="Route excerpt: request fields"
 cases:
   vip:
     match:
@@ -88,26 +92,29 @@ When a literal pattern isn't enough, use a [JMESPath](https://jmespath.org) pred
 that is exactly `${ <expression> }`. It can replace the whole `match` or any single field, and it
 always sees the whole request:
 
-```yaml
+```yaml title="Route excerpt: predicates"
 cases:
   get-user: # GraphQL: same path, different operation
     match:
       headers: { x-client: web } # literal fields and predicates are ANDed
       body: "${ body.operationName == 'GetUser' }"
+
   big-order:
     match: '${ body.variables.amount > `1000` }'
 ```
 
 The **request envelope**, what predicates and templates see:
 
-```yaml
+```yaml title="HTTP request envelope"
 method: POST
 url: http://127.0.0.1:8080/graphql?verbose=true
 path: /graphql
+
 pathParams: {}
 query: { verbose: 'true' } # a repeated key becomes a list: { tag: [a, b] }
 headers: { content-type: application/json, x-client: web } # names lowercased
 cookies: { sid: abc }
+
 body: { operationName: GetUser } # parsed JSON, or text, or null
 ```
 
@@ -130,7 +137,7 @@ The default `kind`. All fields are optional:
 
 Any Behavior, Response or Passthrough, can wait before answering. Set `delay` to an integer in milliseconds or to a duration with `ms` or `s`, such as `500ms`, `2s`, or `1.5s`. Other requests can proceed while one waits.
 
-```yaml
+```yaml title="Route excerpt: delayed response"
 behaviors:
   slow:
     delay: 2s
@@ -142,12 +149,13 @@ behaviors:
 Any string in `status`, `headers`, or `body`, at any depth, can use `${ <jmespath> }` over the same
 request shape as [predicates](#predicates). Keys are never templated.
 
-```yaml
+```yaml title="Route excerpt: response templates"
 behaviors:
   echo:
     status: '${ query.status || `201` }'
     headers:
       x-user: 'user-${ pathParams.id }'
+
     body:
       id: '${ pathParams.id }' # exactly one ${ } keeps the type: here a string
       age: '${ body.age }' # …here a number
@@ -176,20 +184,25 @@ rendered response body before sending it. For example, the
 [typed envelope example](../../../../examples/ws-transformer-node/mocks/routes/approvals-post.yaml)
 uses the same worker for an HTTP POST and a WebSocket message:
 
-```yaml
+```yaml title="mocks/routes/approvals-post.yaml (excerpt)"
 id: approvals-post
 transport: http
 match: { method: POST, path: /approvals }
 pipeline: typed-approvals
+
 cases:
   watch:
     match:
       body: { type: approvals.v1.WatchRequest, data: { ids: [a-1] } }
+
     behaviors:
       approved:
         headers: { content-type: application/msgpack }
         body:
-          { type: approvals.v1.Approval, data: { id: '${ body.data.ids[0] }', state: APPROVED } }
+          type: approvals.v1.Approval
+          data:
+            id: '${ body.data.ids[0] }'
+            state: APPROVED
 ```
 
 The first worker receives parsed JSON for `application/json` and `+json` media types,
@@ -227,12 +240,13 @@ An input error occurs before Decoy contacts an upstream.
 Forwards the matched request (method, path and query, headers, body) to a real upstream instead of
 mocking it:
 
-```yaml
+```yaml title="mocks/routes/profile.yaml"
 id: profile
 transport: http
 match:
   method: GET
   path: /api/profile
+
 cases:
   any:
     match: {}
@@ -260,7 +274,7 @@ instead of reaching the upstream, so it can't leave the base path.
 A request no active Case matches gets `501` with `x-mock-miss: true` and a body that says why each
 active route entry, checked bottom-to-top, did not match:
 
-```json
+```json title="HTTP 501 mock-miss response"
 {
   "error": "no active route case matched request",
   "candidates": [

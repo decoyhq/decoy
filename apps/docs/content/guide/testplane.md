@@ -10,8 +10,7 @@ npm i -D @decoyhq/cli @decoyhq/testplane
 
 The setup is one `plugins` entry:
 
-```ts
-// .testplane.conf.ts
+```ts title=".testplane.conf.ts"
 import type { DecoyOptions } from '@decoyhq/testplane'
 import type { ConfigInput } from 'testplane'
 
@@ -19,6 +18,7 @@ export default {
   gridUrl: 'local',
   baseUrl: 'http://127.0.0.1:4173',
   browsers: { chrome: { desiredCapabilities: { browserName: 'chrome' } } },
+
   plugins: {
     '@decoyhq/testplane': {
       command: 'decoy serve --config mocks/decoy.yaml',

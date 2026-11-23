@@ -31,7 +31,7 @@ Success returns `200` with the Session's Selection. Unknown Collections or Behav
 malformed JSON and unknown body fields return `400 {"error":"..."}`, a missing JSON content type
 returns `415`, and unknown `/__decoy__` paths return `404`.
 
-```sh
+```sh title="Override a Behavior in test-42"
 curl -X POST localhost:8080/__decoy__/control/useRoute \
   -H 'x-mock-session: test-42' \
   -H 'content-type: application/json' \
@@ -43,7 +43,7 @@ curl -X POST localhost:8080/__decoy__/control/useRoute \
 `POST /__decoy__/control/send` pushes a message to the live connections of a Route: open
 [server-streaming gRPC calls](grpc.md#server-streaming) and [WebSocket](websocket.md) sockets.
 
-```sh
+```sh title="Push a gRPC message in test-42"
 curl -X POST localhost:8080/__decoy__/control/send \
   -H 'x-mock-session: test-42' \
   -H 'content-type: application/json' \
@@ -79,7 +79,7 @@ for the other verbs.
 `POST /__decoy__/control/wait` with `connected: true` returns once the caller's Session has a live
 connection of the Route, so a test can `send` knowing the page's socket or stream is open.
 
-```sh
+```sh title="Wait for a connection in test-42"
 curl -X POST localhost:8080/__decoy__/control/wait \
   -H 'x-mock-session: test-42' \
   -H 'content-type: application/json' \

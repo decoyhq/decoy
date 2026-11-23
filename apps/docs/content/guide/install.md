@@ -4,14 +4,12 @@ Decoy is one native binary, `decoy`. Pick the channel that fits your project.
 
 ## Install script (standalone)
 
-```sh
-# macOS / Linux
+```sh title="macOS / Linux"
 curl -fsSL https://github.com/decoyhq/decoy/releases/latest/download/install.sh | sh
 ```
 
-```powershell
-# Windows
-irm https://github.com/decoyhq/decoy/releases/latest/download/install.ps1 | iex
+```powershell title="Windows PowerShell"
+irm 'https://github.com/decoyhq/decoy/releases/latest/download/install.ps1' | iex
 ```
 
 Installs the release marked Latest to `~/.decoy/bin`, after checking it against the release's
@@ -23,7 +21,7 @@ one; `DECOY_INSTALL_DIR` changes the directory. The Windows script adds the dire
 
 Upgrade in place with `decoy upgrade`. It re-runs the Latest install script into the directory of the
 running binary, unless the running version is already Latest or a newer pre-release. To move to
-another version, run that release's install script with `DECOY_INSTALL_DIR` set instead. npm installs refuse and point you to npm instead.
+another version, run that release's install script with `DECOY_INSTALL_DIR` set instead. If you installed Decoy as a project dependency, update it with your package manager instead.
 
 ## Install in a JavaScript or TypeScript project
 
@@ -36,6 +34,8 @@ npm i -D @decoyhq/cli
 `@decoyhq/cli` installs only the binary for your platform (linux x64/arm64, macOS x64/arm64, Windows
 x64) through an optional dependency. No install scripts run. For a pre-release, use `@decoyhq/cli@next` as the package name.
 
+To confirm the install, run `npm exec -- decoy --version`, `pnpm exec decoy --version`, `yarn decoy --version`, or `bun run decoy --version` from the project directory.
+
 ## GitHub Releases
 
 Every release has archives for the same platforms plus `SHA256SUMS`:
@@ -45,8 +45,8 @@ than musl's allocator but holds more memory (about 30 MB idle).
 
 ## From source
 
-```sh
+```sh title="Build the Decoy binary"
 cargo build --release -p decoy
 ```
 
-To make `@decoyhq/cli` run a source build, set `DECOY_BINARY_PATH=/path/to/decoy`.
+Check the build with `./target/release/decoy --version` (`.exe` on Windows). To make `@decoyhq/cli` run this binary, set `DECOY_BINARY_PATH` to its full path.

@@ -2,7 +2,7 @@
 
 A Transformer takes a value and produces another. For example, it might extract an ID from an object, decompress bytes, or turn a timestamp into a date string.
 
-A [Pipeline](transformer-pipelines.md) lets you chain these operations. Each step receives the previous step’s result. The input and output directions have their own lists of steps, so you can choose a different conversion for each direction.
+HTTP, gRPC, and WebSocket Routes can all use Transformers. A [Pipeline](transformer-pipelines.md) chains them: each step receives the previous step’s result. The input and output directions have separate lists, so you can choose a different conversion for each direction.
 
 ## Choose a command or a worker
 

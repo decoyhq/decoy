@@ -6,8 +6,9 @@ others plain http next to it.
 
 ## Turn it on
 
-```yaml
+```yaml title="decoy.yaml (excerpt)"
 tls: auto # or: tls: { cert: certs/dev.pem, key: certs/dev-key.pem }
+
 port: 8443 # https
 listeners:
   payments: 9443 # https

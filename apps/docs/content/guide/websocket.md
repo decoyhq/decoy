@@ -4,34 +4,38 @@ Decoy accepts WebSocket upgrades on its normal port, next to plain HTTP, gRPC an
 Point the client's socket URL at Decoy. With [TLS](tls.md) on, the same port serves `wss://`.
 
 Supported so far: text frames carrying JSON or plain text, `on: connect` Cases, timed replies,
-`close`, Control API `send`, and binary formats through [Transformers](#transformers).
+`close`, Control API `send`, and binary formats through [WebSocket Pipelines](#websocket-pipelines).
 
 ## WebSocket Routes
 
 One Route per socket. `match` takes the upgrade `path` and, optionally, `query` params the upgrade
 must carry, so several sockets can share one path:
 
-```yaml
-# mocks/routes/friend-socket.yaml
+```yaml title="mocks/routes/friend-socket.yaml"
 id: friend-socket
 transport: ws
 match:
   path: /subscribe
   query: { service: my-friend-webservice } # other params (client=browser) are ignored
+
 cases:
   hello:
     on: connect # runs once, when the socket opens
+
     behaviors:
       ping: { message: ping }
       silent: { messages: [] } # say nothing; the test sends ping
+
       unauthorized:
         message: { type: error, reason: unauthorized }
         close: { code: 4001, reason: unauthorized }
+
   status:
     match: { message: { type: get-status } } # runs on each matching message
     behaviors:
       online: { message: { id: '${ message.id }', status: online } }
       offline: { message: { id: '${ message.id }', status: offline } }
+
   subscribe:
     match: { message: { type: subscribe } }
     behaviors:
@@ -59,13 +63,13 @@ cases:
 
 Collections and Sessions work as for HTTP: `on: connect` Cases are entries like any other.
 
-```yaml
-# mocks/collections.yaml
+```yaml title="mocks/collections.yaml"
 - id: happy-path
   routes:
     - friend-socket:hello:ping
     - friend-socket:status:online
     - friend-socket:subscribe:updates
+
 - id: manual-start
   from: happy-path
   routes:
@@ -88,7 +92,7 @@ The Behavior-level `delay` works with either `message` or `messages`. An item-le
 adds a wait before that item, measured from the previous send. On the first item, the two
 delays add up. Both fields accept a nonnegative integer in milliseconds or a duration string with `ms` or `s`.
 
-```yaml
+```yaml title="mocks/routes/friend-socket.yaml (Behavior excerpt)"
 updates:
   delay: 1000
   messages:
@@ -114,7 +118,7 @@ Browsers can't set headers on `new WebSocket()`; under Playwright, the fixture's
 [`send`](sessions-and-control.md#send) pushes a message to every open socket of the Route in the
 caller's Session, skipping Cases:
 
-```sh
+```sh title="Push a text message in test-42"
 curl -X POST localhost:8080/__decoy__/control/send \
   -H 'x-mock-session: test-42' \
   -H 'content-type: application/json' \
@@ -123,26 +127,12 @@ curl -X POST localhost:8080/__decoy__/control/send \
 
 The [ws-node example](../../../../examples/ws-node) runs all of the above against a real client.
 
-## Transformers
+## WebSocket Pipelines
 
-Set `pipeline: <name>` on a Route to select its Pipeline from [decoy.yaml](config.md). Decoy runs
-`input` before matching Cases and `output` after rendering a Behavior or when sending a Control API
-message. Both directions run in the order listed.
+[Configure a Transformer Pipeline](transformer-pipelines.md) for setup shared by HTTP, gRPC, and WebSocket. On a WebSocket Route, `input` receives the frame payload before Case matching; an input command at the end of the Pipeline must emit JSON. `output` runs after the Behavior renders or when the Control API pushes a message. The final string becomes a text frame; the final bytes become a binary frame. Workers can use [per-connection state](../../../../packages/transformer).
 
-Use a [worker](../../../../packages/transformer) for per-connection state or protobuf host calls. Use a
-one-shot command for an executable such as `gzip`. A command reads stdin to EOF and returns bytes
-on stdout. Terminal input commands return JSON for Case matching. On output, worker strings become
-text frames and bytes become binary frames.
+The Control API `send` counts messages queued for delivery. The output Pipeline runs once per recipient connection. If it fails, Decoy logs the Transformer and skips that frame.
 
-The Control API `send` counts messages queued for delivery. The output Pipeline runs once per
-recipient connection. If it fails, Decoy logs the Transformer and skips that frame.
-
-Decoy validates referenced Transformers and directions when loading Routes. A worker can also
-check the authored output literal at startup when it is the first output step. Restart Decoy to
-apply worker config changes.
-
-Other languages can implement the [worker protocol](../../../../docs/reference/worker-protocol.md).
-
-A one-shot Transformer command has 5 seconds to finish. Decoy fails the transform if stdout exceeds 16 MiB or stderr exceeds 64 KiB. During a transform, each socket can buffer up to 64 subsequent data frames totaling at most 16 MiB. Across all sockets, the process budgets 64 MiB for read-ahead, charged in whole KiB with a minimum of 1 KiB per frame. Exceeding a read-ahead limit closes the socket requesting more space. Up to eight one-shot commands can run across all connections. When all slots are busy, the next command fails the transform before spawning.
+During a transform, each socket can buffer up to 64 subsequent data frames totaling at most 16 MiB. Across all sockets, the process budgets 64 MiB for read-ahead, charged in whole KiB with a minimum of 1 KiB per frame. Exceeding a read-ahead limit closes the socket requesting more space.
 
 Open sockets keep the Pipeline selected at upgrade. Protobuf host calls use the currently loaded descriptors, including after a reload. WebSocket request events capture the rendered Behavior reply before output transforms and delays. A captured reply can therefore differ from the frames that reach the client.

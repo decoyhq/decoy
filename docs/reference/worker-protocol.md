@@ -26,7 +26,7 @@ most 16 MiB; a longer length ends the worker as a protocol error. Decoy never se
 Values are msgpack. Wire bytes are msgpack `bin`; everything else is the JSON data model (nil, bool,
 integer, float, str, array, map with str keys). Each transport defines how the final value becomes a Case input or a wire payload.
 See the [HTTP](../../apps/docs/content/guide/routes.md#http-body-pipelines), [gRPC](../../apps/docs/content/guide/grpc.md#pipelines),
-and [WebSocket](../../apps/docs/content/guide/websocket.md#transformers) guides.
+and [WebSocket](../../apps/docs/content/guide/websocket.md#websocket-pipelines) guides.
 
 ## Messages
 

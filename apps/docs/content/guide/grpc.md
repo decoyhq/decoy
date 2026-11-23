@@ -10,11 +10,11 @@ For gRPC over TLS, turn on [TLS](tls.md); the same port then speaks gRPC over HT
 
 Decoy reads your `.proto` files at startup. List their import roots in `decoy.yaml`:
 
-```yaml
-# mocks/decoy.yaml
+```yaml title="mocks/decoy.yaml"
 routes: routes
 collections: collections.yaml
 port: 8080
+
 protos:
   roots: [../proto] # import paths; every .proto under them is compiled
   # descriptorSets: [build/api.binpb]   # precompiled FileDescriptorSets, if compiling is awkward
@@ -27,7 +27,7 @@ If a root holds more than you need, such as a monorepo `proto/` folder with serv
 compile together, list the entry files in `files`. Decoy compiles only those, and resolves their
 imports through `roots`:
 
-```yaml
+```yaml title="mocks/decoy.yaml (excerpt)"
 protos:
   roots: [../proto]
   files: [../proto/services/catalog/**/*.proto] # `*` stays in one folder, `**` crosses folders
@@ -37,28 +37,32 @@ Each pattern must match at least one `.proto` under a root.
 
 ## gRPC Routes
 
-```yaml
-# mocks/routes/approvals.yaml
+```yaml title="mocks/routes/approvals.yaml"
 id: approvals-get
 transport: grpc
 match:
   service: approvals.v1.Approvals # fully qualified, as in the proto
   method: GetApproval
+
 cases:
   pending:
     match:
       message: { id: a-1 }
+
     behaviors:
       ok:
         message: { id: a-1, state: PENDING, approvers: [alice] }
+
   any:
     behaviors:
       echo:
         message: { id: '${ message.id }', state: PENDING }
+
       not-found:
         status: NOT_FOUND
         message: 'approval ${ message.id } not found'
         metadata: { x-reason: missing }
+
       slow:
         delay: 2s
         message: { id: '${ message.id }', state: PENDING }
@@ -71,7 +75,7 @@ Collections, Sessions, and the Control API work exactly as for HTTP; addresses a
 
 Cases and templates see one call as:
 
-```json
+```json title="gRPC request envelope"
 {
   "service": "approvals.v1.Approvals",
   "method": "GetApproval",
@@ -104,11 +108,11 @@ Every string can be a `${ }` template, including `status`.
 A server-streaming method takes one request and answers with a `stream` of messages, each sent
 `delay` after the one before it:
 
-```yaml
-# mocks/routes/approvals-watch.yaml
+```yaml title="mocks/routes/approvals-watch.yaml"
 id: approvals-watch
 transport: grpc
 match: { service: approvals.v1.Approvals, method: WatchApprovals }
+
 cases:
   any:
     behaviors:
@@ -117,10 +121,12 @@ cases:
           - { payload: { id: '${ message.ids[0] }', state: PENDING } }
           - { payload: { id: '${ message.ids[0] }', state: APPROVED }, delay: 500ms }
         status: OK # end the call here
+
       gives-up:
         stream: [{ payload: { id: a-1, state: PENDING } }]
         status: ABORTED
         message: gave up
+
       live:
         stream: [{ payload: { id: a-1, state: PENDING } }] # no status: stays open
 ```
@@ -178,9 +184,10 @@ Nothing is forwarded to a real service: gRPC Routes have no Passthrough.
 
 Send `x-mock-session` as call metadata. It's an ordinary gRPC header, so any client can set it:
 
-```js
+```js title="Client call with Session metadata"
 const metadata = new grpc.Metadata()
 metadata.set('x-mock-session', 'test-42')
+
 client.getApproval({ id: 'a-1' }, metadata, callback)
 ```
 
@@ -194,15 +201,14 @@ list replaces it. Decoy decodes in list order and encodes in reverse order. Each
 (gRPC bodies are always framed); `protobuf`, if present, follows it.
 Without `protobuf`, the Route sees and answers raw bytes: `message` is a base64 string.
 
-```yaml
+```yaml title="mocks/routes/approvals.yaml (excerpt)"
 pipeline: [grpc-frame] # message is base64 bytes, e.g. `message: CgNhLTE=`
 ```
 
 To add a Transformer, select a named Pipeline with `pipeline: approval-ids` on the Route.
-For example, this worker normalizes IDs before matching and adds a prefix to each reply:
+For example, save this worker next to `decoy.yaml`. It normalizes IDs before matching and adds a prefix to each reply:
 
-```js
-// approval-ids.mjs, next to decoy.yaml
+```js title="approval-ids.mjs"
 import { defineTransformer } from '@decoyhq/transformer'
 
 defineTransformer({
@@ -213,10 +219,10 @@ defineTransformer({
 })
 ```
 
-```yaml
-# decoy.yaml
+```yaml title="decoy.yaml"
 transformers:
   ids: { worker: [node, approval-ids.mjs] }
+
 pipelines:
   approval-ids:
     input: [grpc-frame, protobuf, ids]
