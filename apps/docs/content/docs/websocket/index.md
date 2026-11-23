@@ -129,7 +129,7 @@ The [ws-node example](https://github.com/decoyhq/decoy/tree/main/examples/ws-nod
 
 ## WebSocket Pipelines
 
-[Configure a Transformer Pipeline](../transformer-pipelines/index.md) for setup shared by HTTP, gRPC, and WebSocket. On a WebSocket Route, `input` receives the frame payload before Case matching; an input command at the end of the Pipeline must emit JSON. `output` runs after the Behavior renders or when the Control API pushes a message. The final string becomes a text frame; the final bytes become a binary frame. Workers can use [per-connection state](../transformer-sdk/index.md).
+[Configure a Transformer Pipeline](../transformer-pipelines/index.md) for setup shared by HTTP, gRPC, and WebSocket. On a WebSocket Route, `input` receives the frame payload before Case matching; an input command at the end of the Pipeline must emit JSON. `output` runs after the Behavior renders or when the Control API pushes a message. The final string becomes a text frame; the final bytes become a binary frame. Workers can use [per-connection state](../transformer-sdk/index.mdx).
 
 The Control API `send` counts messages queued for delivery. The output Pipeline runs once per recipient connection. If it fails, Decoy logs the Transformer and skips that frame.
 

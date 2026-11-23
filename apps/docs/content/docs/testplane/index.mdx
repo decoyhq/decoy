@@ -4,13 +4,12 @@ import { PackageManagerTabs } from '@rspress/core/theme'
 
 `@decoyhq/testplane` is a [Testplane](https://testplane.io) plugin. It starts `decoy` for the run,
 gives each test its own Session, routes the browser's API calls to Decoy, and exposes the Control
-API as `decoy(browser)`.
+API as `decoy(browser)`. It requires Node.js 24 or later and Testplane 8 or later.
 
 <PackageManagerTabs
   command={{
     npm: 'npm install -D @decoyhq/cli @decoyhq/testplane',
     pnpm: 'pnpm add -D @decoyhq/cli @decoyhq/testplane',
-    yarn: 'yarn add -D @decoyhq/cli @decoyhq/testplane',
     bun: 'bun add -d @decoyhq/cli @decoyhq/testplane',
   }}
 />

@@ -1,7 +1,7 @@
 # Transformer worker protocol, version 1
 
 Use this specification to write a Transformer worker in another language. It describes the
-messages exchanged by Decoy and the [TypeScript SDK](../transformer-sdk/index.md).
+messages exchanged by Decoy and the [TypeScript SDK](../transformer-sdk/index.mdx).
 To configure a worker for a Route, see [Configure a Transformer Pipeline](../transformer-pipelines/index.md).
 
 ## Process

@@ -15,11 +15,13 @@ irm 'https://github.com/decoyhq/decoy/releases/latest/download/install.ps1' | ie
 ```
 
 Installs the release marked Latest to `~/.decoy/bin`, after checking it against the release's
-`SHA256SUMS`. Pre-releases are not Latest until promoted. Every release carries its own copy of the
-scripts, so pin a version (e.g. in CI) by taking them from that release:
-`…/releases/download/v0.1.0-alpha.6/install.sh`. `DECOY_VERSION` or `sh -s -- <version>` also picks
-one; `DECOY_INSTALL_DIR` changes the directory. The Windows script adds the directory to your user
-`PATH`; on macOS/Linux add it yourself.
+`SHA256SUMS`. Pre-releases are not Latest until promoted. `DECOY_INSTALL_DIR` changes the install
+directory. The Windows script adds the directory to your user `PATH`; on macOS/Linux add it yourself.
+
+To pin a version (for example, in CI), replace `latest/download` in the installer URL with
+`download/<tag>`, using the exact tag from [GitHub Releases](https://github.com/decoyhq/decoy/releases).
+Each release's installer defaults to that release. To override the version, set `DECOY_VERSION`
+before running the installer, or pass it to the shell installer with `sh -s -- <version>`.
 
 Upgrade in place with `decoy upgrade`. It re-runs the Latest install script into the directory of the
 running binary, unless the running version is already Latest or a newer pre-release. To move to
@@ -27,21 +29,21 @@ another version, run that release's install script with `DECOY_INSTALL_DIR` set 
 
 ## Install in a JavaScript or TypeScript project
 
-Add `@decoyhq/cli` as a development dependency in your project directory.
+The npm package requires Node.js 24 or later. Add `@decoyhq/cli` as a development dependency in your
+project directory. The standalone binary doesn't require Node.js.
 
 <PackageManagerTabs
   command={{
     npm: 'npm install -D @decoyhq/cli',
     pnpm: 'pnpm add -D @decoyhq/cli',
-    yarn: 'yarn add -D @decoyhq/cli',
     bun: 'bun add -d @decoyhq/cli',
   }}
 />
 
 `@decoyhq/cli` installs only the binary for your platform (linux x64/arm64, macOS x64/arm64, Windows
-x64) through an optional dependency. No install scripts run. For a pre-release, use `@decoyhq/cli@next` as the package name.
+x64) through an optional dependency. No install scripts run.
 
-To confirm the install, run `npm exec -- decoy --version`, `pnpm exec decoy --version`, `yarn decoy --version`, or `bun run decoy --version` from the project directory.
+To confirm the install, run `npm exec -- decoy --version`, `pnpm exec decoy --version`, or `bun run decoy --version` from the project directory.
 
 ## GitHub Releases
 

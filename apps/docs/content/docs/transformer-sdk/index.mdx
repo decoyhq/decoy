@@ -1,8 +1,20 @@
+import { PackageManagerTabs } from '@rspress/core/theme'
+
 # @decoyhq/transformer
 
 Write Decoy Transformer workers in TypeScript. A worker can turn an app's wire format (msgpack
 envelopes, binary headers in front of protobuf, compression) into the JSON that Cases match and
 Behaviors render, and back. HTTP, gRPC, and WebSocket Routes can use workers. See [Configure a Transformer Pipeline](../transformer-pipelines/index.md) for setup.
+
+Install the SDK and the MessagePack library used in this example (Node.js 24+):
+
+<PackageManagerTabs
+  command={{
+    npm: 'npm install @decoyhq/transformer @msgpack/msgpack',
+    pnpm: 'pnpm add @decoyhq/transformer @msgpack/msgpack',
+    bun: 'bun add @decoyhq/transformer @msgpack/msgpack',
+  }}
+/>
 
 This example adapts binary and text WebSocket messages. Save it as `workers/envelope.ts`:
 

@@ -3,13 +3,13 @@ import { PackageManagerTabs } from '@rspress/core/theme'
 # Playwright
 
 `@decoyhq/playwright` routes your browser's API calls to `decoy`, gives each test its own Session, and
-exposes the Control API as a fixture.
+exposes the Control API as a fixture. It requires Node.js 24 or later and `@playwright/test`
+1.48 or later (below 2.0).
 
 <PackageManagerTabs
   command={{
     npm: 'npm install -D @decoyhq/cli @decoyhq/playwright',
     pnpm: 'pnpm add -D @decoyhq/cli @decoyhq/playwright',
-    yarn: 'yarn add -D @decoyhq/cli @decoyhq/playwright',
     bun: 'bun add -d @decoyhq/cli @decoyhq/playwright',
   }}
 />

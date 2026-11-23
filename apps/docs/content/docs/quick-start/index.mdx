@@ -9,13 +9,12 @@ Make `GET /users/123` return Ada. Once you see the response, add a second outcom
 
 ## Install the CLI
 
-For a project install, run the command in the directory containing your package manifest. In an empty directory, run `npm init -y` first. You will also need a POSIX shell and curl.
+For a project install, use Node.js 24 or later and run the command in the directory containing your package manifest. In an empty directory, run `npm init -y` first. You will also need a POSIX shell and curl.
 
 <PackageManagerTabs
   command={{
     npm: 'npm install -D @decoyhq/cli',
     pnpm: 'pnpm add -D @decoyhq/cli',
-    yarn: 'yarn add -D @decoyhq/cli',
     bun: 'bun add -d @decoyhq/cli',
   }}
 />
@@ -62,7 +61,6 @@ Run the server from the directory containing `mocks/`. Leave this terminal open.
   command={{
     npm: 'npm exec --package=@decoyhq/cli -- decoy serve --routes mocks/routes --collections mocks/collections.yaml --port 8080 --watch',
     pnpm: 'pnpm exec decoy serve --routes mocks/routes --collections mocks/collections.yaml --port 8080 --watch',
-    yarn: 'yarn decoy serve --routes mocks/routes --collections mocks/collections.yaml --port 8080 --watch',
     bun: 'bun run decoy serve --routes mocks/routes --collections mocks/collections.yaml --port 8080 --watch',
   }}
 />
