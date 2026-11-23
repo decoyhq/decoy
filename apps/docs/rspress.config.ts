@@ -51,7 +51,7 @@ export default defineConfig({
   icon: '/brand/decoy.svg',
   route: { cleanUrls: true },
   llms: true,
-  webMcp: false,
+  webMcp: true,
   globalStyles: resolve('theme/site.css'),
   themeConfig: {
     darkMode: 'dark',
