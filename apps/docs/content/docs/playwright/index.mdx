@@ -37,22 +37,15 @@ export default defineConfig<DecoyTestOptions>({
 export { setup as default } from '@decoyhq/playwright'
 ```
 
-Import `test` and `expect` from `@decoyhq/playwright` in your tests. Its `test` already includes the
-Decoy fixtures. Next, [switch responses in a test](responses/index.md). For a page that opens a
-socket, [bridge browser WebSockets](websockets/index.md).
-
-### Use Decoy with your own fixtures
-
-If you already have a shared `test` with custom fixtures, extend it with `createDecoyFixtures()`.
-Import `test` from that shared file instead.
-
 ```ts title="tests/fixtures.ts"
 import { createDecoyFixtures, type DecoyFixtures } from '@decoyhq/playwright'
-import { test as base } from './app-fixtures'
+import { test as base } from '@playwright/test'
 
 export const test = base.extend<DecoyFixtures>(createDecoyFixtures())
-export { expect } from '@decoyhq/playwright'
+export { expect } from '@playwright/test'
 ```
+
+Next, [switch responses in a test](responses/index.md). For a page that opens a socket, [bridge browser WebSockets](websockets/index.md).
 
 ## Options (`use.decoyOptions`)
 
