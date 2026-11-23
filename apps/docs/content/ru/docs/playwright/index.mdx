@@ -1,0 +1,62 @@
+import { PackageManagerTabs } from '@rspress/core/theme'
+
+# Playwright
+
+`@decoyhq/playwright` направляет вызовы API из браузера в `decoy`, выделяет каждому тесту свою Session и предоставляет Control API через фикстуру. Нужны Node.js 24 или новее и `@playwright/test` версии от 1.48 до 2.0 (не включая 2.0).
+
+<PackageManagerTabs
+  command={{
+    npm: 'npm install -D @decoyhq/cli @decoyhq/playwright',
+    pnpm: 'pnpm add -D @decoyhq/cli @decoyhq/playwright',
+    bun: 'bun add -d @decoyhq/cli @decoyhq/playwright',
+  }}
+/>
+
+```ts title="playwright.config.ts"
+import type { DecoyTestOptions } from '@decoyhq/playwright'
+import { defineConfig } from '@playwright/test'
+
+export default defineConfig<DecoyTestOptions>({
+  globalSetup: './global-setup.ts',
+  use: {
+    baseURL: 'http://127.0.0.1:4173',
+
+    decoyOptions: {
+      command: 'decoy serve --config mocks/decoy.yaml',
+      urls: '**/api/**', // browser requests sent to Decoy
+      collection: 'happy-path', // each test's Session starts here
+    },
+  },
+})
+```
+
+```ts title="global-setup.ts"
+export { setup as default } from '@decoyhq/playwright'
+```
+
+```ts title="tests/fixtures.ts"
+import { createDecoyFixtures, type DecoyFixtures } from '@decoyhq/playwright'
+import { test as base } from '@playwright/test'
+
+export const test = base.extend<DecoyFixtures>(createDecoyFixtures())
+export { expect } from '@playwright/test'
+```
+
+Теперь [переключите ответы в тесте](responses/index.md). Если страница открывает сокет, [подключите её WebSocket к Decoy](websockets/index.md).
+
+## Параметры (`use.decoyOptions`)
+
+| Параметр              | По умолчанию                  | Назначение                                                                         |
+| --------------------- | ----------------------------- | ---------------------------------------------------------------------------------- |
+| `url`                 | `http://127.0.0.1:8080`       | Адрес Decoy.                                                                       |
+| `command`             | `decoy serve`                 | Команда оболочки, которую `setup` выполняет, если Decoy не запущен.                |
+| `cwd`                 | Каталог файла конфигурации    | Рабочий каталог для `command`.                                                     |
+| `reuseExistingServer` | `true` локально, `false` в CI | Использовать уже работающий Decoy, если он отвечает на проверку работоспособности. |
+| `timeout`             | `60000`                       | Сколько миллисекунд `setup` ждёт успешной проверки.                                |
+| `urls`                | Нет                           | Glob, RegExp или их список для перенаправления запросов браузера.                  |
+| `webSocketUrls`       | Нет                           | Glob, RegExp или их список для перенаправления WebSocket страницы.                 |
+| `collection`          | Collection Decoy по умолчанию | Начальная Collection Session каждого теста.                                        |
+
+В проектах без `decoyOptions` Decoy выключен. `setup` запускает один экземпляр Decoy на каждый уникальный `url`: проекты с одним `url` делят экземпляр, каждый другой `url` получает свою `command`. При запуске `command` в `PATH` добавляется `node_modules/.bin` (поиск от `cwd` вверх). При завершении отправляется SIGTERM, а если Decoy не вышел через 8 секунд — SIGKILL (в Windows — `taskkill /T /F`). Проекты с общим `url` должны иметь одинаковые `command`, `cwd`, `reuseExistingServer` и `timeout`, иначе `setup` завершится ошибкой.
+
+Рабочая версия есть в [`examples/playwright-ts-e2e`](https://github.com/decoyhq/decoy/tree/main/examples/playwright-ts-e2e).

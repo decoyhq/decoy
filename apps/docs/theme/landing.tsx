@@ -1,27 +1,32 @@
 import { useState } from 'react'
-import { withBase } from '@rspress/core/runtime'
+import { useLang, withBase } from '@rspress/core/runtime'
 
 export function Landing() {
   const [missing, setMissing] = useState(false)
+  const russian = useLang() === 'ru'
+  const docs = russian ? '/ru/docs/' : '/docs/'
   return (
     <main className="pond-page">
       <div className="pond-layout">
         <div className="pond-intro">
           <h1>
-            Same request.
+            {russian ? 'Тот же запрос.' : 'Same request.'}
             <br />
-            Different answer.
+            {russian ? 'Другой ответ.' : 'Different answer.'}
           </h1>
           <p>
-            Decoy mocks HTTP, gRPC, and WebSocket services on your machine. Define responses in YAML
-            and switch between them while your app runs.
+            {russian
+              ? 'Decoy имитирует сервисы HTTP, gRPC и WebSocket на вашей машине. Опишите ответы в YAML и переключайте их без остановки приложения.'
+              : 'Decoy mocks HTTP, gRPC, and WebSocket services on your machine. Define responses in YAML and switch between them while your app runs.'}
           </p>
           <div className="pond-links">
-            <a href={withBase('/docs/quick-start/')}>Mock your first request</a>
-            <a href={withBase('/docs/')}>Read the docs</a>
+            <a href={withBase(`${docs}quick-start/`)}>
+              {russian ? 'Запустите первый мок' : 'Mock your first request'}
+            </a>
+            <a href={withBase(docs)}>{russian ? 'Документация' : 'Read the docs'}</a>
           </div>
         </div>
-        <section className="pond-demo" aria-label="Example response">
+        <section className="pond-demo" aria-label={russian ? 'Пример ответа' : 'Example response'}>
           <div className="pond-water" aria-hidden="true">
             <svg viewBox="0 0 460 145" preserveAspectRatio="xMidYMax meet">
               <g fill="none" stroke="currentColor">
@@ -47,7 +52,7 @@ export function Landing() {
               </pre>
             </div>
             <fieldset>
-              <legend>Switch collection</legend>
+              <legend>{russian ? 'Выберите Collection' : 'Switch collection'}</legend>
               {['happy-path', 'no-users'].map((name, i) => (
                 <label key={name}>
                   <input

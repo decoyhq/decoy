@@ -1,5 +1,5 @@
 //! One worker process: the handshake, calls matched to their results by id, host calls, and its
-//! stderr. `apps/docs/content/docs/transformer-worker-protocol/index.md` is the contract.
+//! stderr. `apps/docs/content/en/docs/transformer-worker-protocol/index.md` is the contract.
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};

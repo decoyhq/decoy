@@ -44,7 +44,7 @@ pub struct ServeConfig {
     pub commands: BTreeMap<String, CommandsConfig>,
 }
 
-/// One worker process (`apps/docs/content/docs/transformer-worker-protocol/index.md`).
+/// One worker process (`apps/docs/content/en/docs/transformer-worker-protocol/index.md`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerConfig {
     pub command: Vec<String>,

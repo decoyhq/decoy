@@ -37,4 +37,4 @@ rendered ID with `ref-` before the built-ins encode and frame the reply.
 | useRoute                         | One Session overrides `approvals-get:pending` to `approved`.                                                                                 |
 | unmapped call                    | A method no Route serves fails closed with `UNIMPLEMENTED` and `x-mock-miss: true`.                                                          |
 
-See the [gRPC guide](../../apps/docs/content/docs/grpc/index.md).
+See the [gRPC guide](../../apps/docs/content/en/docs/grpc/index.md).

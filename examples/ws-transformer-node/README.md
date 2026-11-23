@@ -51,6 +51,6 @@ Try breaking it: a typo in a payload (`nmae: Ann` in `mocks/routes/rpc.yaml`) fa
 the worker's `check`; a `throw` in a worker's `input` shows up as an error event with the frame's
 bytes and the worker's stack.
 
-See [Configure a Transformer Pipeline](../../apps/docs/content/docs/transformer-pipelines/index.md) for shared setup.
+See [Configure a Transformer Pipeline](../../apps/docs/content/en/docs/transformer-pipelines/index.md) for shared setup.
 
 [Transformer benchmark notes](transformer-benchmarks.md) compare worker and command execution.

@@ -28,4 +28,4 @@ test-only TLS code: `fetch` and grpc-js `credentials.createSsl()` both use Node'
 | https, http and gRPC/TLS   | One order joins a payment (https), a customer (http) and stock (gRPC over TLS).   |
 | one Session, all listeners | `useCollection` sent to the http listener switches the gRPC reply on the TLS one. |
 
-See the [TLS guide](../../apps/docs/content/docs/tls/index.md).
+See the [TLS guide](../../apps/docs/content/en/docs/tls/index.md).
