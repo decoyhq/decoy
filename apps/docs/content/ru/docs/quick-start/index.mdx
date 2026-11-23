@@ -1,15 +1,15 @@
 ---
-title: Запустите первый мок
-description: Верните данные пользователя, а затем переключите тот же запрос на ответ 404 без остановки Decoy.
+title: Первый мок
+description: Настройте ответ с данными пользователя, а затем верните 404 на тот же запрос без перезапуска Decoy.
 ---
 
 import { PackageManagerTabs } from '@rspress/core/theme'
 
-Сделайте так, чтобы `GET /users/123` возвращал данные Ады. Проверив ответ, добавьте второй вариант и переключитесь на него без остановки сервера.
+Сначала настроим Decoy так, чтобы на запрос `GET /users/123` он возвращал данные Ады. Затем добавим ответ 404 и переключимся на него без перезапуска сервера.
 
 ## Установите CLI
 
-Для установки в проект нужен Node.js 24 или новее. Выполняйте команду в каталоге с манифестом пакета. Если каталог пуст, сначала выполните `npm init -y`. Также понадобятся POSIX-совместимая оболочка и curl.
+Для установки в проект нужен Node.js 24 или новее. Выполните команду в каталоге с `package.json`. Если каталог пуст, сначала выполните `npm init -y`. Также понадобятся POSIX-совместимая оболочка и curl.
 
 <PackageManagerTabs
   command={{
@@ -29,7 +29,7 @@ import { PackageManagerTabs } from '@rspress/core/theme'
 mkdir -p mocks/routes
 ```
 
-Сохраните следующий [Route](../terms/index.md#route) в `mocks/routes/users.yaml`. Он обрабатывает `GET /users/{id}`. [Case](../terms/index.md#case) `user-123` выбирает запросы с ID `123`, а его [Behavior](../terms/index.md#behavior) `success` возвращает данные Ады.
+Сохраните этот [Route](../terms/index.md#route) в `mocks/routes/users.yaml`. Маршрут подходит для запросов `GET /users/{id}`. Условие `user-123` ([Case](../terms/index.md#case)) проверяет, что ID равен `123`, а правило `success` ([Behavior](../terms/index.md#behavior)) возвращает данные Ады.
 
 ```yaml title="mocks/routes/users.yaml"
 id: users-by-id
@@ -46,7 +46,7 @@ cases:
         body: { id: '123', name: Ada }
 ```
 
-Создайте [Collection](../terms/index.md#collection) `happy-path`, чтобы при запуске Decoy использовал ответ `success`.
+Создайте `happy-path` ([Collection](../terms/index.md#collection)), чтобы при запуске Decoy использовал ответ `success`.
 
 ```yaml title="mocks/collections.yaml"
 - id: happy-path
@@ -81,7 +81,7 @@ curl -i http://localhost:8080/users/123
 
 ## Переключите ответ на 404
 
-Замените файл Route этой версией. Она добавляет Behavior `missing` рядом с `success`.
+Замените содержимое `mocks/routes/users.yaml` следующим YAML. В нём у `user-123` есть ещё один Behavior, `missing`.
 
 ```yaml title="mocks/routes/users.yaml"
 id: users-by-id
@@ -102,14 +102,14 @@ cases:
         body: not found
 ```
 
-Добавьте вторую Collection в конец `mocks/collections.yaml`. Её [Behavior address](../terms/index.md#behavior-address) заканчивается на `missing`, поэтому для того же запроса теперь доступен другой ответ.
+Добавьте вторую коллекцию в конец `mocks/collections.yaml`. В её [адресе Behavior](../terms/index.md#behavior-address) маршрут и условие те же, но вместо `success` указано `missing`.
 
 ```yaml title="mocks/collections.yaml (append this entry)"
 - id: user-missing
   routes: [users-by-id:user-123:missing]
 ```
 
-Когда Decoy перечитает файлы, переключите Collection из второго терминала.
+Когда Decoy загрузит изменения, переключите коллекцию из второго терминала.
 
 ```sh title="Terminal 2: switch to user-missing"
 curl -X POST http://localhost:8080/__decoy__/control/useCollection \
@@ -129,8 +129,8 @@ curl -i http://localhost:8080/users/123
 curl -i http://localhost:8080/orders
 ```
 
-Убедитесь, что получили **501 Not Implemented** и `x-mock-miss: true`. Decoy сообщает, что не совпало, вместо того чтобы пересылать запрос реальному сервису. Подробнее — в разделе [Что происходит, если мок не найден](../routes/index.md#misses-are-fail-closed).
+Убедитесь, что получили **501 Not Implemented** и `x-mock-miss: true`. Decoy объясняет, почему мок не подошёл, и не отправляет запрос реальному сервису. Подробнее в разделе [Что происходит, если мок не найден](../routes/index.md#misses-are-fail-closed).
 
 Остановите Decoy сочетанием Ctrl+C в терминале, где запущен сервер.
 
-Чтобы сохранить настройки в проекте, [перенесите флаги в `decoy.yaml`](../config/index.md). Чтобы сопоставить запрос с другим пользователем, добавьте [Case](../routes/index.md#case-match). Для переключения ответа из браузерного теста настройте [Playwright](../playwright/index.mdx) или [Testplane](../testplane/index.mdx).
+Чтобы сохранить настройки в проекте, [перенесите флаги в `decoy.yaml`](../config/index.md). Чтобы настроить ответ для другого пользователя, добавьте [Case](../routes/index.md#case-match). Для переключения ответа из браузерного теста настройте [Playwright](../playwright/index.mdx) или [Testplane](../testplane/index.mdx).

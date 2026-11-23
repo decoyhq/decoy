@@ -43,11 +43,11 @@ const russianLabels = {
   Overview: 'Обзор',
   Install: 'Установка',
   'Quick start': 'Быстрый старт',
-  'Runnable examples': 'Примеры для запуска',
+  'Runnable examples': 'Готовые примеры',
   Glossary: 'Глоссарий',
   'Write mocks': 'Настройка моков',
-  'Configure a Pipeline': 'Настройка Pipeline',
-  'Worker protocol': 'Протокол Transformer worker',
+  'Configure a Pipeline': 'Настройка цепочки преобразований',
+  'Worker protocol': 'Протокол воркера',
   'Run Decoy': 'Запуск Decoy',
   Configuration: 'Конфигурация',
   'Terminal UI': 'Терминальный интерфейс',
@@ -57,7 +57,7 @@ const russianLabels = {
   'Bridge browser WebSockets': 'Подключение WebSocket браузера',
   'Set up Testplane': 'Настройка Testplane',
   Reference: 'Справочник',
-  'Sessions and the Control API': 'Sessions и Control API',
+  'Sessions and the Control API': 'Сессии и Control API',
 }
 const sidebar = Object.entries(groups).map(([text, pages]) => ({
   text,

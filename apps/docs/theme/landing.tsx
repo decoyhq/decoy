@@ -16,12 +16,12 @@ export function Landing() {
           </h1>
           <p>
             {russian
-              ? 'Decoy имитирует сервисы HTTP, gRPC и WebSocket на вашей машине. Опишите ответы в YAML и переключайте их без остановки приложения.'
+              ? 'Decoy подменяет HTTP, gRPC и WebSocket-сервисы на вашей машине. Задайте ответы в YAML и меняйте их без перезапуска приложения.'
               : 'Decoy mocks HTTP, gRPC, and WebSocket services on your machine. Define responses in YAML and switch between them while your app runs.'}
           </p>
           <div className="pond-links">
             <a href={withBase(`${docs}quick-start/`)}>
-              {russian ? 'Запустите первый мок' : 'Mock your first request'}
+              {russian ? 'Настроить первый мок' : 'Mock your first request'}
             </a>
             <a href={withBase(docs)}>{russian ? 'Документация' : 'Read the docs'}</a>
           </div>
@@ -52,7 +52,7 @@ export function Landing() {
               </pre>
             </div>
             <fieldset>
-              <legend>{russian ? 'Выберите Collection' : 'Switch collection'}</legend>
+              <legend>{russian ? 'Выберите коллекцию' : 'Switch collection'}</legend>
               {['happy-path', 'no-users'].map((name, i) => (
                 <label key={name}>
                   <input
