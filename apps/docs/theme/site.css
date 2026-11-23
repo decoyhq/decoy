@@ -1,4 +1,5 @@
 @import '../src/styles/fonts.css';
+@import './landing.css';
 @font-face {
   font-family: Montserrat;
   src: url('../src/fonts/montserrat.woff2') format('woff2');
