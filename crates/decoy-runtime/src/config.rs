@@ -40,7 +40,7 @@ pub struct ServeConfig {
     /// Transformers configured with a persistent worker.
     pub workers: BTreeMap<String, WorkerConfig>,
     /// Named step lists a Route uses with `pipeline: <name>`.
-    pub pipelines: BTreeMap<String, PipelineConfig>,
+    pub pipelines: BTreeMap<String, PipelineSpec>,
     pub commands: BTreeMap<String, CommandsConfig>,
 }
 
@@ -64,6 +64,79 @@ pub struct PipelineConfig {
     pub input: Vec<String>,
     #[serde(default)]
     pub output: Vec<String>,
+}
+
+/// A named Pipeline as authored in decoy.yaml.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PipelineSpec {
+    Explicit(PipelineConfig),
+    Shorthand(Vec<String>),
+}
+
+impl<'de> Deserialize<'de> for PipelineSpec {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::value::{MapAccessDeserializer, SeqAccessDeserializer};
+
+        struct PipelineVisitor;
+        impl<'de> serde::de::Visitor<'de> for PipelineVisitor {
+            type Value = PipelineSpec;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a list of steps or a mapping with `input` and `output`")
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                Vec::deserialize(SeqAccessDeserializer::new(seq)).map(PipelineSpec::Shorthand)
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<Self::Value, A::Error> {
+                PipelineConfig::deserialize(MapAccessDeserializer::new(map))
+                    .map(PipelineSpec::Explicit)
+            }
+        }
+        deserializer.deserialize_any(PipelineVisitor)
+    }
+}
+
+impl PipelineSpec {
+    /// Expand after workers have announced the directions they support.
+    pub(crate) fn expand(
+        &self,
+        workers: &crate::workers::Workers,
+        commands: &BTreeMap<String, CommandsConfig>,
+    ) -> PipelineConfig {
+        use crate::workers::Op;
+
+        let steps = match self {
+            Self::Explicit(config) => return config.clone(),
+            Self::Shorthand(steps) => steps,
+        };
+        let mut config = PipelineConfig::default();
+        for name in steps {
+            let (input, output) = if let Some(worker) = workers.get(name) {
+                (worker.supports(Op::Input), worker.supports(Op::Output))
+            } else if let Some(command) = commands.get(name) {
+                (command.input.is_some(), command.output.is_some())
+            } else {
+                // Built-ins run both ways; leave unknown names for normal validation.
+                (true, true)
+            };
+            if input {
+                config.input.push(name.clone());
+            }
+            if output {
+                config.output.push(name.clone());
+            }
+        }
+        config.output.reverse();
+        config
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -286,7 +359,7 @@ struct NativeConfigFile {
     #[serde(default)]
     transformers: BTreeMap<String, TransformerFile>,
     #[serde(default)]
-    pipelines: BTreeMap<String, PipelineConfig>,
+    pipelines: BTreeMap<String, PipelineSpec>,
 }
 
 impl ServeConfig {

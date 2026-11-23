@@ -183,7 +183,11 @@ fn load(config: &ServeConfig, workers: &crate::workers::Workers) -> Result<Start
                 .clone()
                 .map(|base_url| PassthroughTarget { base_url }),
             protos,
-            pipelines: config.pipelines.clone(),
+            pipelines: config
+                .pipelines
+                .iter()
+                .map(|(name, spec)| (name.clone(), spec.expand(workers, &config.commands)))
+                .collect(),
             commands: config.commands.clone(),
             workers: workers.clone(),
         },

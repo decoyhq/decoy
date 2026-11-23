@@ -229,15 +229,16 @@ pipelines:
     output: [ids, protobuf, grpc-frame]
 ```
 
-Each direction runs in the order written. Input starts with the framed request bytes.
+The explicit lists run in the order written. You can also write `approval-ids: [grpc-frame, protobuf, ids]`:
+the [shorthand](../transformer-pipelines/index.md#use-a-shared-step-list) reverses the steps on output.
+Input starts with the framed request bytes.
 Here `grpc-frame` removes the frame, `protobuf` decodes the request using the method's
 input type, and the Case sees the worker's result as `message`. Output starts with the
 rendered reply. The worker changes it, `protobuf` encodes it using the method's output
 type, and `grpc-frame` adds the frame the client expects. The same output steps apply to
 each server-streamed reply and to Control API pushes. A nonempty output list must return wire bytes.
 An omitted or empty list uses the default gRPC codec and its startup protobuf validation for that
-direction. Nonempty lists run in the authored order, including custom steps between built-ins.
-Decoy rejects incompatible adjacent built-ins at startup; a custom step can change the value type. An input command at the end of
+direction. Decoy rejects incompatible adjacent built-ins at startup; a custom step can change the value type. An input command at the end of
 the list must emit JSON for Case matching. A worker can return a JSON value or bytes,
 which Cases see as a base64 string. A worker can call `miss` to skip its Route. If no
 other Case matches, the client gets `UNIMPLEMENTED`. A named input step that fails

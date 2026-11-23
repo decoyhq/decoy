@@ -533,7 +533,7 @@ fn write_json_worker_frames(fixture: &Fixture, direction: &str) {
 
 #[cfg(unix)]
 #[tokio::test]
-async fn passthrough_labels_structured_output_as_json() {
+async fn shorthand_with_output_only_worker_labels_passthrough_output_as_json() {
     let (target, _received, upstream) = spawn_upstream_with_response(
         b"HTTP/1.1 200 OK\r\ncontent-type: application/msgpack\r\ncontent-length: 3\r\n\r\nabc",
     );
@@ -563,7 +563,7 @@ transformers:
   parse:
     worker: [sh, -c, 'for reply in ready reply; do dd bs=4096 count=1 of=/dev/null 2>/dev/null; cat "$reply"; done; dd bs=4096 count=1 of=/dev/null 2>/dev/null']
 pipelines:
-  parse: { output: [parse] }
+  parse: [parse]
 "#);
     let mut server = fixture.spawn_raw(&["serve", "--config", "decoy.yaml"]);
     let url = format!("http://127.0.0.1:{}/orders", server.port("port"));
@@ -968,6 +968,24 @@ fn bare_decoy_without_a_terminal_points_to_serve() {
     assert_eq!(
         String::from_utf8_lossy(&output.stderr),
         "decoy: no terminal; use `decoy serve`\n"
+    );
+}
+
+#[test]
+fn shorthand_pipeline_rejects_unknown_transformer_even_when_unused() {
+    let fixture = Fixture::new();
+    fixture.write_route("users.yaml", route_with_id("users"));
+    fixture.write_collections("- id: default\n  routes: [users:any:ok]\n");
+    fixture.write_config(
+        "routes: routes\ncollections: collections.yaml\npipelines: { unused: [missing] }\n",
+    );
+
+    let output = fixture.output(&["--config", "decoy.yaml"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Pipeline `unused`: unknown Transformer `missing`"),
+        "{stderr}"
     );
 }
 
