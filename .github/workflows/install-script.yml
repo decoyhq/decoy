@@ -29,7 +29,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-14, windows-latest]
+        runner: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, windows-latest]
     env:
       GITHUB_TOKEN: ${{ github.token }}
       DECOY_VERSION: ${{ inputs.version }}

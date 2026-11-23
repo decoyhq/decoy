@@ -151,7 +151,7 @@ jobs:
 
       - name: Check published package shape (publint, are-the-types-wrong)
         if: needs.changes.outputs.js == 'true'
-        run: pnpm --filter @decoyhq/playwright --filter @decoyhq/testplane run check:package
+        run: pnpm --filter @decoyhq/playwright --filter @decoyhq/testplane --filter @decoyhq/transformer run check:package
 
       - name: Test
         if: needs.changes.outputs.js == 'true'
