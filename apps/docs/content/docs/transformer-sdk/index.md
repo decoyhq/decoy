@@ -4,6 +4,12 @@ Write Decoy Transformer workers in TypeScript. A worker can turn an app's wire f
 envelopes, binary headers in front of protobuf, compression) into the JSON that Cases match and
 Behaviors render, and back. HTTP, gRPC, and WebSocket Routes can use workers. See [Configure a Transformer Pipeline](../transformer-pipelines/index.md) for setup.
 
+Install the SDK and the MessagePack library used in this example (Node.js 24+):
+
+```sh title="Install worker dependencies"
+npm install @decoyhq/transformer @msgpack/msgpack
+```
+
 This example adapts binary and text WebSocket messages. Save it as `workers/envelope.ts`:
 
 ```ts title="workers/envelope.ts"

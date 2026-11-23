@@ -50,9 +50,13 @@ curl -X POST localhost:8080/__decoy__/control/send \
   -d '{"route":"approvals-watch","message":{"id":"a-1","state":"APPROVED"},"timeout":2000}'
 ```
 
-- gRPC: `message` is the response message as protobuf JSON; it goes through the Route's Pipeline.
-  One that doesn't fit the method's output type gets `400` with the reason, and nothing is sent.
-- WebSocket: the Route’s output Pipeline transforms each recipient’s message, including strings. Without output steps, strings go out as-is and other values become JSON text.
+- gRPC: Decoy encodes `message` before queueing it. With the default codec, use protobuf JSON;
+  with a custom output Pipeline, use the value its first step expects. If encoding fails, Decoy
+  returns `400` with the reason and queues nothing.
+- WebSocket: Decoy queues `message` before running the output Pipeline on each recipient's
+  connection. If a transform fails, Decoy logs the error and skips that frame; the API still
+  counts the queued message. Without output steps, strings go out as-is and other values become
+  JSON text.
 - Only connections opened in the same Session (`x-mock-session`) get it.
 - With no live connection yet, `send` waits for one up to `timeout` milliseconds (default `5000`,
   at most 5 minutes: a longer `timeout` is cut to that).
@@ -64,8 +68,8 @@ curl -X POST localhost:8080/__decoy__/control/send \
 
 | status | when                                                                                                   |
 | ------ | ------------------------------------------------------------------------------------------------------ |
-| `200`  | `{"delivered":<n>}`: how many connections got the message                                              |
-| `400`  | `message` doesn't encode for the Route                                                                 |
+| `200`  | `{"delivered":<n>}`: how many connections accepted the message into their queues                       |
+| `400`  | malformed request body, or `message` doesn't encode for a gRPC Route                                   |
 | `404`  | unknown Route                                                                                          |
 | `409`  | the Route has no long-lived connections (HTTP, unary gRPC)                                             |
 | `408`  | no live connection of the Route in this Session took it within timeout (none, all full, or older type) |

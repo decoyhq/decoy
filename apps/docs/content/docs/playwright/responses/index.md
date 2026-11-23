@@ -3,7 +3,7 @@
 Use the `decoy` fixture to select a Collection before the page makes its request. This test selects `no-users` and checks the error that the page renders.
 
 ```ts title="tests/users.spec.ts"
-import { expect, test } from './fixtures'
+import { expect, test } from '@decoyhq/playwright'
 
 test('switching the Collection changes what the page shows', async ({ page, decoy }) => {
   await decoy.useCollection('no-users')
