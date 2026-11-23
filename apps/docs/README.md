@@ -12,4 +12,4 @@ Keep manual prose here. Link to runnable examples on GitHub rather than copying 
 
 Run `pnpm --filter @decoyhq/docs build` and serve `apps/docs/doc-build/` from a static host. To build for a subpath, set `DOCS_BASE=/decoy/`. The output includes HTML, search data, `llms.txt`, and a Markdown version of each article.
 
-The Documentation site workflow builds a downloadable Pages artifact on docs pull requests. With GitHub Pages configured to use GitHub Actions, running the workflow manually on main publishes the manual under `/decoy/`.
+The Documentation site workflow builds a downloadable Pages artifact on docs pull requests. With GitHub Pages configured to use GitHub Actions, running the workflow manually on main publishes the manual under `/decoy/`. If main advances before deployment, the workflow skips the stale build; run it again to publish the current revision.

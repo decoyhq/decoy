@@ -49,15 +49,6 @@ export default defineConfig({
   logo: '/brand/decoy.svg',
   logoText: 'Decoy',
   icon: '/brand/decoy.svg',
-  head: [
-    [
-      'link',
-      {
-        rel: 'stylesheet',
-        href: 'https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=Montserrat:wght@100..900&display=swap',
-      },
-    ],
-  ],
   route: { cleanUrls: true },
   llms: true,
   webMcp: false,
