@@ -5,6 +5,8 @@ description: Serve a mock locally, switch responses in a running app, and isolat
 
 Start with [Serve your first mock](quick-start/index.mdx). You'll make one request return a user, then a 404. The quick start includes installation, both YAML files, and the commands to check each response. If you only need the CLI, [choose an installation method](install/index.mdx).
 
+> Preview smoke test: this note should appear only in the pull request preview.
+
 ## Write mocks
 
 | I want to…                                                   | Read                                                                                  |
