@@ -1,3 +1,5 @@
+import { PackageManagerTabs } from '@rspress/core/theme'
+
 # @decoyhq/transformer
 
 Write Decoy Transformer workers in TypeScript. A worker can turn an app's wire format (msgpack
@@ -6,9 +8,14 @@ Behaviors render, and back. HTTP, gRPC, and WebSocket Routes can use workers. Se
 
 Install the SDK and the MessagePack library used in this example (Node.js 24+):
 
-```sh title="Install worker dependencies"
-npm install @decoyhq/transformer @msgpack/msgpack
-```
+<PackageManagerTabs
+  command={{
+    npm: 'npm install @decoyhq/transformer @msgpack/msgpack',
+    pnpm: 'pnpm add @decoyhq/transformer @msgpack/msgpack',
+    yarn: 'yarn add @decoyhq/transformer @msgpack/msgpack',
+    bun: 'bun add @decoyhq/transformer @msgpack/msgpack',
+  }}
+/>
 
 This example adapts binary and text WebSocket messages. Save it as `workers/envelope.ts`:
 

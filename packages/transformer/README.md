@@ -17,4 +17,4 @@ export default defineTransformer({
 })
 ```
 
-See the [Transformer SDK guide](https://github.com/decoyhq/decoy/blob/main/apps/docs/content/docs/transformer-sdk/index.md) for worker setup, Pipeline configuration, and a complete example.
+See the [Transformer SDK guide](https://usedecoy.dev/docs/transformer-sdk/) for install commands, worker setup, Pipeline configuration, and a complete example.

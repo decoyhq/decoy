@@ -8,6 +8,6 @@ HTTP, gRPC, and WebSocket Routes can all use Transformers. A [Pipeline](../trans
 
 A command runs once per call. It reads from stdin and writes its result to stdout. Use a command if an existing executable such as `gzip` already does what you need.
 
-A worker stays running between calls. It can keep state per connection or use the protobuf descriptors Decoy has loaded. Use the [TypeScript SDK](../transformer-sdk/index.md) to write one, or implement the [worker protocol](../transformer-worker-protocol/index.md) in another language.
+A worker stays running between calls. It can keep state per connection or use the protobuf descriptors Decoy has loaded. Use the [TypeScript SDK](../transformer-sdk/index.mdx) to write one, or implement the [worker protocol](../transformer-worker-protocol/index.md) in another language.
 
 [Configure a Pipeline](../transformer-pipelines/index.md) to connect the steps and check which Route transports support them.

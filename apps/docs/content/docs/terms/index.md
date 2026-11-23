@@ -89,7 +89,7 @@ A Pipeline lists the transforms to run on a transport payload. For example, a We
 
 ## Transformer
 
-A Transformer takes one value and produces another. It can change the format, the contents, or both. For example, one step might decompress bytes while the next parses them into an object. Another Transformer might take an object and return just its `id`. Each step passes its result to the next. A Transformer can run as a command or a persistent worker. [Write a worker with the TypeScript SDK](../transformer-sdk/index.md) or [implement the worker protocol](../transformer-worker-protocol/index.md).
+A Transformer takes one value and produces another. It can change the format, the contents, or both. For example, one step might decompress bytes while the next parses them into an object. Another Transformer might take an object and return just its `id`. Each step passes its result to the next. A Transformer can run as a command or a persistent worker. [Write a worker with the TypeScript SDK](../transformer-sdk/index.mdx) or [implement the worker protocol](../transformer-worker-protocol/index.md).
 
 ## Pipeline step
 
@@ -97,4 +97,4 @@ A Pipeline step is one use of a Transformer in an input or output list, or a bui
 
 ## Transformer worker
 
-A Transformer worker is a persistent external process that runs the Transformer’s input or output logic. Use the [TypeScript SDK](../transformer-sdk/index.md) or implement the [worker protocol](../transformer-worker-protocol/index.md) directly.
+A Transformer worker is a persistent external process that runs the Transformer’s input or output logic. Use the [TypeScript SDK](../transformer-sdk/index.mdx) or implement the [worker protocol](../transformer-worker-protocol/index.md) directly.
