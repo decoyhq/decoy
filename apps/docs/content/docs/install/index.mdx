@@ -15,11 +15,13 @@ irm 'https://github.com/decoyhq/decoy/releases/latest/download/install.ps1' | ie
 ```
 
 Installs the release marked Latest to `~/.decoy/bin`, after checking it against the release's
-`SHA256SUMS`. Pre-releases are not Latest until promoted. Every release carries its own copy of the
-scripts, so pin a version (e.g. in CI) by taking them from that release:
-`…/releases/download/v0.5.0/install.sh`. `DECOY_VERSION` or `sh -s -- <version>` also picks
-one; `DECOY_INSTALL_DIR` changes the directory. The Windows script adds the directory to your user
-`PATH`; on macOS/Linux add it yourself.
+`SHA256SUMS`. Pre-releases are not Latest until promoted. `DECOY_INSTALL_DIR` changes the install
+directory. The Windows script adds the directory to your user `PATH`; on macOS/Linux add it yourself.
+
+To pin a version (for example, in CI), replace `latest/download` in the installer URL with
+`download/<tag>`, using the exact tag from [GitHub Releases](https://github.com/decoyhq/decoy/releases).
+Each release's installer defaults to that release. To override the version, set `DECOY_VERSION`
+before running the installer, or pass it to the shell installer with `sh -s -- <version>`.
 
 Upgrade in place with `decoy upgrade`. It re-runs the Latest install script into the directory of the
 running binary, unless the running version is already Latest or a newer pre-release. To move to
