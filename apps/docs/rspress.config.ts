@@ -95,6 +95,7 @@ export default defineConfig({
     ],
     llmsUI: { placement: 'outline', viewOptions: ['viewMarkdown'] },
     nav: [{ text: 'Docs', link: '/docs/' }],
-    sidebar: { '/docs/': sidebar, '/ru/docs/': sidebar },
+    // Rspress's language switcher drops the trailing slash from the docs overview URL.
+    sidebar: { '/docs': sidebar, '/ru/docs': sidebar },
   },
 })
