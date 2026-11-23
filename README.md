@@ -2,6 +2,8 @@
 
 # Decoy
 
+<!-- Temporary probe: a change outside apps/docs should skip the Cloudflare preview. -->
+
 Decoy is a local mock server for HTTP, gRPC, and WebSocket clients. Define your Routes,
 point your app at Decoy, and switch the same request from success to failure while the app is
 running. When a request misses, Decoy returns a diagnostic. Forwarding to an upstream requires
