@@ -50,6 +50,7 @@ for (const [target, { os, cpu }] of Object.entries(TARGETS)) {
         version: cli.version,
         description: `The decoy binary for ${os}-${cpu}. Install @decoyhq/cli instead.`,
         license: cli.license,
+        homepage: cli.homepage,
         repository: cli.repository,
         os: [os],
         cpu: [cpu],
