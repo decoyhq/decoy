@@ -81,18 +81,25 @@ impl Catalog {
         trigger: Trigger,
         envelope: &Value,
     ) -> WsResolution<'_> {
-        self.resolve_ws_with(collection_id, overrides, route_id, trigger, envelope, true)
+        self.resolve_ws_with(
+            collection_id,
+            overrides,
+            route_id,
+            trigger,
+            &|| envelope,
+            true,
+        )
     }
 
     /// Only the connection's Route's entries are candidates; entries of other Routes are not
     /// listed, since an open socket never moves to another Route.
-    pub(crate) fn resolve_ws_with(
+    pub(crate) fn resolve_ws_with<'envelope>(
         &self,
         collection_id: &str,
         overrides: &[Activation],
         route_id: &str,
         trigger: Trigger,
-        envelope: &Value,
+        envelope: &impl Fn() -> &'envelope Value,
         explain: bool,
     ) -> WsResolution<'_> {
         let miss = |reason: String, candidates| {
@@ -123,15 +130,19 @@ impl Catalog {
             if on_connect != (trigger == Trigger::Connect) {
                 continue;
             }
-            if explain {
-                if let Some(failure) = envelope_case_mismatch(&case.case_match, envelope, &jmes) {
-                    reject(&mut candidates, activation, || {
-                        Rejection::Condition(failure)
-                    });
+            if !case.case_match.is_null() {
+                if explain {
+                    if let Some(failure) =
+                        envelope_case_mismatch(&case.case_match, envelope(), &jmes)
+                    {
+                        reject(&mut candidates, activation, || {
+                            Rejection::Condition(failure)
+                        });
+                        continue;
+                    }
+                } else if !envelope_case_matches(&case.case_match, envelope(), &jmes) {
                     continue;
                 }
-            } else if !envelope_case_matches(&case.case_match, envelope, &jmes) {
-                continue;
             }
             let Some(Behavior::Response(response)) = case.behaviors.get(&activation.behavior)
             else {

@@ -48,13 +48,13 @@ impl SessionView {
                 return None;
             }
         };
-        let envelope = connection.envelope(message.as_ref());
+        let envelope = std::cell::OnceCell::new();
         let call = self.catalog.execute_ws(
             &self.selection.collection,
             &self.selection.route_overrides,
             connection,
             trigger,
-            &envelope,
+            &|| envelope.get_or_init(|| connection.envelope(message.as_ref())),
             capture,
         );
         let missed = matches!(call.reply, Ok(None));
