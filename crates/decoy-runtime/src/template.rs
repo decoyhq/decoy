@@ -236,6 +236,9 @@ fn render_value(value: &Value, request: Request) -> Result<Value, ExprError> {
 
 /// Exactly one `${ }` keeps the result's JSON type; anything else interpolates into text.
 fn render_string(text: &str, request: Request) -> Result<Value, ExprError> {
+    if !text.contains("${") {
+        return Ok(Value::String(text.to_owned()));
+    }
     let segments = segments(text)?;
     match segments.as_slice() {
         [Segment::Expression(source)] => evaluate(source, &request()),
@@ -244,6 +247,9 @@ fn render_string(text: &str, request: Request) -> Result<Value, ExprError> {
 }
 
 fn render_text(text: &str, request: Request) -> Result<String, ExprError> {
+    if !text.contains("${") {
+        return Ok(text.to_owned());
+    }
     interpolate(segments(text)?, request)
 }
 
@@ -345,11 +351,19 @@ mod tests {
     }
 
     #[test]
-    fn escape_produces_a_literal_dollar_brace() {
-        assert_eq!(
-            render_body(json!(r"\${ not } ${ body.name }")),
-            json!("${ not } Ada")
+    fn literals_and_escaped_markers_render_alongside_expressions() {
+        let authored = response(
+            None,
+            &[
+                ("x-literal", r"price $5 \ end"),
+                ("x-escaped", r"\${ not }"),
+            ],
+            json!(["café $5", "", r"\${ not } ${ body.name }"]),
         );
+        let rendered = render_response(&authored, &request).unwrap();
+        assert_eq!(rendered.headers["x-literal"], r"price $5 \ end");
+        assert_eq!(rendered.headers["x-escaped"], "${ not }");
+        assert_eq!(rendered.body, Some(json!(["café $5", "", "${ not } Ada"])));
     }
 
     #[test]
