@@ -10,11 +10,49 @@ use crate::schema::{Behavior, Route, RouteMatch};
 use crate::template::has_templates;
 
 #[derive(Debug, Clone)]
+struct ResolvedCollection {
+    entries: Vec<Activation>,
+    // Entries in route+case order for membership checks, without copying their strings.
+    membership: Box<[usize]>,
+}
+
+impl ResolvedCollection {
+    fn new(entries: Vec<Activation>) -> Self {
+        let mut membership = Vec::new();
+        if entries.len() >= 128 {
+            membership = (0..entries.len()).collect();
+            membership.sort_unstable_by_key(|&index| activation_key(&entries[index]));
+        }
+        Self {
+            entries,
+            membership: membership.into_boxed_slice(),
+        }
+    }
+
+    fn contains(&self, activation: &Activation) -> bool {
+        let key = activation_key(activation);
+        if self.membership.is_empty() {
+            return self
+                .entries
+                .iter()
+                .any(|entry| activation_key(entry) == key);
+        }
+        self.membership
+            .binary_search_by_key(&key, |&index| activation_key(&self.entries[index]))
+            .is_ok()
+    }
+}
+
+fn activation_key(activation: &Activation) -> (&str, &str) {
+    (&activation.route, &activation.case)
+}
+
+#[derive(Debug, Clone)]
 pub struct Catalog {
     pub(crate) routes: BTreeMap<String, Route>,
     collections: CollectionsFile,
     /// Each Collection resolved once (inheritance, validation) instead of on every request.
-    resolved: BTreeMap<String, Result<Vec<Activation>, Arc<CollectionError>>>,
+    resolved: BTreeMap<String, Result<ResolvedCollection, Arc<CollectionError>>>,
     /// HTTP Response Behaviors without templates, planned once with the body serialized:
     /// route → case → behavior.
     pub(crate) static_plans: BTreeMap<String, BTreeMap<String, BTreeMap<String, HttpResponsePlan>>>,
@@ -61,7 +99,10 @@ impl Catalog {
         let resolved = collections
             .ids()
             .map(|id| {
-                let activations = collections.resolve(id).map_err(Arc::new);
+                let activations = collections
+                    .resolve(id)
+                    .map(ResolvedCollection::new)
+                    .map_err(Arc::new);
                 (id.to_owned(), activations)
             })
             .collect();
@@ -170,11 +211,10 @@ impl Catalog {
             .map_err(Clone::clone)?;
         let same = |a: &Activation, b: &Activation| a.route == b.route && a.case == b.case;
         let entries = collection
+            .entries
             .iter()
             .map(move |entry| overrides.iter().find(|o| same(o, entry)).unwrap_or(entry));
-        let appended = overrides
-            .iter()
-            .filter(move |o| !collection.iter().any(|entry| same(o, entry)));
+        let appended = overrides.iter().filter(move |o| !collection.contains(o));
         Ok(entries.chain(appended))
     }
 
@@ -203,4 +243,45 @@ pub enum CatalogError {
     WsRoute { reason: String },
     #[error(transparent)]
     Collection(#[from] CollectionError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn indexed_membership_keeps_replacements_and_appends_distinct() {
+        let mut entries = (0..128)
+            .map(|i| format!("r{i}:case:base"))
+            .collect::<Vec<_>>();
+        entries.push("r127:case:other".to_owned());
+        let yaml = format!("- id: default\n  routes: [{}]\n", entries.join(", "));
+        let catalog = Catalog::new(
+            Vec::new(),
+            CollectionsFile::from_yaml(&yaml).unwrap(),
+            RuntimeConfig::default(),
+        )
+        .unwrap();
+        let overrides = ["case", "outside"].map(|case| Activation {
+            route: "r127".to_owned(),
+            case: case.to_owned(),
+            behavior: "new".to_owned(),
+        });
+        let addresses = catalog
+            .activations("default", &overrides)
+            .unwrap()
+            .rev()
+            .map(Activation::address)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            &addresses[..4],
+            [
+                "r127:outside:new",
+                "r127:case:new",
+                "r127:case:new",
+                "r126:case:base"
+            ]
+        );
+        assert_eq!(addresses.len(), 130);
+    }
 }
