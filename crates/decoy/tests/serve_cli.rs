@@ -952,9 +952,10 @@ fn duplicate_route_ids_fail_startup_with_diagnostic() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("duplicate route id `dupe`"), "{stderr}");
-    assert!(stderr.contains("a.yml"), "{stderr}");
-    assert!(stderr.contains("nested/b.yaml"), "{stderr}");
+    assert!(
+        stderr.contains("duplicate route id `dupe` in `a.yml` and `nested/b.yaml`"),
+        "{stderr}"
+    );
 }
 
 #[test]
