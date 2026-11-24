@@ -56,7 +56,46 @@ fn http_fixture(winner_first: bool) -> (Catalog, HttpExecutionRequest) {
     (catalog, request)
 }
 
-async fn http_hit(catalog: &Catalog, request: &HttpExecutionRequest) {
+fn http_same_path_fixture(ahead: usize) -> (Catalog, HttpExecutionRequest) {
+    let mut route = r#"id: widgets
+transport: http
+match: { method: GET, path: '/api/widgets/{id}' }
+cases:
+  any:
+    match: "${ pathParams.id == 'a/b' && query.mode == 'hit' }"
+    behaviors:
+      ok: { status: 200, body: { echo: '${ pathParams.id }' } }
+"#
+    .to_owned();
+    let mut entries = vec!["widgets:any:ok".to_owned()];
+    for i in 0..ahead {
+        route.push_str(&format!(
+            "  c{i}:\n    match: \"${{ pathParams.id == 'a/b' && query.mode == 'other-{i}' }}\"\n    behaviors:\n      ok: {{ status: 200 }}\n"
+        ));
+        entries.push(format!("widgets:c{i}:ok"));
+    }
+    let catalog = Catalog::new(
+        vec![Route::from_yaml(&route).unwrap()],
+        CollectionsFile::from_yaml(&format!(
+            "- id: default\n  routes: [{}]\n",
+            entries.join(", ")
+        ))
+        .unwrap(),
+        RuntimeConfig::default(),
+    )
+    .unwrap();
+    let request = HttpExecutionRequest {
+        method: HttpMethod::Get,
+        path: "/api/widgets/a%2Fb".into(),
+        path_and_query: "/api/widgets/a%2Fb?mode=hit".into(),
+        headers: BTreeMap::new(),
+        body: Default::default(),
+        metadata: Default::default(),
+    };
+    (catalog, request)
+}
+
+async fn http_hit(catalog: &Catalog, request: &HttpExecutionRequest, expected_body: &[u8]) {
     let outcome = catalog.execute_http("default", request.clone()).await;
     let HttpExecutionOutcome::Response {
         activation: Some(activation),
@@ -67,6 +106,7 @@ async fn http_hit(catalog: &Catalog, request: &HttpExecutionRequest) {
     };
     assert_eq!(activation.case, "any");
     assert_eq!(response.status, 200);
+    assert_eq!(response.body.as_ref(), expected_body);
 }
 
 fn measure(label: &str, rounds: u32, mut batch: impl FnMut()) {
@@ -90,10 +130,24 @@ fn main() {
         measure(label, ROUNDS, || {
             runtime.block_on(async {
                 for _ in 0..ROUNDS {
-                    http_hit(&catalog, &request).await;
+                    http_hit(&catalog, &request, br#"{"ok":true}"#).await;
                 }
             })
         });
+    }
+    for cases in [1, 33, 129] {
+        let (catalog, request) = http_same_path_fixture(cases - 1);
+        measure(
+            &format!("HTTP last of {cases} same-path Cases"),
+            ROUNDS,
+            || {
+                runtime.block_on(async {
+                    for _ in 0..ROUNDS {
+                        http_hit(&catalog, &request, br#"{"echo":"a/b"}"#).await;
+                    }
+                })
+            },
+        );
     }
     for recipients in [1, 16] {
         let registry = decoy_runtime::connections::Connections::default();

@@ -662,17 +662,17 @@ cases:
     #[tokio::test]
     async fn predicates_and_templates_see_each_candidates_own_path_params() {
         let by_id = Route::from_yaml(
-            "id: by-id\ntransport: http\nmatch: { method: GET, path: '/users/{id}' }\ncases:\n  eight:\n    match: \"${ pathParams.id == '8' }\"\n    behaviors:\n      ok: { status: 200 }\n",
+            "id: by-id\ntransport: http\nmatch: { method: GET, path: '/users/{id}' }\ncases:\n  eight:\n    match: \"${ pathParams.id == '8' }\"\n    behaviors:\n      ok: { status: 200 }\n  nine:\n    match: \"${ pathParams.id == '9' }\"\n    behaviors:\n      ok: { status: 200 }\n",
         )
         .unwrap();
         let by_name = Route::from_yaml(
-            "id: by-name\ntransport: http\nmatch: { method: GET, path: '/users/{name}' }\ncases:\n  named:\n    match: \"${ pathParams.name == '7' }\"\n    behaviors:\n      echo: { status: 200, body: { name: '${ pathParams.name }' } }\n",
+            "id: by-name\ntransport: http\nmatch: { method: GET, path: '/users/{name}' }\ncases:\n  named:\n    match: \"${ pathParams.name == '7/8' }\"\n    behaviors:\n      echo: { status: 200, body: { name: '${ pathParams.name }' } }\n",
         )
         .unwrap();
         let catalog = Catalog::new(
             vec![by_id, by_name],
             CollectionsFile::from_yaml(
-                "- id: local\n  routes:\n    - by-name:named:echo\n    - by-id:eight:ok\n",
+                "- id: local\n  routes:\n    - by-name:named:echo\n    - by-id:eight:ok\n    - by-id:nine:ok\n",
             )
             .unwrap(),
             RuntimeConfig::default(),
@@ -681,7 +681,7 @@ cases:
 
         let ResolveOutcome::Matched {
             activation, plan, ..
-        } = catalog.resolve_http("local", &get("/users/7"))
+        } = catalog.resolve_http("local", &get("/users/7%2F8"))
         else {
             panic!("expected match")
         };
@@ -692,16 +692,16 @@ cases:
         };
         assert_eq!(
             response.body,
-            Some(BodyPlan::Json(serde_json::json!({ "name": "7" })))
+            Some(BodyPlan::Json(serde_json::json!({ "name": "7/8" })))
         );
 
         // The serving fast path shares the same envelope.
         let HttpExecutionOutcome::Response { response, .. } = catalog
-            .execute_http("local", execution_request("/users/7", "/users/7"))
+            .execute_http("local", execution_request("/users/7%2F8", "/users/7%2F8"))
             .await
         else {
             panic!("expected a response")
         };
-        assert_eq!(response.body, &br#"{"name":"7"}"#[..]);
+        assert_eq!(response.body, &br#"{"name":"7/8"}"#[..]);
     }
 }
