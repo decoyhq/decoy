@@ -125,12 +125,19 @@ async fn sessions_pick_behaviors_and_send_reaches_only_their_sockets() {
     assert_eq!(default.text().await, "ping");
     quiet.silent().await;
 
-    let (status, body) = server
-        .send(r#"{"route":"friend-socket","message":"ping"}"#, "s1")
-        .await;
-    assert_eq!((status, body), (200, json!({ "delivered": 1 })));
-    assert_eq!(quiet.text().await, "ping");
-    default.silent().await;
+    for (message, expected) in [
+        (r#""a\"b\ncafé""#, "a\"b\ncafé"),
+        (
+            r#"{"list":[1.23456789012345,true,null],"text":"a\"b\ncafé"}"#,
+            r#"{"list":[1.23456789012345,true,null],"text":"a\"b\ncafé"}"#,
+        ),
+    ] {
+        let request = format!(r#"{{"route":"friend-socket","message":{message}}}"#);
+        let (status, body) = server.send(&request, "s1").await;
+        assert_eq!((status, body), (200, json!({ "delivered": 1 })));
+        assert_eq!(quiet.text().await, expected);
+        default.silent().await;
+    }
 
     // A Selection change applies to the open socket's next message.
     server

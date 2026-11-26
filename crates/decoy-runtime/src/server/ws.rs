@@ -109,6 +109,7 @@ enum Outgoing {
 enum Step {
     Reply(WsReply),
     Send(Outgoing),
+    Push(bytes::Bytes),
     Skip,
     End,
 }
@@ -184,6 +185,24 @@ async fn serve_socket(
                 open
             }
             Step::Send(frame) => send(sink, stream, &mut queued, codec, frame).await,
+            Step::Push(bytes) => {
+                // Control sends compact JSON. Non-strings are already the text frame unless
+                // this socket's output Pipeline needs the logical message.
+                if !codec.pipeline.as_ref().is_some_and(WsPipeline::has_output)
+                    && bytes.first() != Some(&b'"')
+                {
+                    let text = axum::extract::ws::Utf8Bytes::try_from(bytes)
+                        .expect("send queues UTF-8 JSON");
+                    sink.send(Message::Text(text)).await.is_ok()
+                } else {
+                    let frame = Outgoing::Message {
+                        message: serde_json::from_slice(&bytes).expect("send queues JSON"),
+                        origin: Arc::from("control send"),
+                        sent: None,
+                    };
+                    send(sink, stream, &mut queued, codec, frame).await
+                }
+            }
             Step::Skip => true,
             Step::End => {
                 let _ = sink.close().await;
@@ -203,11 +222,7 @@ async fn serve_socket(
                 Some(Ok(Message::Ping(_) | Message::Pong(_))) => Step::Skip,
             },
             Some(frame) = outgoing.recv() => Step::Send(frame),
-            Some(bytes) = pushed.recv() => Step::Send(Outgoing::Message {
-                message: serde_json::from_slice(&bytes).expect("send queues JSON"),
-                origin: Arc::from("control send"),
-                sent: None,
-            }),
+            Some(bytes) = pushed.recv() => Step::Push(bytes),
             // Reap finished replies so the set doesn't grow on a long-lived socket.
             Some(_) = replies.join_next() => Step::Skip,
         };
