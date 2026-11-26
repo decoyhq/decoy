@@ -1,13 +1,13 @@
 import { dirname, join } from 'node:path'
 
 /** `<process.platform>-<process.arch>` → the npm package that ships that `decoy` binary. */
-export const PLATFORM_PACKAGES: Readonly<Record<string, string>> = {
-  'linux-x64': '@decoyhq/cli-linux-x64',
-  'linux-arm64': '@decoyhq/cli-linux-arm64',
-  'darwin-x64': '@decoyhq/cli-darwin-x64',
-  'darwin-arm64': '@decoyhq/cli-darwin-arm64',
-  'win32-x64': '@decoyhq/cli-win32-x64',
-}
+const PLATFORM_PACKAGES = new Map([
+  ['linux-x64', '@decoyhq/cli-linux-x64'],
+  ['linux-arm64', '@decoyhq/cli-linux-arm64'],
+  ['darwin-x64', '@decoyhq/cli-darwin-x64'],
+  ['darwin-arm64', '@decoyhq/cli-darwin-arm64'],
+  ['win32-x64', '@decoyhq/cli-win32-x64'],
+])
 
 export interface BinaryLookup {
   platform: string
@@ -24,10 +24,10 @@ export function findBinary({ platform, arch, env, resolve }: BinaryLookup): stri
     return override
   }
   const key = `${platform}-${arch}`
-  const packageName = PLATFORM_PACKAGES[key]
+  const packageName = PLATFORM_PACKAGES.get(key)
   if (packageName === undefined) {
     throw new Error(
-      `@decoyhq/cli has no prebuilt decoy binary for ${key}. Supported: ${Object.keys(PLATFORM_PACKAGES).join(', ')}. ` +
+      `@decoyhq/cli has no prebuilt decoy binary for ${key}. Supported: ${Array.from(PLATFORM_PACKAGES.keys()).join(', ')}. ` +
         'Build it from source (cargo build -p decoy) and set DECOY_BINARY_PATH.',
     )
   }

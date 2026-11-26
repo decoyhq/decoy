@@ -6,13 +6,18 @@ import type { DecoyFetch, DecoyResponse, RoutableRoute } from './routing'
 
 type Fulfilled = Parameters<RoutableRoute['fulfill']>[0]
 
+interface RouteResult {
+  fulfilled?: Fulfilled
+  aborted?: string
+}
+
 function fakeRoute(request: {
   url: string
   method?: string
   headers?: Record<string, string>
   body?: string
 }) {
-  const result: { fulfilled?: Fulfilled; aborted?: string } = {}
+  const result: RouteResult = {}
   const route: RoutableRoute = {
     request: () => ({
       url: () => request.url,

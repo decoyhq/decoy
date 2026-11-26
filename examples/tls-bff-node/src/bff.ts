@@ -1,5 +1,4 @@
 import { createServer } from 'node:http'
-import type { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { credentials, loadPackageDefinition, Metadata } from '@grpc/grpc-js'
 import type { Client, ServiceClientConstructor, ServiceError } from '@grpc/grpc-js'
@@ -97,9 +96,12 @@ export async function startBff(backends: Backends): Promise<Bff> {
   await new Promise<void>((resolve) => {
     server.listen(0, '127.0.0.1', resolve)
   })
-  const { port } = server.address() as AddressInfo
+  const address = server.address()
+  if (address === null || typeof address === 'string') {
+    throw new Error('expected a TCP address')
+  }
   return {
-    url: `http://127.0.0.1:${port}`,
+    url: `http://127.0.0.1:${address.port}`,
     close: () => {
       inventory.close()
       server.close()

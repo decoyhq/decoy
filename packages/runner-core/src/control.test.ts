@@ -58,7 +58,7 @@ describe('createRouter', () => {
     const decoy = await fake()
     const router = createRouter(decoy.url, 's')
 
-    for (const address of ['get-user:user-123', 'get-user::broken', 'a:b:c:d', '']) {
+    for (const address of ['get-user:user-123', 'get-user::broken', 'a:b:c:d', 'a:b:c:', '']) {
       await expect(router.useRoute(address)).rejects.toThrow(
         `Invalid Behavior address \`${address}\`: expected \`route:case:behavior\``,
       )
