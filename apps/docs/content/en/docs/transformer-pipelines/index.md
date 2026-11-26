@@ -50,7 +50,7 @@ pipeline: approvals-feed
 | [gRPC](../grpc/index.md#pipelines)                     | Framed request bytes and replies. Include `grpc-frame` and `protobuf` in the appropriate order if your Transformer works with decoded messages. |
 | [WebSocket](../websocket/index.md#websocket-pipelines) | Incoming frame payloads and outgoing messages, including Control API pushes.                                                                    |
 
-Transformer names must be unique. `grpc-frame` and `protobuf` are reserved for gRPC built-ins,
+Transformer names must be unique. `grpc-frame` and `protobuf` are reserved for built-in Transformers,
 so they cannot be used as Transformer names even in configurations without gRPC Routes. For
 working configurations, see the [shared HTTP and WebSocket example](https://github.com/decoyhq/decoy/tree/main/examples/ws-transformer-node)
 and the [gRPC example](https://github.com/decoyhq/decoy/tree/main/examples/grpc-node).

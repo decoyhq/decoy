@@ -5,8 +5,8 @@ use jmespath::Rcvar;
 use prost_reflect::MethodDescriptor;
 use serde_json::{Value, json};
 
-use super::codec::{decode, pipeline};
 use super::schema::find_method;
+use super::transform::{pipeline, run_input};
 use super::{GrpcRequest, GrpcResponse};
 use crate::collections::Activation;
 use crate::engine::{Candidate, Catalog, MissDiagnostic, Rejection, reject};
@@ -106,7 +106,7 @@ impl Catalog {
                         })?
                         .clone()
                 } else {
-                    decode(&request.body, pipeline(route), &method.input())
+                    run_input(&request.body, pipeline(route), &method.input())
                         .map_err(|error| error.to_string())
                 };
                 let result = message.map(|message| {

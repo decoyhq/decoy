@@ -1,12 +1,12 @@
-//! Serving gRPC Routes: decode the call through the Route's Pipeline, match Cases over the message
-//! envelope, render the Behavior, and encode the answer. Transport framing (HTTP/2, trailers) is
-//! the server's job; this module works on bytes. See `apps/docs/content/en/docs/grpc/index.md`.
+//! Serving gRPC Routes: run the input Pipeline, match Cases over the message envelope, render the
+//! Behavior, and run the output Pipeline. Transport framing (HTTP/2, trailers) is the server's
+//! job; this module works on bytes. See `apps/docs/content/en/docs/grpc/index.md`.
 
-mod codec;
 pub mod execute;
 mod plan;
 pub mod resolve;
 pub mod schema;
+mod transform;
 mod view;
 
 use std::collections::BTreeMap;
@@ -15,12 +15,12 @@ use bytes::Bytes;
 
 use crate::schema::PipelineStep;
 
-pub use codec::GrpcCodecError;
-pub use codec::encode_response_async;
+pub use crate::transformers::TransformError as GrpcCodecError;
 pub(crate) use plan::static_unary_replies;
 pub use resolve::GrpcResolution;
+pub use transform::run_named_output as encode_response_async;
 
-/// Encodes `message` with the Route's inline or default built-in codec. Named Pipelines
+/// Runs the Route's inline or default built-in Transformers on `message`. Named Pipelines
 /// need the configured Transformers supplied to [`encode_response_async`].
 pub fn encode_response(
     route: &crate::schema::Route,
@@ -32,7 +32,7 @@ pub fn encode_response(
             "named Pipelines require asynchronous encoding".into(),
         ));
     }
-    codec::encode(message, codec::pipeline(route), &method.output())
+    transform::run_output(message, transform::pipeline(route), &method.output())
 }
 
 /// How the server answers a call: one response, or a server-streaming body.
@@ -120,8 +120,8 @@ mod tests {
     use prost_reflect::{DynamicMessage, MessageDescriptor};
     use serde_json::{Value, json};
 
-    use super::codec::{decode, encode, frame, unframe};
     use super::schema::find_method;
+    use super::transform::{run_input, run_output};
     use super::*;
     use crate::collections::CollectionsFile;
     use crate::config::ProtoSources;
@@ -130,6 +130,7 @@ mod tests {
     use crate::http::RuntimeConfig;
     use crate::protos::load_descriptor_pool;
     use crate::schema::Route;
+    use crate::transformers::grpc_frame::{input as unframe, output as frame};
 
     fn catalog(cases: &str, collection: &str) -> Catalog {
         catalog_with_pipeline(None, cases, collection)
@@ -927,19 +928,19 @@ cases:
             .encode_to_vec();
 
         assert_eq!(
-            decode(&frame(&bytes), &DEFAULT_PIPELINE, &input).unwrap(),
+            run_input(&frame(&bytes), &DEFAULT_PIPELINE, &input).unwrap(),
             json!({ "id": "a-1" })
         );
         assert_eq!(
-            decode(&frame(&bytes), &[PipelineStep::GrpcFrame], &input).unwrap(),
+            run_input(&frame(&bytes), &[PipelineStep::GrpcFrame], &input).unwrap(),
             Value::String(BASE64.encode(&bytes))
         );
         assert_eq!(
-            encode(json!({ "id": "a-1" }), &DEFAULT_PIPELINE, &input).unwrap(),
+            run_output(json!({ "id": "a-1" }), &DEFAULT_PIPELINE, &input).unwrap(),
             frame(&bytes)
         );
         assert_eq!(
-            encode(
+            run_output(
                 Value::String(BASE64.encode(&bytes)),
                 &[PipelineStep::GrpcFrame],
                 &input
@@ -960,11 +961,11 @@ cases:
         .unwrap()
     }
 
-    // `validate_pipeline` rejects these at load, so reaching the codec with one is a bug.
+    // `validate_pipeline` rejects these at load, so passing one to the built-ins is a bug.
     #[test]
     #[should_panic(expected = "no step follows `protobuf`")]
     fn decode_panics_on_a_step_after_protobuf() {
-        let _ = decode(
+        let _ = run_input(
             &[],
             &[PipelineStep::Protobuf, PipelineStep::GrpcFrame],
             &approval_request(),
@@ -974,7 +975,7 @@ cases:
     #[test]
     #[should_panic(expected = "no step follows `protobuf`")]
     fn encode_panics_on_a_repeated_protobuf_step() {
-        let _ = encode(
+        let _ = run_output(
             json!({}),
             &[PipelineStep::Protobuf, PipelineStep::Protobuf],
             &approval_request(),
@@ -1000,7 +1001,7 @@ cases:
             .unwrap()
             .encode_to_vec();
 
-        let message = decode(&frame(&bytes), &DEFAULT_PIPELINE, &input).unwrap();
+        let message = run_input(&frame(&bytes), &DEFAULT_PIPELINE, &input).unwrap();
         assert_eq!(message["ratio"], json!(0.1));
         assert_eq!(message["ratios"], json!([0.1, 2.5]));
         assert_eq!(message["weights"], json!({ "a": 0.3 }));
@@ -1034,19 +1035,19 @@ cases:
             "gRPC frame declares 2 bytes but carries 1; unary calls take one message"
         );
         assert_eq!(
-            message(&decode(&[0xff], &[PipelineStep::Protobuf], &input).unwrap_err()),
+            message(&run_input(&[0xff], &[PipelineStep::Protobuf], &input).unwrap_err()),
             "not a valid approvals.v1.GetApprovalRequest: failed to decode Protobuf message: invalid varint"
         );
         assert_eq!(
-            message(&encode(json!({ "nope": 1 }), &DEFAULT_PIPELINE, &input).unwrap_err()),
+            message(&run_output(json!({ "nope": 1 }), &DEFAULT_PIPELINE, &input).unwrap_err()),
             "response does not fit approvals.v1.GetApprovalRequest: unrecognized field name 'nope'"
         );
         assert_eq!(
-            message(&encode(json!(1), &[PipelineStep::GrpcFrame], &input).unwrap_err()),
+            message(&run_output(json!(1), &[PipelineStep::GrpcFrame], &input).unwrap_err()),
             "expected a base64 string, got 1"
         );
         assert_eq!(
-            message(&encode(json!("!"), &[PipelineStep::GrpcFrame], &input).unwrap_err()),
+            message(&run_output(json!("!"), &[PipelineStep::GrpcFrame], &input).unwrap_err()),
             "message is not base64: Invalid symbol 33, offset 0."
         );
     }
