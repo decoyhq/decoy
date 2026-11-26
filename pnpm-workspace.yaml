@@ -15,10 +15,9 @@ catalog:
 # pnpm 11+ reads its settings here, not from .npmrc.
 engineStrict: true
 autoInstallPeers: true
-# Skip versions published in the last day (most malicious releases are pulled within hours).
-minimumReleaseAge: 1440
-minimumReleaseAgeExclude:
-  - '@decoyhq/*'
+# Quarantine npm releases for 14 days. See docs/maintainers/repository-automation.md for exceptions.
+minimumReleaseAge: 20160
+minimumReleaseAgeIgnoreMissingTime: false
 allowBuilds:
   lefthook: true
   # Only a postinstall version notice; the gRPC example does not need it.
