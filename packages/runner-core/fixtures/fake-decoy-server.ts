@@ -1,4 +1,5 @@
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
+import { createServer } from 'node:http'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 
 export interface ControlCall {
   path: string
@@ -41,7 +42,9 @@ export async function startFakeDecoy(
       })
     })
   })
-  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  await new Promise<void>((done) => {
+    server.listen(0, '127.0.0.1', done)
+  })
   const address = server.address()
   if (address === null || typeof address === 'string') {
     throw new Error('expected a TCP address')
@@ -50,10 +53,10 @@ export async function startFakeDecoy(
     url: `http://127.0.0.1:${address.port}`,
     calls,
     close: () =>
-      new Promise<void>((done) =>
+      new Promise<void>((done) => {
         server.close(() => {
           done()
-        }),
-      ),
+        })
+      }),
   }
 }

@@ -34,11 +34,11 @@ export async function startDecoy(): Promise<() => Promise<void>> {
       stdio: ['ignore', 'ignore', 'pipe'],
     },
   )
-  const closed = new Promise<void>((resolve) =>
+  const closed = new Promise<void>((resolve) => {
     child.once('close', () => {
       resolve()
-    }),
-  )
+    })
+  })
   const stop = async () => {
     child.kill()
     await closed

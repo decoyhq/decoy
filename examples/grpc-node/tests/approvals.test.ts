@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import * as grpc from '@grpc/grpc-js'
+import { Client, credentials, status } from '@grpc/grpc-js'
+import type { ServiceError } from '@grpc/grpc-js'
 import { approvalsClient, control, getApproval, startDecoy } from './decoy.ts'
 
 let stop: () => void
@@ -28,10 +29,10 @@ void test('templates read the request message and metadata', async () => {
 void test('useCollection switches a Session to a gRPC status error', async () => {
   await control('down', 'useCollection', { collection: 'approvals-down' })
   await assert.rejects(getApproval(client, 'a-7', { 'x-mock-session': 'down' }), (error) => {
-    const status = error as grpc.ServiceError
-    assert.equal(status.code, grpc.status.NOT_FOUND)
-    assert.equal(status.details, 'approval a-7 not found')
-    assert.deepEqual(status.metadata.get('x-reason'), ['missing'])
+    const serviceError = error as ServiceError
+    assert.equal(serviceError.code, status.NOT_FOUND)
+    assert.equal(serviceError.details, 'approval a-7 not found')
+    assert.deepEqual(serviceError.metadata.get('x-reason'), ['missing'])
     return true
   })
   // Other Sessions keep the happy path.
@@ -51,7 +52,7 @@ void test('useRoute overrides one Behavior for a Session', async () => {
 })
 
 void test('an unmapped call fails closed with UNIMPLEMENTED', async (t) => {
-  const miss = new grpc.Client('127.0.0.1:8091', grpc.credentials.createInsecure())
+  const miss = new Client('127.0.0.1:8091', credentials.createInsecure())
   t.after(() => {
     miss.close()
   })
@@ -72,9 +73,9 @@ void test('an unmapped call fails closed with UNIMPLEMENTED', async (t) => {
       )
     }),
     (error) => {
-      const status = error as grpc.ServiceError
-      assert.equal(status.code, grpc.status.UNIMPLEMENTED)
-      assert.deepEqual(status.metadata.get('x-mock-miss'), ['true'])
+      const serviceError = error as ServiceError
+      assert.equal(serviceError.code, status.UNIMPLEMENTED)
+      assert.deepEqual(serviceError.metadata.get('x-mock-miss'), ['true'])
       return true
     },
   )

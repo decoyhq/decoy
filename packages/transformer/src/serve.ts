@@ -1,6 +1,8 @@
 import type { Readable, Writable } from 'node:stream'
-import { type Connection, type Context, type Json, Miss, PROTOCOL, type Transformer } from './index'
-import { read, type WireMessage, write } from './wire'
+import { Miss, PROTOCOL } from './index'
+import type { Connection, Context, Json, Transformer } from './index'
+import { read, write } from './wire'
+import type { WireMessage } from './wire'
 
 interface Io {
   input: Readable
@@ -65,11 +67,16 @@ function createHostCalls(send: (message: WireMessage) => void) {
   const settle = (message: WireMessage) => {
     const id = message.id as number
     const pending = hostCalls.get(id)
-    if (!pending) return
+    if (!pending) {
+      return
+    }
     hostCalls.delete(id)
 
-    if (message.ok) pending.resolve(message.value)
-    else pending.reject(new Error(String(message.error)))
+    if (message.ok) {
+      pending.resolve(message.value)
+    } else {
+      pending.reject(new Error(String(message.error)))
+    }
   }
 
   return { protobuf, settle }
@@ -91,7 +98,9 @@ export function serve(transformer: Transformer, io: Io = processIo): void {
     let state = connection && states.get(connection.id)
     if (!state) {
       state = new Map()
-      if (connection) states.set(connection.id, state)
+      if (connection) {
+        states.set(connection.id, state)
+      }
     }
 
     const frame = message.frame as Context['frame']

@@ -1,7 +1,9 @@
-import { type ChildProcess, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import * as grpc from '@grpc/grpc-js'
-import * as protoLoader from '@grpc/proto-loader'
+import { credentials, loadPackageDefinition, Metadata } from '@grpc/grpc-js'
+import type { Client, ServiceClientConstructor, ServiceError } from '@grpc/grpc-js'
+import { loadSync } from '@grpc/proto-loader'
 
 export const DECOY_URL = 'http://127.0.0.1:8091'
 const exampleDir = fileURLToPath(new URL('..', import.meta.url))
@@ -31,7 +33,9 @@ export async function startDecoy(): Promise<() => void> {
       child.kill()
       throw new Error('decoy did not become healthy')
     }
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100)
+    })
   }
   return () => child.kill()
 }
@@ -62,27 +66,27 @@ export interface Approval {
   approvers: string[]
 }
 
-type Callback = (error: grpc.ServiceError | null, reply?: Approval) => void
-interface ApprovalsClient extends grpc.Client {
-  getApproval(request: { id: string }, metadata: grpc.Metadata, callback: Callback): void
+type Callback = (error: ServiceError | null, reply?: Approval) => void
+interface ApprovalsClient extends Client {
+  getApproval(request: { id: string }, metadata: Metadata, callback: Callback): void
 }
 
-const definition = protoLoader.loadSync('approvals/v1/approvals.proto', {
+const definition = loadSync('approvals/v1/approvals.proto', {
   includeDirs: [fileURLToPath(new URL('../proto', import.meta.url))],
   enums: String,
   defaults: true,
 })
 interface ApprovalsPackage {
-  approvals: { v1: { Approvals: grpc.ServiceClientConstructor } }
+  approvals: { v1: { Approvals: ServiceClientConstructor } }
 }
-const { Approvals } = (grpc.loadPackageDefinition(definition) as unknown as ApprovalsPackage)
-  .approvals.v1
+const { Approvals } = (loadPackageDefinition(definition) as unknown as ApprovalsPackage).approvals
+  .v1
 
 /** A plain `@grpc/grpc-js` client pointed at Decoy instead of the real Approvals service. */
 export function approvalsClient(): ApprovalsClient {
   return new Approvals(
     DECOY_URL.replace('http://', ''),
-    grpc.credentials.createInsecure(),
+    credentials.createInsecure(),
   ) as unknown as ApprovalsClient
 }
 
@@ -92,7 +96,7 @@ export function getApproval(
   id: string,
   metadata: Record<string, string> = {},
 ): Promise<Approval> {
-  const meta = new grpc.Metadata()
+  const meta = new Metadata()
   for (const [key, value] of Object.entries(metadata)) {
     meta.set(key, value)
   }

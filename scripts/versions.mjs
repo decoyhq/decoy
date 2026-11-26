@@ -13,7 +13,9 @@ const SEMVER = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/
 
 function cargoVersion() {
   const match = WORKSPACE_VERSION.exec(readFileSync(cargoToml, 'utf8'))
-  if (!match) throw new Error('Cargo.toml has no [workspace.package] version')
+  if (!match) {
+    throw new Error('Cargo.toml has no [workspace.package] version')
+  }
   return match[2]
 }
 

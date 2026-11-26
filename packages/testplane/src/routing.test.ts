@@ -1,13 +1,7 @@
 import { SESSION_HEADER } from '@decoyhq/runner-core'
 import { describe, expect, test } from '@rstest/core'
-import {
-  type CdpSession,
-  decide,
-  forwardToDecoy,
-  type RequestPaused,
-  routeToDecoy,
-  toMatchers,
-} from './routing'
+import { decide, forwardToDecoy, routeToDecoy, toMatchers } from './routing'
+import type { CdpSession, RequestPaused } from './routing'
 
 const decoyUrl = 'http://127.0.0.1:8080'
 
@@ -39,7 +33,10 @@ function fakeSession(fail: string[] = []): FakeSession {
   return { session, sent, emit, children }
 }
 
-const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
+const settle = () =>
+  new Promise((resolve) => {
+    setTimeout(resolve, 0)
+  })
 
 describe('toMatchers', () => {
   test('globs: `*` stays in a segment, `**` crosses them', () => {

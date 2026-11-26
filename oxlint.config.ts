@@ -24,23 +24,12 @@ export default defineConfig({
   rules: {
     // Existing violations: enable these rules with their fixes in follow-up changes.
     '@nkzw/no-instanceof': 'off',
-    curly: 'off',
-    'import/consistent-type-specifier-style': 'off',
-    'import/no-namespace': 'off',
-    'no-console': 'off',
-    'no-promise-executor-return': 'off',
     'quality/no-chained-type-assertions': 'off',
     'quality/no-known-value-widening': 'off',
     'quality/no-object-parameters': 'off',
     'quality/no-unknown-returns': 'off',
     'quality/no-unsafe-dictionary-type': 'off',
-    'react/rules-of-hooks': 'off',
     'typescript/no-unsafe-type-assertion': 'off',
-    'unicorn/consistent-function-scoping': 'off',
-    'unicorn/numeric-separators-style': 'off',
-    'unicorn/prefer-number-properties': 'off',
-    'unicorn/prefer-string-raw': 'off',
-    'unicorn/prefer-string-replace-all': 'off',
 
     'for-direction': 'error',
     'no-array-constructor': 'error',
@@ -157,7 +146,7 @@ export default defineConfig({
         'no-unreachable': 'error',
         'no-unsafe-negation': 'error',
         'no-with': 'error',
-        // Keep plain JS on the untyped lint policy.
+        // Keep the existing TypeScript-only promise check scoped to TypeScript.
         'typescript/no-misused-promises': 'off',
       },
     },
@@ -233,6 +222,27 @@ export default defineConfig({
         'typescript/unbound-method': 'error',
         'typescript/use-unknown-in-catch-callback-variable': 'error',
       },
+    },
+    {
+      // These entry points and fixtures intentionally emit CLI/worker output.
+      files: [
+        'examples/{playwright,testplane}-ts-e2e/app/serve.mjs',
+        'packages/cli/src/bin.ts',
+        'packages/runner-core/fixtures/stubborn.mjs',
+        'packages/transformer/src/{index,serve}.ts',
+        'scripts/{npm-platform-packages,versions}.mjs',
+      ],
+      rules: { 'no-console': 'off' },
+    },
+    {
+      // Playwright's fixture callback `use` isn't a React hook.
+      files: ['packages/playwright/src/fixtures.ts'],
+      rules: { 'react/rules-of-hooks': 'off' },
+    },
+    {
+      // Keep test doubles next to the tests they serve.
+      files: ['**/*.test.ts'],
+      rules: { 'unicorn/consistent-function-scoping': 'off' },
     },
   ],
 })

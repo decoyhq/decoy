@@ -2,17 +2,21 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
-import { createServer, type Server } from 'node:http'
+import { createServer } from 'node:http'
+import type { Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
 import { afterEach, describe, expect, test } from '@rstest/core'
 import { FAKE_DECOY } from '../fixtures'
 import { isHealthy } from './health'
-import { pidFileFor, resolveServerOptions, type ServerOptions, startDecoy } from './server'
+import { pidFileFor, resolveServerOptions, startDecoy } from './server'
+import type { ServerOptions } from './server'
 
 async function listen(server: Server): Promise<number> {
-  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  await new Promise<void>((done) => {
+    server.listen(0, '127.0.0.1', done)
+  })
   const address = server.address()
   if (address === null || typeof address === 'string') {
     throw new Error('expected a TCP address')
@@ -23,7 +27,9 @@ async function listen(server: Server): Promise<number> {
 async function freePort(): Promise<number> {
   const server = createServer()
   const port = await listen(server)
-  await new Promise((done) => server.close(done))
+  await new Promise((done) => {
+    server.close(done)
+  })
   return port
 }
 
@@ -82,7 +88,12 @@ test('keys runner pidfiles by normalized origin', () => {
 describe('startDecoy', () => {
   test('reuses a healthy Decoy without running the command', async () => {
     const { url, server } = await runningDecoy()
-    cleanups.push(() => new Promise((done) => server.close(done)))
+    cleanups.push(
+      () =>
+        new Promise((done) => {
+          server.close(done)
+        }),
+    )
 
     const teardown = await start({ url, command: 'exit 1', reuseExistingServer: true })
     await teardown()
@@ -92,7 +103,12 @@ describe('startDecoy', () => {
 
   test('refuses to share a healthy Decoy when reuse is disabled', async () => {
     const { url, server } = await runningDecoy()
-    cleanups.push(() => new Promise((done) => server.close(done)))
+    cleanups.push(
+      () =>
+        new Promise((done) => {
+          server.close(done)
+        }),
+    )
 
     await expect(start({ url, reuseExistingServer: false })).rejects.toThrow(/already serving/)
   })

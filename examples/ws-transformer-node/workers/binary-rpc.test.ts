@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { binaryRpc } from '@acme/decoy-transformer-binary-rpc'
-import { type Context, Miss } from '@decoyhq/transformer'
+import { Miss } from '@decoyhq/transformer'
+import type { Context } from '@decoyhq/transformer'
 import { decodeProto, encodeProto, protos } from '../tests/decoy.ts'
 import transformer from './binary-rpc.ts'
 import envelope from './typed-envelope.ts'
@@ -54,7 +55,7 @@ void test('an unknown kind byte is a miss', async () => {
 
 void test('kind overrides must be distinct bytes', () => {
   const withCode = (code: number) => binaryRpc({ topics: {}, kinds: { REQUEST: code } })
-  for (const code of [-1, 1.5, 257, NaN]) {
+  for (const code of [-1, 1.5, 257, Number.NaN]) {
     assert.throws(() => withCode(code), /integers from 0 through 255/)
   }
   assert.throws(() => withCode(2), /own byte/)
@@ -69,7 +70,7 @@ void test('malformed frames are misses and oversized RPC fields are rejected', a
   }
   await assert.rejects(Promise.resolve(envelope.input(Uint8Array.of(0xc0), ctx('binary'))), Miss)
   const error = { kind: 'ERROR', topic: 'users.get', id: 1 }
-  for (const bad of [{ id: 2 ** 32 }, { error: { code: 65537 } }, { topic: 'x'.repeat(65536) }]) {
+  for (const bad of [{ id: 2 ** 32 }, { error: { code: 65_537 } }, { topic: 'x'.repeat(65_536) }]) {
     await assert.rejects(
       Promise.resolve(transformer.output({ ...error, ...bad }, ctx())),
       /must be an integer/,
