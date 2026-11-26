@@ -36,7 +36,7 @@ def classify(paths, *, full=False):
     js_scripts = any(path.startswith('scripts/') for path in js_source)
     js = js_inputs or packages or examples or js_scripts
     js_lint = js or any(path.startswith('apps/') for path in js_source) or any(
-        path.startswith('eslint.config.') for path in files
+        path == 'oxlint.config.ts' for path in files
     )
     format_check = bool(files & {'.editorconfig', '.prettierignore'}) or any(
         PurePosixPath(path).suffix.lower() in FORMAT_TYPES or path.startswith(('.prettierrc', 'prettier.config.'))

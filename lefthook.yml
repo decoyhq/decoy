@@ -4,12 +4,12 @@
 pre-commit:
   piped: true
   commands:
-    1_eslint:
-      glob: '*.{js,mjs,ts,tsx}'
-      run: pnpm exec eslint --fix {staged_files}
+    1_oxlint:
+      glob: '*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}'
+      run: pnpm exec oxlint --fix --no-error-on-unmatched-pattern {staged_files}
       stage_fixed: true
     2_prettier:
-      glob: '*.{js,mjs,ts,tsx,json,md,yml,yaml,html,css}'
+      glob: '*.{js,jsx,mjs,cjs,ts,tsx,mts,cts,json,md,yml,yaml,html,css}'
       run: pnpm exec prettier --write --ignore-unknown {staged_files}
       stage_fixed: true
     3_rustfmt:

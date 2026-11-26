@@ -145,7 +145,7 @@ describe('fetchWithoutCookies', () => {
 
       expect(first.result.fulfilled?.status).toBe(302)
       expect(first.result.fulfilled?.headers?.['set-cookie']).toBe('a=1; Path=/\nb=2; Path=/')
-      expect([...(first.result.fulfilled?.body as Buffer)]).toEqual([0, 255, 1])
+      expect(first.result.fulfilled?.body).toEqual(Buffer.from([0, 255, 1]))
       expect(seen.map((headers) => headers.cookie)).toEqual([undefined, undefined])
     } finally {
       await new Promise((done) => server.close(done))
