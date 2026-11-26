@@ -92,6 +92,9 @@ impl Catalog {
     {
         let mut json = OnceCell::<Rcvar>::new();
         let mut previous_envelope = &request.envelope;
+        let mut json_pattern = None;
+        let mut last_pattern = None;
+        let mut last_path_params = None;
         for activation in activations {
             let Some(route) = self.routes.get(&activation.route) else {
                 reject(candidates, activation, || Rejection::MissingRoute);
@@ -110,7 +113,12 @@ impl Catalog {
                 continue;
             }
 
-            let Some(path_params) = match_path(&route_match.path, &request.path) else {
+            let pattern = route_match.path.as_str();
+            if last_pattern != Some(pattern) {
+                last_pattern = Some(pattern);
+                last_path_params = match_path(pattern, &request.path);
+            }
+            let Some(path_params) = last_path_params.as_mut() else {
                 reject(candidates, activation, || Rejection::Path {
                     expected: route_match.path.clone(),
                 });
@@ -144,13 +152,17 @@ impl Catalog {
                 json.take();
                 previous_envelope = envelope;
             }
-            if let Some(json) = json.get_mut() {
+            // A rejected path or failed decode can change last_pattern without rebinding JSON.
+            if let Some(json) = json.get_mut()
+                && json_pattern != Some(pattern)
+            {
                 set_field(json, "pathParams", &serde_json::json!(path_params));
             }
+            json_pattern = Some(pattern);
             let input = MatchInput {
                 method: &request.method,
                 path: &request.path,
-                path_params: &path_params,
+                path_params,
                 envelope,
                 json: &json,
             };
@@ -178,7 +190,7 @@ impl Catalog {
                 _ if let Some(plan) = static_plan => ResponsePlan::Response(plan.clone()),
                 Behavior::Response(response) => {
                     let envelope = json.get_or_init(|| {
-                        to_rcvar(&envelope.to_json(&request.method, &request.path, &path_params))
+                        to_rcvar(&envelope.to_json(&request.method, &request.path, path_params))
                     });
                     match render_response(response, &|| envelope.clone()) {
                         Ok(rendered) => ResponsePlan::from_behavior(
@@ -202,7 +214,7 @@ impl Catalog {
             return Ok(Some((
                 ResolveOutcome::Matched {
                     activation: activation.clone(),
-                    path_params,
+                    path_params: std::mem::take(path_params),
                     plan,
                     delay: behavior.delay(),
                     skipped: candidates.take().unwrap_or_default(),
