@@ -6,7 +6,7 @@ import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { afterEach, describe, expect, test } from '@rstest/core'
+import { afterEach, describe, expect, rs, test } from '@rstest/core'
 import { FAKE_DECOY } from '../fixtures'
 import { isHealthy } from './health'
 import { pidFileFor, resolveServerOptions, type ServerOptions, startDecoy } from './server'
@@ -111,6 +111,37 @@ describe('startDecoy', () => {
     await teardown()
     expect(await isHealthy(url)).toBe(false)
   })
+
+  test.each([
+    { readyAt: 5, detectedAt: 10 },
+    { readyAt: 125, detectedAt: 200 },
+  ])(
+    'detects health at $detectedAt ms when ready at $readyAt ms',
+    async ({ readyAt, detectedAt }) => {
+      const port = await freePort()
+      rs.useFakeTimers({ now: 0, toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+      const health = rs.spyOn(globalThis, 'fetch').mockImplementation(() => {
+        return Promise.resolve(new Response(null, { status: Date.now() >= readyAt ? 200 : 503 }))
+      })
+      let detected: number | undefined
+      const started = start({
+        url: `http://127.0.0.1:${port}`,
+        command: `node ${FAKE_DECOY} ${port}`,
+        reuseExistingServer: false,
+      }).then((teardown) => {
+        detected = Date.now()
+        cleanups.push(teardown)
+      })
+      try {
+        await rs.advanceTimersByTimeAsync(300)
+        await started
+        expect(detected).toBe(detectedAt)
+      } finally {
+        health.mockRestore()
+        rs.useRealTimers()
+      }
+    },
+  )
 
   test('replaces a Decoy that a hard-killed run started instead of reusing it', async () => {
     const port = await freePort()

@@ -188,7 +188,9 @@ async function waitForHealth(child: ChildProcess, options: ResolvedServerOptions
     exit = error.message
   })
 
-  const deadline = Date.now() + options.timeout
+  const startedAt = Date.now()
+  const deadline = startedAt + options.timeout
+  const fastUntil = startedAt + 100
   while (Date.now() < deadline) {
     if (exit !== undefined) {
       throw new Error(`Decoy command \`${options.command}\` exited before serving (${exit}).`)
@@ -196,7 +198,11 @@ async function waitForHealth(child: ChildProcess, options: ResolvedServerOptions
     if (await isHealthy(options.url)) {
       return
     }
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    const fastRemaining = fastUntil - Date.now()
+    // Catch fast native starts without keeping a high probe rate for slower commands.
+    await new Promise((resolve) =>
+      setTimeout(resolve, fastRemaining > 0 ? Math.min(10, fastRemaining) : 100),
+    )
   }
   throw new Error(
     `Decoy did not become healthy at ${options.url} within ${options.timeout}ms (command: \`${options.command}\`).`,
