@@ -2,8 +2,8 @@ import { spawn } from 'node:child_process'
 import { mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join, resolve } from 'node:path'
-import { describe, expect, test } from '@rstest/core'
-import { stopProcess, withLocalBins } from './process'
+import { describe, expect, rs, test } from '@rstest/core'
+import { stopGroup, stopProcess, withLocalBins } from './process'
 
 const STUBBORN = resolve(process.cwd(), 'fixtures/stubborn.mjs')
 
@@ -23,6 +23,36 @@ describe('withLocalBins', () => {
     expect(path.at(-1)).toBe('/usr/bin')
   })
 })
+
+test.skipIf(process.platform === 'win32').each([
+  { goneAt: 3, detectedAt: 5 },
+  { goneAt: 75, detectedAt: 100 },
+])(
+  'detects a group exit at $detectedAt ms when gone at $goneAt ms',
+  async ({ goneAt, detectedAt }) => {
+    const pid = 2_000_000_000
+    rs.useFakeTimers({ now: 0, toFake: ['Date', 'setTimeout', 'clearTimeout'] })
+    const kill = rs.spyOn(process, 'kill').mockImplementation((target, signal) => {
+      expect(target).toBe(-pid)
+      if (signal === 0 && Date.now() >= goneAt) {
+        throw new Error('group has exited')
+      }
+      return true
+    })
+    let detected: number | undefined
+    try {
+      const stopped = stopGroup(pid, 200).then(() => {
+        detected = Date.now()
+      })
+      await rs.advanceTimersByTimeAsync(300)
+      await stopped
+      expect(detected).toBe(detectedAt)
+    } finally {
+      kill.mockRestore()
+      rs.useRealTimers()
+    }
+  },
+)
 
 describe('stopProcess', () => {
   test.skipIf(process.platform === 'win32')(

@@ -87,11 +87,18 @@ export function isAlive(pid: number): boolean {
 }
 
 async function goneWithin(pid: number, ms: number): Promise<boolean> {
-  for (const deadline = Date.now() + ms; Date.now() < deadline;) {
+  const startedAt = Date.now()
+  const deadline = startedAt + ms
+  const fastUntil = startedAt + 50
+  while (Date.now() < deadline) {
     if (!isAlive(pid)) {
       return true
     }
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    // Fast exits are common; back off when the group is still draining.
+    const fastRemaining = fastUntil - Date.now()
+    await new Promise((resolve) =>
+      setTimeout(resolve, fastRemaining > 0 ? Math.min(5, fastRemaining) : 50),
+    )
   }
   return !isAlive(pid)
 }
