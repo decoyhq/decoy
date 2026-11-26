@@ -1,10 +1,11 @@
 //! `${ <jmespath> }` expressions inside YAML strings: scanning, compiling, and evaluating against a
 //! request envelope. Standard JMESPath via the `jmespath` crate.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::LazyLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread::LocalKey;
 
 use jmespath::functions::{ArgumentType, CustomFunction, Signature};
@@ -159,15 +160,23 @@ fn compile(source: &str) -> Result<jmespath::Expression<'static>, ExprError> {
 
 type Cache = RefCell<HashMap<String, Rc<jmespath::Expression<'static>>>>;
 
+static CACHE_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Retire cached sources on their owning threads after a Catalog swap. The generation is just
+/// a cache hint: invalidating an unrelated Controller's cache is safe.
+pub(crate) fn invalidate_caches() {
+    CACHE_GENERATION.fetch_add(1, Ordering::Relaxed);
+}
+
 thread_local! {
-    /// Compiled expressions by source. Sources come from config files, so the set stays small;
-    /// per thread because a compiled expression isn't `Send`.
+    static THREAD_GENERATION: Cell<u64> = const { Cell::new(0) };
+    /// Compiled expressions by source, per thread because an expression isn't `Send`.
     static COMPILED: Cache = RefCell::new(HashMap::new());
     /// The same, keyed by the whole predicate string, so a predicate isn't re-segmented either.
     static PREDICATES: Cache = RefCell::new(HashMap::new());
 }
 
-/// `compile`, once per source and thread: requests reuse the parsed expression.
+/// Requests on this thread reuse the parsed expression between Catalog reloads.
 fn compiled(source: &str) -> Result<Rc<jmespath::Expression<'static>>, ExprError> {
     cached(&COMPILED, source, || compile(source))
 }
@@ -177,6 +186,11 @@ fn cached(
     key: &str,
     compile: impl FnOnce() -> Result<jmespath::Expression<'static>, ExprError>,
 ) -> Result<Rc<jmespath::Expression<'static>>, ExprError> {
+    let generation = CACHE_GENERATION.load(Ordering::Relaxed);
+    if THREAD_GENERATION.with(|previous| previous.replace(generation)) != generation {
+        COMPILED.with(|cache| *cache.borrow_mut() = HashMap::new());
+        PREDICATES.with(|cache| *cache.borrow_mut() = HashMap::new());
+    }
     if let Some(expression) = cache.with(|cache| cache.borrow().get(key).cloned()) {
         return Ok(expression);
     }
@@ -336,6 +350,22 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn reload_retires_cached_expressions_on_the_next_evaluation() {
+        use crate::engine::{Controller, test_support::catalog};
+
+        let collections = "- id: local\n  routes: []\n";
+        let mut controller = Controller::new(catalog(collections), "local");
+        let input = to_rcvar(&json!({"old": true, "new": true}));
+        assert_eq!(evaluate("old", &input).unwrap(), json!(true));
+        assert!(predicate_holds("${ old }", &input).unwrap());
+
+        controller.reload(catalog(collections), "local");
+        assert_eq!(evaluate("new", &input).unwrap(), json!(true));
+        assert!(!COMPILED.with(|cache| cache.borrow().contains_key("old")));
+        assert!(!PREDICATES.with(|cache| cache.borrow().contains_key("${ old }")));
+    }
 
     #[test]
     fn splits_text_and_expressions() {

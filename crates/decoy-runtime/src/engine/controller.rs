@@ -160,6 +160,7 @@ impl Controller {
         default_collection: impl Into<String>,
     ) -> Vec<String> {
         self.catalog = Arc::new(catalog);
+        crate::expression::invalidate_caches();
         self.default_collection = default_collection.into();
         let mut warnings = Vec::new();
         let mut changed = Vec::new();
