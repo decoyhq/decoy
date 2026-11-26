@@ -34,8 +34,12 @@ impl Catalog {
         path_and_query: &str,
         headers: &std::collections::BTreeMap<String, String>,
     ) -> Option<WsConnection> {
-        let request =
-            RequestEnvelope::from_parts(None, path_and_query, headers, bytes::Bytes::new());
+        let request = OnceCell::new();
+        let request = || {
+            request.get_or_init(|| {
+                RequestEnvelope::from_parts(None, path_and_query, headers, bytes::Bytes::new())
+            })
+        };
         let path = path_and_query
             .split_once('?')
             .map_or(path_and_query, |(path, _)| path);
@@ -46,7 +50,7 @@ impl Catalog {
                     return None;
                 };
                 let has_query = address.query.iter().all(|(key, expected)| {
-                    request.query.get(key).is_some_and(|values| {
+                    request().query.get(key).is_some_and(|values| {
                         expected == ANY || values.iter().any(|value| value == expected)
                     })
                 });
@@ -64,11 +68,12 @@ impl Catalog {
         if winners.next().is_some() {
             return None;
         }
+        let request = request();
         Some(WsConnection {
             route: route.id.clone(),
             url: path_and_query.to_owned(),
             headers: request.headers().clone(),
-            envelope: upgrade_envelope(path, &path_params, &request),
+            envelope: upgrade_envelope(path, &path_params, request),
         })
     }
 
@@ -229,6 +234,26 @@ cases:
         let room = catalog.ws_upgrade("/rooms/a%20b", &headers).unwrap();
         assert_eq!(room.route, "plain");
         assert_eq!(room.envelope["pathParams"], json!({ "room": "a b" }));
+    }
+
+    #[test]
+    fn upgrades_without_query_conditions_keep_all_connection_metadata() {
+        let route = catalog("plain:any:quiet").route("plain").unwrap().clone();
+        let catalog = Catalog::new(
+            vec![route],
+            CollectionsFile::from_yaml("- id: default\n  routes: [plain:any:quiet]\n").unwrap(),
+            crate::http::RuntimeConfig::default(),
+        )
+        .unwrap();
+        let headers = BTreeMap::from([("Cookie".to_owned(), "id=7".to_owned())]);
+        assert!(catalog.ws_upgrade("/other?q=one", &headers).is_none());
+        let connection = catalog
+            .ws_upgrade("/rooms/a%2Fb?q=one&q=two", &headers)
+            .unwrap();
+        assert_eq!(connection.headers["cookie"], "id=7");
+        assert_eq!(connection.envelope["cookies"], json!({"id": "7"}));
+        assert_eq!(connection.envelope["query"], json!({"q": ["one", "two"]}));
+        assert_eq!(connection.envelope["pathParams"], json!({"room": "a/b"}));
     }
 
     #[test]
