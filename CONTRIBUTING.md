@@ -23,7 +23,7 @@ what CI gates on). Without it, use the underlying commands:
 | `cargo clippy --workspace --all-targets -- -D warnings` | Rust lint                   |
 | `cargo fmt --check`                                     | Rust format check           |
 | `pnpm build` / `pnpm typecheck` / `pnpm test`           | JS workspace packages       |
-| `pnpm check` / `pnpm fix`                               | ESLint + Prettier           |
+| `pnpm check` / `pnpm fix`                               | Oxlint + Prettier           |
 
 Run `task bench:rust` to measure HTTP hits, gRPC replies, live connection fan-out, and TUI log
 frames. The benchmarks use in-process fixtures and report median release timings over five batches.
@@ -103,6 +103,6 @@ task release:tag -- 0.1.0-alpha.1   # tag origin/main and push the tag; CI build
 
 ## TypeScript
 
-`tsc` is TypeScript 7 (`@typescript/native` → `typescript@7`). The `typescript` package itself is
-the 6.0 API (`@typescript/typescript6`) because typescript-eslint cannot use TypeScript 7 until 7.1
-restores the programmatic API. Shortcut: drop the 6.0 alias once typescript-eslint supports 7.1.
+`tsc` is TypeScript 7 (`@typescript/native` → `typescript@7`). Tools that load the JavaScript
+`typescript` API still get the 6.0 alias (`@typescript/typescript6`). Oxlint uses `tsrs` for
+type-aware linting; `pnpm typecheck` still runs the compiler separately.
