@@ -1,7 +1,8 @@
+import cloudflare from '@cloudflare/oxlint-config'
 import { defineConfig } from 'oxlint'
 
 export default defineConfig({
-  plugins: ['typescript'],
+  extends: [cloudflare],
   // Keep rule selection explicit so upgrades don't change the lint policy.
   categories: {
     correctness: 'off',
@@ -11,6 +12,7 @@ export default defineConfig({
     typeAware: true,
   },
   ignorePatterns: [
+    ...cloudflare.ignorePatterns,
     '**/dist/',
     'target/',
     '**/test-results/',
@@ -20,6 +22,26 @@ export default defineConfig({
     '**/doc-build/',
   ],
   rules: {
+    // Existing violations: enable these rules with their fixes in follow-up changes.
+    '@nkzw/no-instanceof': 'off',
+    curly: 'off',
+    'import/consistent-type-specifier-style': 'off',
+    'import/no-namespace': 'off',
+    'no-console': 'off',
+    'no-promise-executor-return': 'off',
+    'quality/no-chained-type-assertions': 'off',
+    'quality/no-known-value-widening': 'off',
+    'quality/no-object-parameters': 'off',
+    'quality/no-unknown-returns': 'off',
+    'quality/no-unsafe-dictionary-type': 'off',
+    'react/rules-of-hooks': 'off',
+    'typescript/no-unsafe-type-assertion': 'off',
+    'unicorn/consistent-function-scoping': 'off',
+    'unicorn/numeric-separators-style': 'off',
+    'unicorn/prefer-number-properties': 'off',
+    'unicorn/prefer-string-raw': 'off',
+    'unicorn/prefer-string-replace-all': 'off',
+
     'for-direction': 'error',
     'no-array-constructor': 'error',
     'no-async-promise-executor': 'error',
@@ -135,6 +157,8 @@ export default defineConfig({
         'no-unreachable': 'error',
         'no-unsafe-negation': 'error',
         'no-with': 'error',
+        // Keep plain JS on the untyped lint policy.
+        'typescript/no-misused-promises': 'off',
       },
     },
     {
@@ -151,6 +175,8 @@ export default defineConfig({
         'typescript/no-confusing-void-expression': 'error',
         'typescript/no-deprecated': 'error',
         'typescript/no-duplicate-type-constituents': 'error',
+        // Keep Decoy's strict checks in tests, where the preset relaxes them.
+        'typescript/no-explicit-any': 'error',
         'typescript/no-floating-promises': 'error',
         'typescript/no-for-in-array': 'error',
         'typescript/no-generated-empty-object-type': 'error',
@@ -159,6 +185,7 @@ export default defineConfig({
         'typescript/no-misused-promises': 'error',
         'typescript/no-misused-spread': 'error',
         'typescript/no-mixed-enums': 'error',
+        'typescript/no-non-null-assertion': 'error',
         'typescript/no-redundant-type-constituents': 'error',
         'typescript/no-unnecessary-boolean-literal-compare': 'error',
         'typescript/no-unnecessary-condition': 'error',
