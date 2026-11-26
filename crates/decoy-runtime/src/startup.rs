@@ -191,9 +191,7 @@ pub fn load_catalog_from_files(
 fn discover_route_files(routes_dir: &Path) -> Result<Vec<PathBuf>, StartupError> {
     let mut paths = Vec::new();
     discover_route_files_inner(routes_dir, &mut paths, &mut BTreeSet::new())?;
-    paths.sort_by(|left, right| {
-        normalize_for_sort(routes_dir, left).cmp(&normalize_for_sort(routes_dir, right))
-    });
+    paths.sort_by_cached_key(|path| normalize_for_sort(routes_dir, path));
     Ok(paths)
 }
 
