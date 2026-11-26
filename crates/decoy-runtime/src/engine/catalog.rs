@@ -9,12 +9,15 @@ use crate::http::{BodyPlan, HttpResponsePlan, RuntimeConfig};
 use crate::schema::{Behavior, Route, RouteMatch};
 use crate::template::has_templates;
 
+pub(crate) type ResolvedCollections =
+    BTreeMap<String, Result<Vec<Activation>, Arc<CollectionError>>>;
+
 #[derive(Debug, Clone)]
 pub struct Catalog {
     pub(crate) routes: BTreeMap<String, Route>,
     collections: CollectionsFile,
     /// Each Collection resolved once (inheritance, validation) instead of on every request.
-    resolved: BTreeMap<String, Result<Vec<Activation>, Arc<CollectionError>>>,
+    resolved: ResolvedCollections,
     /// HTTP Response Behaviors without templates, planned once with the body serialized:
     /// route → case → behavior.
     pub(crate) static_plans: BTreeMap<String, BTreeMap<String, BTreeMap<String, HttpResponsePlan>>>,
@@ -40,14 +43,18 @@ impl Catalog {
                 });
             }
         }
-        Self::from_checked(routes, collections, runtime)
+        let resolved = collections
+            .ids()
+            .map(|id| (id.to_owned(), collections.resolve(id).map_err(Arc::new)))
+            .collect();
+        Self::from_checked(routes, collections, resolved, runtime)
     }
 
-    /// `new` for Routes startup already validated and checked against the protos (with file
-    /// paths in its diagnostics), so the expensive proto check runs once.
+    /// Assemble a Catalog from checked Routes and already resolved Collections.
     pub(crate) fn from_checked(
         routes: Vec<Route>,
         collections: CollectionsFile,
+        resolved: ResolvedCollections,
         runtime: RuntimeConfig,
     ) -> Result<Self, CatalogError> {
         let mut by_id = BTreeMap::new();
@@ -58,13 +65,6 @@ impl Catalog {
             }
         }
 
-        let resolved = collections
-            .ids()
-            .map(|id| {
-                let activations = collections.resolve(id).map_err(Arc::new);
-                (id.to_owned(), activations)
-            })
-            .collect();
         let static_plans = by_id
             .values()
             .filter(|route| matches!(route.route_match, RouteMatch::Http(_)))

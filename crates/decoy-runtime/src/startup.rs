@@ -7,7 +7,7 @@ use serde_norway::Value as YamlValue;
 use thiserror::Error;
 
 use crate::collections::{Collection, CollectionError, CollectionsFile};
-use crate::engine::Catalog;
+use crate::engine::{Catalog, catalog::ResolvedCollections};
 use crate::http::RuntimeConfig;
 use crate::schema::{Route, ValidationError};
 
@@ -173,14 +173,15 @@ pub fn load_catalog_from_files(
         })?,
     };
 
-    validate_collection_references(&routes, &collections, collections_file)?;
-    let catalog = Catalog::from_checked(routes, collections, runtime).map_err(|error| {
-        StartupError::new(
-            StartupDiagnosticKind::Schema,
-            collections_file,
-            error.to_string(),
-        )
-    })?;
+    let resolved = resolve_and_validate_collections(&routes, &collections, collections_file)?;
+    let catalog =
+        Catalog::from_checked(routes, collections, resolved, runtime).map_err(|error| {
+            StartupError::new(
+                StartupDiagnosticKind::Schema,
+                collections_file,
+                error.to_string(),
+            )
+        })?;
 
     Ok(Startup {
         catalog,
@@ -331,16 +332,17 @@ fn source_with_line(path: &Path, line: Option<usize>) -> SourceLocation {
     source
 }
 
-fn validate_collection_references(
+fn resolve_and_validate_collections(
     routes: &[Route],
     collections: &CollectionsFile,
     collections_file: &Path,
-) -> Result<(), StartupError> {
+) -> Result<ResolvedCollections, StartupError> {
     let routes_by_id = routes
         .iter()
         .map(|route| (route.id.as_str(), route))
         .collect::<BTreeMap<_, _>>();
 
+    let mut resolved = BTreeMap::new();
     for collection_id in collections.ids() {
         let activations = collections.resolve(collection_id).map_err(|error| {
             StartupError::new(
@@ -350,7 +352,7 @@ fn validate_collection_references(
             )
         })?;
 
-        for activation in activations {
+        for activation in &activations {
             let route = routes_by_id.get(activation.route.as_str()).ok_or_else(|| {
                 StartupError::new(
                     StartupDiagnosticKind::CrossReference,
@@ -382,9 +384,10 @@ fn validate_collection_references(
                 ));
             }
         }
+        resolved.insert(collection_id.to_owned(), Ok(activations));
     }
 
-    Ok(())
+    Ok(resolved)
 }
 
 #[cfg(test)]
@@ -837,15 +840,15 @@ cases:
     }
 
     #[test]
-    fn startup_loader_keeps_happy_path_catalog_behavior_unchanged() {
+    fn startup_loader_keeps_inherited_activations_in_order() {
         let temp = tempfile::tempdir().unwrap();
         let routes_dir = temp.path().join("routes");
-        let route_path = routes_dir.join("get-user.yaml");
         let collections_path = temp.path().join("collections.yaml");
-        write(&route_path, &route_yaml("get-user"));
+        write(&routes_dir.join("get-user.yaml"), &route_yaml("get-user"));
+        write(&routes_dir.join("other.yaml"), &route_yaml("other"));
         write(
             &collections_path,
-            &collections_yaml("get-user:user-123:success"),
+            "- id: child\n  from: parent\n  routes: [other:user-123:success]\n- id: parent\n  routes: [get-user:user-123:success]\n",
         );
 
         let startup = load_catalog_from_files(
@@ -861,7 +864,16 @@ cases:
         )
         .unwrap();
 
-        assert_eq!(startup.default_collection, "local");
+        assert_eq!(startup.default_collection, "child");
+        assert_eq!(
+            startup
+                .catalog
+                .activations("child", &[])
+                .unwrap()
+                .map(|activation| activation.address())
+                .collect::<Vec<_>>(),
+            ["get-user:user-123:success", "other:user-123:success"]
+        );
     }
 
     #[cfg(unix)]
