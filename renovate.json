@@ -11,6 +11,10 @@
   },
   "packageRules": [
     {
+      "matchDatasources": ["npm"],
+      "minimumReleaseAge": "14 days"
+    },
+    {
       "description": "One PR for stable minor/patch bumps; 0.x minors can break, so they stay separate.",
       "matchUpdateTypes": ["minor", "patch", "digest", "pin"],
       "matchCurrentVersion": "!/^0/",

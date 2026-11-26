@@ -14,6 +14,27 @@ Use this runbook when configuring GitHub Apps, security scanning, or merge check
 | Coverage                     | Codecov                                       | `.github/workflows/coverage.yml`, `codecov.yml` |
 | Leaked secrets               | secret scanning + push protection             | repo settings                                   |
 
+## Emergency npm security updates
+
+New npm releases are quarantined for 14 days, including transitive dependencies. If an advisory
+affects a production dependency and no patched version has cleared quarantine, open an emergency PR:
+
+1. In `pnpm-workspace.yaml`, add only the exact patched version to `minimumReleaseAgeExclude`.
+   For example:
+
+   ```yaml
+   minimumReleaseAgeExclude:
+     # Remove when 2.4.1 is 14 days old: 2026-12-09 10:00 UTC.
+     - 'example-lib@2.4.1'
+   ```
+
+2. Update the dependency (or its parent for a transitive fix), commit `pnpm-lock.yaml`, and review
+   any other lockfile changes. Link the advisory and explain why the fix can't wait in the PR.
+3. Get maintainer approval and let normal CI pass before merging. Once the patched version clears
+   quarantine, remove the exception in a follow-up PR without reverting the upgrade.
+
+Do not lower the quarantine or exempt an entire package or scope.
+
 ## One-time setup
 
 ### 1. Install the GitHub Apps
