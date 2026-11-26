@@ -67,6 +67,35 @@ pipelines:
     output: [normalize, protobuf, grpc-frame]
 "#;
 
+#[tokio::test]
+async fn empty_shared_pipeline_uses_raw_grpc_frames() {
+    let route = r#"
+id: approvals-get
+transport: grpc
+pipeline: raw
+match:
+  service: approvals.v1.Approvals
+  method: GetApproval
+cases:
+  raw:
+    match:
+      message: AAAAAAUKA2EtMQ==
+    behaviors:
+      ok:
+        message: AAAAAAUKA3gtMQ==
+"#;
+    let server = Server::start_with_config(
+        route,
+        "- id: raw\n  routes: [approvals-get:raw:ok]\n",
+        false,
+        "pipelines: { raw: [] }\n",
+    )
+    .await;
+    let mut client = server.client().await;
+    let reply = client.get(json!({ "id": "a-1" }), &[]).await.unwrap();
+    assert_eq!(reply, json!({ "id": "x-1" }));
+}
+
 #[cfg(unix)]
 #[tokio::test]
 async fn shorthand_pipeline_reverses_output_and_skips_missing_directions() {

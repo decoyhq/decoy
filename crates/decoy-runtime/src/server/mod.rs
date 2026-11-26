@@ -81,9 +81,9 @@ pub async fn serve(
     crate::pipeline::check_routes(&startup.catalog)
         .await
         .map_err(crate::workers::WorkerError::Check)?;
+    let mut notices = empty_pipeline_warnings(startup.catalog.runtime());
     let controller =
         Controller::new(startup.catalog, startup.default_collection).with_events(events.clone());
-    let mut notices = Vec::new();
     let controller = Arc::new(RwLock::new(controller));
     let max_body_bytes = Arc::new(AtomicUsize::new(config.max_body_bytes));
     let connections = crate::connections::Connections::default();
@@ -189,11 +189,25 @@ fn load(config: &ServeConfig, workers: &crate::workers::Workers) -> Result<Start
                 .iter()
                 .map(|(name, spec)| (name.clone(), spec.expand(workers, &config.commands)))
                 .collect(),
+            empty_shared_pipelines: config
+                .pipelines
+                .iter()
+                .filter(|(_, spec)| matches!(spec, crate::config::PipelineSpec::Shorthand(steps) if steps.is_empty()))
+                .map(|(name, _)| name.clone())
+                .collect(),
             commands: config.commands.clone(),
             workers: workers.clone(),
         },
         config.collection.as_deref(),
     )?)
+}
+
+fn empty_pipeline_warnings(runtime: &RuntimeConfig) -> Vec<String> {
+    runtime
+        .empty_shared_pipelines
+        .iter()
+        .map(|name| format!("warning: Pipeline `{name}` has an empty shared step list"))
+        .collect()
 }
 
 impl Server {

@@ -25,6 +25,8 @@ pub struct RuntimeConfig {
     pub protos: DescriptorPool,
     /// `pipelines:` from the config file, for Routes that name one.
     pub pipelines: std::collections::BTreeMap<String, crate::config::PipelineConfig>,
+    /// Pipelines authored as `[]`, opting out of the default gRPC codec.
+    pub empty_shared_pipelines: std::collections::BTreeSet<String>,
     pub commands: std::collections::BTreeMap<String, crate::config::CommandsConfig>,
     /// Running Transformer workers, indexed by Transformer name.
     pub workers: crate::workers::Workers,

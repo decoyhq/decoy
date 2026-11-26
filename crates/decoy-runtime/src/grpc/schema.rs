@@ -235,7 +235,8 @@ pub(crate) fn check_configured_route(
     let named = route
         .pipeline_name
         .as_ref()
-        .and_then(|name| runtime.pipelines.get(name));
+        .and_then(|name| runtime.pipelines.get(name))
+        .filter(|_| !super::codec::fallback_pipeline(route, runtime).is_empty());
     check_route_directions(
         route,
         &runtime.protos,

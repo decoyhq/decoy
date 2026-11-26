@@ -83,7 +83,7 @@ impl Reloader {
             Ok::<_, ServeError>((config, startup))
         })
         .await??;
-        let mut warnings = Vec::new();
+        let mut warnings = super::empty_pipeline_warnings(startup.catalog.runtime());
         if ListenerFields::of(&config) != *self.listeners {
             warnings.push("listener changes need restart".to_owned());
         }

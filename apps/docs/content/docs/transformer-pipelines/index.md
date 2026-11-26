@@ -49,9 +49,15 @@ pipeline: approvals-feed
 | [gRPC](../grpc/index.md#pipelines)                     | Framed request bytes and replies. Include `grpc-frame` and `protobuf` in the appropriate order if your Transformer works with decoded messages. |
 | [WebSocket](../websocket/index.md#websocket-pipelines) | Incoming frame payloads and outgoing messages, including Control API pushes.                                                                    |
 
-In a named gRPC Pipeline, a configured Transformer takes precedence over a built-in step with the same name. For working configurations, see the [shared HTTP and WebSocket example](https://github.com/decoyhq/decoy/tree/main/examples/ws-transformer-node) and the [gRPC example](https://github.com/decoyhq/decoy/tree/main/examples/grpc-node).
+Transformer names must be unique. `grpc-frame` and `protobuf` are reserved for gRPC built-ins,
+so they cannot be used as Transformer names even in configurations without gRPC Routes. For
+working configurations, see the [shared HTTP and WebSocket example](https://github.com/decoyhq/decoy/tree/main/examples/ws-transformer-node)
+and the [gRPC example](https://github.com/decoyhq/decoy/tree/main/examples/grpc-node).
 
 ## Validation and execution limits
+
+An empty shared list (`[]`) warns at startup and runs no steps. It does not insert the default
+gRPC codec.
 
 Unknown Transformer names are errors in either form. In an explicit mapping, listing a Transformer
 in a direction it doesn't support is also an error. A worker can check the authored output literal

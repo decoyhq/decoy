@@ -39,6 +39,22 @@ pub(super) fn pipeline(route: &Route) -> &[PipelineStep] {
     route.pipeline.as_deref().unwrap_or(&DEFAULT_PIPELINE)
 }
 
+/// The built-in steps to use when a Route has no named steps in a direction.
+pub(super) fn fallback_pipeline<'a>(
+    route: &'a Route,
+    runtime: &RuntimeConfig,
+) -> &'a [PipelineStep] {
+    if route
+        .pipeline_name
+        .as_ref()
+        .is_some_and(|name| runtime.empty_shared_pipelines.contains(name))
+    {
+        &[]
+    } else {
+        pipeline(route)
+    }
+}
+
 /// Why a gRPC message didn't decode or encode. The text reaches grpc-message and miss reasons.
 #[derive(Debug, Error)]
 pub enum GrpcCodecError {
@@ -112,7 +128,7 @@ pub async fn encode_response_async(
 ) -> Result<Vec<u8>, GrpcCodecError> {
     let named = Pipeline::of(route, runtime).map_err(GrpcCodecError::Transform)?;
     let Some(named) = named.filter(Pipeline::has_output) else {
-        return encode(message, pipeline(route), descriptor);
+        return encode(message, fallback_pipeline(route, runtime), descriptor);
     };
     let value = named
         .run_grpc(Op::Output, to_msgpack(&message), |step, value| {

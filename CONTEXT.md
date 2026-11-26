@@ -157,8 +157,8 @@ _Avoid_: "socket" for the Session-level handle (a socket is one client connectio
 ### Extension concepts
 
 **Pipeline**:
-An ordered series of **Pipeline steps** between transport payloads and the values Cases and Behaviors use. Named Pipelines have independent `input` and `output` lists, each in execution order. See ADR 0004.
-_Avoid_: implicit step ordering.
+An ordered series of **Pipeline steps** between transport payloads and the values Cases and Behaviors use. A named Pipeline can specify `input` and `output` separately in execution order or use one shared step list that runs forward on input and backward on output. See ADR 0006.
+_Avoid_: implicit step ordering outside a shared step list.
 
 **Transformer**:
 A named definition for one reusable input or output transformation. A Transformer uses a persistent worker or commands for its supported directions.

@@ -972,6 +972,30 @@ fn bare_decoy_without_a_terminal_points_to_serve() {
 }
 
 #[test]
+fn empty_shared_pipeline_warns_without_blocking_startup() {
+    let fixture = Fixture::new();
+    fixture.write_route("users.yaml", route_with_id("users"));
+    fixture.write_collections("- id: default\n  routes: [users:any:ok]\n");
+    fixture.write_config("pipelines: { plain: [], explicit: {} }\n");
+
+    let server = fixture.spawn(&["--config", "decoy.yaml"]);
+    let mut warnings = Vec::new();
+    loop {
+        let line = server.lines.recv_timeout(Duration::from_secs(10)).unwrap();
+        if line.starts_with("decoy serve listening on ") {
+            break;
+        }
+        if line.contains("empty shared step list") {
+            warnings.push(line);
+        }
+    }
+    assert_eq!(
+        warnings,
+        ["decoy serve: warning: Pipeline `plain` has an empty shared step list"]
+    );
+}
+
+#[test]
 fn shorthand_pipeline_rejects_unknown_transformer_even_when_unused() {
     let fixture = Fixture::new();
     fixture.write_route("users.yaml", route_with_id("users"));

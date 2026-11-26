@@ -1,6 +1,8 @@
 # 0004. Give named Pipelines independent input and output steps
 
 Accepted 2026-10-22. Amends [ADR 0002](0002-pipeline-steps-and-plugin-workers.md).
+[ADR 0006](0006-shared-pipeline-step-lists.md) adds a shared step list without changing the
+execution order of explicit direction lists.
 
 A WebSocket client can send compressed binary requests and receive text replies. Reversing the
 input steps would force the reply through transforms it does not need. Adding a built-in for
