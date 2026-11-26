@@ -86,7 +86,9 @@ export function miss(reason: string): never {
  * unit test importing the file) it only returns the transformer.
  */
 export function defineTransformer<P extends Transformer>(transformer: P): P {
-  if (process.env.DECOY_TRANSFORMER === '1') serve(transformer)
+  if (process.env.DECOY_TRANSFORMER === '1') {
+    serve(transformer)
+  }
 
   return transformer
 }

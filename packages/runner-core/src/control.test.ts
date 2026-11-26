@@ -114,7 +114,9 @@ describe('createRouter', () => {
 
   test('connection keeps waiting past the call timeout when asked to wait longer', async () => {
     const decoy = await fake(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 150))
+      await new Promise((resolve) => {
+        setTimeout(resolve, 150)
+      })
       return { status: 200, body: '{"connections":1}' }
     })
     const router = createRouter(decoy.url, 's', 50)
@@ -124,10 +126,14 @@ describe('createRouter', () => {
 
   test('gives up on a Decoy that never answers, naming the verb and url', async () => {
     const server = createServer(() => undefined)
-    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+    await new Promise<void>((done) => {
+      server.listen(0, '127.0.0.1', done)
+    })
     closers.push(async () => {
       server.closeAllConnections()
-      await new Promise((done) => server.close(done))
+      await new Promise((done) => {
+        server.close(done)
+      })
     })
     const address = server.address()
     const url = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`

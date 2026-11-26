@@ -1,7 +1,8 @@
 import { ok } from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
 import { expect, test } from '@rstest/core'
-import { read, type WireMessage, write } from './wire'
+import { read, write } from './wire'
+import type { WireMessage } from './wire'
 
 test('waits for a split header and payload, then reads all complete messages in order', () => {
   const first = { kind: 'call', id: 1 }

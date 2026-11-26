@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { after, before, test } from 'node:test'
-import { type Bff, startBff } from '../src/bff.ts'
+import { startBff } from '../src/bff.ts'
+import type { Bff } from '../src/bff.ts'
 
 // Trusted only because NODE_EXTRA_CA_CERTS names mocks/.decoy/ca.pem (see run.ts).
 const DECOY_HTTPS = 'https://localhost:8443'

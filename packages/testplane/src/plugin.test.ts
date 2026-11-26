@@ -10,9 +10,13 @@ import decoyPlugin from './plugin'
 
 async function freePort(): Promise<number> {
   const server = createServer()
-  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  await new Promise<void>((done) => {
+    server.listen(0, '127.0.0.1', done)
+  })
   const address = server.address()
-  await new Promise((done) => server.close(done))
+  await new Promise((done) => {
+    server.close(done)
+  })
   if (address === null || typeof address === 'string') {
     throw new Error('expected a TCP address')
   }
@@ -176,7 +180,9 @@ describe('decoyPlugin (worker)', () => {
     }
     const puppeteer = {
       once: (event: string, handler: () => unknown) => {
-        if (event === 'disconnected') disconnect = handler
+        if (event === 'disconnected') {
+          disconnect = handler
+        }
       },
       target: () => ({ createCDPSession: () => Promise.resolve(cdp) }),
     }

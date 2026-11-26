@@ -1,12 +1,7 @@
 import type { WebSocketRoute } from '@playwright/test'
 import { describe, expect, test } from '@rstest/core'
-import {
-  bridgeToDecoy,
-  type DecoySocket,
-  type OpenDecoySocket,
-  type RoutableWebSocket,
-  routeWebSocketsToDecoy,
-} from './websocket'
+import { bridgeToDecoy, routeWebSocketsToDecoy } from './websocket'
+import type { DecoySocket, OpenDecoySocket, RoutableWebSocket } from './websocket'
 
 function fakePageSocket(url: string) {
   const page = {
@@ -196,7 +191,9 @@ describe('the default socket', () => {
       seen.push({ url: req.url, session: req.headers['x-mock-session'] })
       socket.destroy()
     })
-    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+    await new Promise<void>((done) => {
+      server.listen(0, '127.0.0.1', done)
+    })
     const address = server.address()
     const decoyUrl = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`
     try {
@@ -214,7 +211,9 @@ describe('the default socket', () => {
       expect(seen).toEqual([{ url: '/subscribe?a=1', session: 'session-1' }])
       expect(page.closed).toEqual({})
     } finally {
-      await new Promise((done) => server.close(done))
+      await new Promise((done) => {
+        server.close(done)
+      })
     }
   })
 })

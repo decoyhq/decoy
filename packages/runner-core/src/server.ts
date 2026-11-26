@@ -1,4 +1,5 @@
-import { type ChildProcess, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -196,7 +197,9 @@ async function waitForHealth(child: ChildProcess, options: ResolvedServerOptions
     if (await isHealthy(options.url)) {
       return
     }
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100)
+    })
   }
   throw new Error(
     `Decoy did not become healthy at ${options.url} within ${options.timeout}ms (command: \`${options.command}\`).`,

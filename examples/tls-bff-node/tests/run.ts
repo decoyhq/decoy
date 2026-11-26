@@ -36,7 +36,9 @@ while (!(await healthy())) {
     stopDecoy()
     throw new Error('decoy did not become healthy')
   }
-  await new Promise((resolve) => setTimeout(resolve, 100))
+  await new Promise((resolve) => {
+    setTimeout(resolve, 100)
+  })
 }
 
 const tests = spawn(process.execPath, ['--test', 'tests/*.test.ts'], {

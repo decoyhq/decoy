@@ -1,4 +1,5 @@
-import { type ChildProcess, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { delimiter, dirname, join } from 'node:path'
 
@@ -26,7 +27,7 @@ export function withLocalBins(cwd: string, env: NodeJS.ProcessEnv): NodeJS.Proce
  * Stops `child` and everything it started: SIGTERM to its process group (Decoy drains open
  * requests for up to 5s), then SIGKILL after `graceMs`. Never throws for a process that is gone.
  */
-export async function stopProcess(child: ChildProcess, graceMs = 8_000): Promise<void> {
+export async function stopProcess(child: ChildProcess, graceMs = 8000): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) {
     return
   }
@@ -46,12 +47,12 @@ export async function stopProcess(child: ChildProcess, graceMs = 8_000): Promise
   spawn('taskkill', ['/pid', String(pid), '/T', '/F']).on('error', () => undefined)
   await Promise.race([
     exited,
-    new Promise<boolean>((resolve) =>
+    new Promise<boolean>((resolve) => {
       // unref: an already-exited Decoy mustn't keep the caller alive for the grace period.
       setTimeout(() => {
         resolve(false)
-      }, graceMs).unref(),
-    ),
+      }, graceMs).unref()
+    }),
   ])
 }
 
@@ -60,7 +61,7 @@ export async function stopProcess(child: ChildProcess, graceMs = 8_000): Promise
  * started it), so it waits on the group, not an exit event: SIGTERM, then SIGKILL if it outlives
  * `graceMs`.
  */
-export async function stopGroup(pid: number, graceMs = 8_000): Promise<void> {
+export async function stopGroup(pid: number, graceMs = 8000): Promise<void> {
   if (process.platform === 'win32') {
     await new Promise((done) => {
       spawn('taskkill', ['/pid', String(pid), '/T', '/F'])
@@ -72,7 +73,7 @@ export async function stopGroup(pid: number, graceMs = 8_000): Promise<void> {
   signalGroup(pid, 'SIGTERM')
   if (!(await goneWithin(pid, graceMs))) {
     signalGroup(pid, 'SIGKILL')
-    await goneWithin(pid, 2_000)
+    await goneWithin(pid, 2000)
   }
 }
 
@@ -91,7 +92,9 @@ async function goneWithin(pid: number, ms: number): Promise<boolean> {
     if (!isAlive(pid)) {
       return true
     }
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await new Promise((resolve) => {
+      setTimeout(resolve, 50)
+    })
   }
   return !isAlive(pid)
 }

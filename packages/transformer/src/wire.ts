@@ -56,12 +56,16 @@ export function read(
 
       // Wait for the rest of this message.
       const end = 4 + length
-      if (used < end) break
+      if (used < end) {
+        break
+      }
 
       const body = buffer.subarray(4, end)
       buffer = buffer.subarray(end)
       used -= end
-      if (used === 0) buffer = undefined
+      if (used === 0) {
+        buffer = undefined
+      }
 
       let message: unknown
       try {
@@ -76,7 +80,9 @@ export function read(
       }
 
       onMessage(message)
-      if (!buffer) return
+      if (!buffer) {
+        return
+      }
     }
 
     // Drain complete frames before copying any tail. Don't pin a large backing
@@ -110,7 +116,9 @@ function decodeMessage(body: Uint8Array): unknown {
 
 /** Removes the key prefix and restores own properties, including `__proto__`. */
 function restoreKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(restoreKeys)
+  if (Array.isArray(value)) {
+    return value.map(restoreKeys)
+  }
   if (!value || typeof value !== 'object' || Object.getPrototypeOf(value) !== Object.prototype) {
     return value
   }

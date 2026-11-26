@@ -1,5 +1,6 @@
 import { once } from 'node:events'
-import { createServer, type Server } from 'node:http'
+import { createServer } from 'node:http'
+import type { Server } from 'node:http'
 import type { DecoyOptions } from '@decoyhq/testplane'
 import type { ConfigInput } from 'testplane'
 

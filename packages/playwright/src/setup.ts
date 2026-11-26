@@ -1,5 +1,6 @@
 import { dirname } from 'node:path'
-import { resolveServerOptions, startDecoy, type Teardown } from '@decoyhq/runner-core'
+import { resolveServerOptions, startDecoy } from '@decoyhq/runner-core'
+import type { Teardown } from '@decoyhq/runner-core'
 import type { FullConfig, FullProject } from '@playwright/test'
 import type { DecoyTestOptions } from './fixtures'
 import type { DecoyOptions } from './options'

@@ -1,13 +1,8 @@
-import { createServer, type IncomingHttpHeaders } from 'node:http'
+import { createServer } from 'node:http'
+import type { IncomingHttpHeaders } from 'node:http'
 import { describe, expect, test } from '@rstest/core'
-import {
-  type DecoyFetch,
-  type DecoyResponse,
-  fetchWithoutCookies,
-  forwardToDecoy,
-  type RoutableRoute,
-  routeToDecoy,
-} from './routing'
+import { fetchWithoutCookies, forwardToDecoy, routeToDecoy } from './routing'
+import type { DecoyFetch, DecoyResponse, RoutableRoute } from './routing'
 
 type Fulfilled = Parameters<RoutableRoute['fulfill']>[0]
 
@@ -134,7 +129,9 @@ describe('fetchWithoutCookies', () => {
       res.writeHead(302, { location: '/elsewhere', 'set-cookie': ['a=1; Path=/', 'b=2; Path=/'] })
       res.end(Buffer.from([0, 255, 1]))
     })
-    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+    await new Promise<void>((done) => {
+      server.listen(0, '127.0.0.1', done)
+    })
     const address = server.address()
     const decoyUrl = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`
     try {
@@ -148,7 +145,9 @@ describe('fetchWithoutCookies', () => {
       expect(first.result.fulfilled?.body).toEqual(Buffer.from([0, 255, 1]))
       expect(seen.map((headers) => headers.cookie)).toEqual([undefined, undefined])
     } finally {
-      await new Promise((done) => server.close(done))
+      await new Promise((done) => {
+        server.close(done)
+      })
     }
   })
 })
