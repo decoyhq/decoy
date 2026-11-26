@@ -66,7 +66,7 @@ impl Sender {
 /// Messages a connection may have queued and unread; past it, `send` skips that connection.
 const SEND_QUEUE: usize = 64;
 
-/// How often a waiting `send` or `wait` looks again, for changes no registration signals.
+/// How often a waiting `send` checks for queue space, which no registration signals.
 const FULL_QUEUE_RETRY: Duration = Duration::from_millis(10);
 
 /// Keeps a connection registered; dropping it unregisters the connection.
@@ -157,8 +157,10 @@ impl Connections {
     ) -> Result<usize, LiveError> {
         let address = (session.to_owned(), route.to_owned());
         let message = Bytes::from(message);
-        self.wait_for(timeout, || self.deliver(&address, output, &message))
-            .await
+        self.wait_for(timeout, Some(FULL_QUEUE_RETRY), || {
+            self.deliver(&address, output, &message)
+        })
+        .await
     }
 
     /// Waits up to `timeout` until `session` has a live connection of `route` that [`Self::send`]
@@ -172,7 +174,7 @@ impl Connections {
         timeout: Duration,
     ) -> Result<usize, LiveError> {
         let address = (session.to_owned(), route.to_owned());
-        self.wait_for(timeout, || {
+        self.wait_for(timeout, None, || {
             let live = self.inner.live.lock().expect("connections lock");
             if live.closed {
                 return Err(LiveError::Closed);
@@ -191,6 +193,7 @@ impl Connections {
     async fn wait_for(
         &self,
         timeout: Duration,
+        retry_interval: Option<Duration>,
         check: impl Fn() -> Result<usize, LiveError>,
     ) -> Result<usize, LiveError> {
         let deadline = tokio::time::Instant::now() + timeout;
@@ -201,9 +204,10 @@ impl Connections {
             if found > 0 {
                 return Ok(found);
             }
-            // Not every change wakes us: a full queue drains and a counted connection can leave
-            // without a registration, so look again soon.
-            let retry = deadline.min(tokio::time::Instant::now() + FULL_QUEUE_RETRY);
+            // Wait needs only registration/shutdown notifications; send also checks for space.
+            let retry = retry_interval.map_or(deadline, |interval| {
+                deadline.min(tokio::time::Instant::now() + interval)
+            });
             let _ = tokio::time::timeout_at(retry, registered).await;
             if tokio::time::Instant::now() >= deadline {
                 return Err(LiveError::Timeout);
@@ -486,6 +490,49 @@ mod tests {
                 .wait_connected("a", "live", "live.New", SHORT)
                 .await,
             Err(LiveError::Timeout)
+        );
+    }
+
+    #[tokio::test]
+    async fn idle_wait_sleeps_until_shutdown() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::task::{Context, Poll, Wake, Waker};
+
+        #[derive(Default)]
+        struct WakeProbe(AtomicBool);
+        impl Wake for WakeProbe {
+            fn wake(self: Arc<Self>) {
+                self.0.store(true, Ordering::Relaxed);
+            }
+        }
+
+        let connections = Connections::default();
+        let mut waiting = std::pin::pin!(connections.wait_connected(
+            "a",
+            "live",
+            "live.Tick",
+            Duration::from_secs(30),
+        ));
+        let probe = Arc::new(WakeProbe::default());
+        let waker = Waker::from(probe.clone());
+        assert!(
+            waiting
+                .as_mut()
+                .poll(&mut Context::from_waker(&waker))
+                .is_pending()
+        );
+
+        tokio::time::sleep(SHORT).await;
+        assert!(
+            !probe.0.load(Ordering::Relaxed),
+            "idle wait woke before its deadline"
+        );
+
+        connections.close_all();
+        assert!(probe.0.load(Ordering::Relaxed));
+        assert_eq!(
+            waiting.poll(&mut Context::from_waker(&waker)),
+            Poll::Ready(Err(LiveError::Closed))
         );
     }
 
