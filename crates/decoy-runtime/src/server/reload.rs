@@ -78,6 +78,7 @@ impl Reloader {
         let workers = self.workers.clone();
         let (config, startup) = tokio::task::spawn_blocking(move || {
             let config = read_config()?;
+            config.validate_transformer_names()?;
             let startup = load(&config, &workers)?;
             Ok::<_, ServeError>((config, startup))
         })

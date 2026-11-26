@@ -306,11 +306,10 @@ impl Step {
                 dir: commands.dir.clone(),
             }
         } else {
-            match name {
-                "grpc-frame" => Runner::Builtin(PipelineStep::GrpcFrame),
-                "protobuf" => Runner::Builtin(PipelineStep::Protobuf),
-                _ => return Err(format!("unknown Transformer `{name}`")),
-            }
+            Runner::Builtin(
+                PipelineStep::builtin_named(name)
+                    .ok_or_else(|| format!("unknown Transformer `{name}`"))?,
+            )
         };
         Ok(Self {
             name: name.to_owned(),

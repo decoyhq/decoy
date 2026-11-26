@@ -72,6 +72,7 @@ pub async fn serve(
     config: ServeConfig,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<Server, ServeError> {
+    config.validate_transformer_names()?;
     let events = crate::events::channel();
     // Before the Catalog: Routes name Transformer steps.
     let (workers, supervisor) = crate::workers::start(&config.workers, &events).await?;

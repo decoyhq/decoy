@@ -99,6 +99,19 @@ impl<'de> Deserialize<'de> for PipelineSpec {
                 PipelineConfig::deserialize(MapAccessDeserializer::new(map))
                     .map(PipelineSpec::Explicit)
             }
+
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                Ok(PipelineSpec::Explicit(PipelineConfig::default()))
+            }
+
+            fn visit_enum<A: serde::de::EnumAccess<'de>>(
+                self,
+                data: A,
+            ) -> Result<Self::Value, A::Error> {
+                use serde::de::VariantAccess;
+                let (_, variant) = data.variant::<serde::de::IgnoredAny>()?;
+                variant.newtype_variant().map(PipelineSpec::Explicit)
+            }
         }
         deserializer.deserialize_any(PipelineVisitor)
     }
@@ -356,13 +369,59 @@ struct NativeConfigFile {
     passthrough_base_url: Option<String>,
     protos: Option<ProtoSources>,
     max_body_bytes: Option<usize>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "transformer_definitions")]
     transformers: BTreeMap<String, TransformerFile>,
     #[serde(default)]
     pipelines: BTreeMap<String, PipelineSpec>,
 }
 
+fn transformer_definitions<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, TransformerFile>, D::Error> {
+    struct Definitions;
+    impl<'de> serde::de::Visitor<'de> for Definitions {
+        type Value = BTreeMap<String, TransformerFile>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a map of Transformer definitions")
+        }
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> Result<Self::Value, A::Error> {
+            use serde::de::Error;
+            let mut definitions = BTreeMap::new();
+            while let Some(name) = map.next_key::<String>()? {
+                if definitions.contains_key(&name) {
+                    return Err(A::Error::custom(format!("duplicate Transformer `{name}`")));
+                }
+                definitions.insert(name, map.next_value()?);
+            }
+            Ok(definitions)
+        }
+    }
+    deserializer.deserialize_map(Definitions)
+}
+
 impl ServeConfig {
+    pub(crate) fn validate_transformer_names(&self) -> Result<(), ConfigError> {
+        for name in self.workers.keys().chain(self.commands.keys()) {
+            let reason = if crate::schema::PipelineStep::builtin_named(name).is_some() {
+                "name is reserved for a built-in Pipeline step"
+            } else if self.workers.contains_key(name) && self.commands.contains_key(name) {
+                "duplicate definition"
+            } else {
+                continue;
+            };
+            return Err(ConfigError::InvalidTransformer {
+                key: name.clone(),
+                reason: reason.to_owned(),
+            });
+        }
+        Ok(())
+    }
+
     pub fn from_options(options: ServeCliOptions, cwd: &Path) -> Result<Self, ConfigError> {
         let (file_config, config_base) = match &options.config_file {
             Some(path) => {
@@ -541,7 +600,7 @@ impl ServeConfig {
             })
             .unwrap_or_default();
 
-        Ok(Self {
+        let config = Self {
             routes,
             collections,
             port,
@@ -554,7 +613,9 @@ impl ServeConfig {
             workers,
             pipelines,
             commands,
-        })
+        };
+        config.validate_transformer_names()?;
+        Ok(config)
     }
 }
 
@@ -833,6 +894,39 @@ collection: config-collection
             },
             base,
         )
+    }
+
+    #[test]
+    fn pipeline_config_preserves_legacy_explicit_yaml() {
+        for (authored, equivalent) in [
+            ("p:", "p: {}"),
+            ("p: !local {input: [reader]}", "p: {input: [reader]}"),
+        ] {
+            let parse =
+                |yaml| crate::yaml::from_str::<BTreeMap<String, PipelineSpec>>(yaml).unwrap();
+            assert_eq!(parse(authored), parse(equivalent));
+        }
+    }
+
+    #[test]
+    fn pipeline_config_rejects_duplicate_transformer_definitions() {
+        let dir = tempdir().unwrap();
+        for (transformers, name) in [
+            ("  protobuf: {input: [cat]}\n", "protobuf"),
+            ("  grpc-frame: {input: [cat]}\n", "grpc-frame"),
+            (
+                "  reader: {input: [cat]}\n  reader: {output: [cat]}\n",
+                "reader",
+            ),
+        ] {
+            fs::write(
+                dir.path().join("decoy.yaml"),
+                format!("routes: r\ncollections: c.yaml\ntransformers:\n{transformers}"),
+            )
+            .unwrap();
+            let error = load_raw(dir.path()).expect_err(name).to_string();
+            assert!(error.contains(name), "{error}");
+        }
     }
 
     #[test]
