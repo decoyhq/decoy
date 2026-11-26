@@ -38,7 +38,7 @@ function envelope(type: string, data: object): Uint8Array {
   return encode({ type, data: encodeProto(type, data) })
 }
 
-function readEnvelope(frame: Uint8Array): { type: string; data: unknown } {
+function readEnvelope(frame: Uint8Array) {
   const { type, data } = decode(frame) as { type: string; data: Uint8Array }
 
   return { type, data: decodeProto(type, data) }
@@ -171,7 +171,7 @@ function rpcFrame(kind: number, topic: string, id: number, body: Uint8Array): Ui
   return frame
 }
 
-function readRpc(frame: Uint8Array): { kind: number; topic: string; id: number; body: Uint8Array } {
+function readRpc(frame: Uint8Array) {
   const view = new DataView(frame.buffer, frame.byteOffset, frame.byteLength)
   const end = 3 + view.getUint16(1)
 

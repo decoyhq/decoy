@@ -28,6 +28,12 @@ export interface DecoyConnection {
   send(message: unknown): Promise<void>
 }
 
+type ControlBody =
+  | { collection: string }
+  | { route: string; case: string; behavior: string }
+  | { route: string; connected: true; timeout: number | undefined }
+  | { route: string; message: unknown }
+
 /**
  * A Router bound to one Session of the Decoy runtime at `url`. Errors reject at the call site; a
  * call Decoy does not answer within `timeoutMs` rejects too.
@@ -35,7 +41,7 @@ export interface DecoyConnection {
 export function createRouter(url: string, sessionId: string, timeoutMs = 10_000): DecoyRouter {
   const control = async (
     verb: string,
-    body?: object,
+    body?: ControlBody,
     signal = AbortSignal.timeout(timeoutMs),
   ): Promise<void> => {
     let response: Response
@@ -59,11 +65,13 @@ export function createRouter(url: string, sessionId: string, timeoutMs = 10_000)
     useCollection: (collection) => control('useCollection', { collection }),
     useRoute: async (route: string, caseId?: string, behavior?: string) => {
       if (caseId === undefined || behavior === undefined) {
-        const parts = route.split(':')
-        if (parts.length !== 3 || parts.some((part) => part === '')) {
+        const [routeId, addressCase, addressBehavior, extra] = route.split(':')
+        if (!routeId || !addressCase || !addressBehavior || extra !== undefined) {
           throw new Error(`Invalid Behavior address \`${route}\`: expected \`route:case:behavior\``)
         }
-        ;[route, caseId, behavior] = parts as [string, string, string]
+        route = routeId
+        caseId = addressCase
+        behavior = addressBehavior
       }
       await control('useRoute', { route, case: caseId, behavior })
     },

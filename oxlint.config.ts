@@ -22,15 +22,8 @@ export default defineConfig({
     '**/doc-build/',
   ],
   rules: {
-    // Existing violations: enable these rules with their fixes in follow-up changes.
+    // Runtime guards for Miss, RegExp, and binary data narrow without assertions.
     '@nkzw/no-instanceof': 'off',
-    'quality/no-chained-type-assertions': 'off',
-    'quality/no-known-value-widening': 'off',
-    'quality/no-object-parameters': 'off',
-    'quality/no-unknown-returns': 'off',
-    'quality/no-unsafe-dictionary-type': 'off',
-    'typescript/no-unsafe-type-assertion': 'off',
-
     'for-direction': 'error',
     'no-array-constructor': 'error',
     'no-async-promise-executor': 'error',
@@ -243,6 +236,63 @@ export default defineConfig({
       // Keep test doubles next to the tests they serve.
       files: ['**/*.test.ts'],
       rules: { 'unicorn/consistent-function-scoping': 'off' },
+    },
+    {
+      // Wire and fixture maps start as unknown values before the consumer narrows them.
+      files: [
+        'examples/tls-bff-node/tests/bff.test.ts',
+        'examples/ws-transformer-node/acme/decoy-transformer-typed-envelope/index.ts',
+        'packages/transformer/src/wire.ts',
+      ],
+      rules: { 'quality/no-unsafe-dictionary-type': 'off' },
+    },
+    {
+      // These adapters and harness helpers forward caller-supplied CDP, protobuf, or JSON objects.
+      files: [
+        'examples/{grpc,ws,ws-transformer}-node/tests/decoy.ts',
+        'examples/ws-transformer-node/tests/sockets.test.ts',
+        'packages/testplane/src/routing.ts',
+      ],
+      rules: { 'quality/no-object-parameters': 'off' },
+    },
+    {
+      // Keep open protocol results and callback contracts unknown rather than asserting a type.
+      files: [
+        'examples/{ws,ws-transformer}-node/tests/decoy.ts',
+        'examples/tls-bff-node/src/bff.ts',
+        'packages/playwright/src/{routing,websocket,websocket.test}.ts',
+        'packages/runner-core/src/server.test.ts',
+        'packages/testplane/src/{routing,plugin.test}.ts',
+        'packages/transformer/src/{index,wire}.ts',
+      ],
+      rules: { 'quality/no-unknown-returns': 'off' },
+    },
+    {
+      // Existing dynamic SDK bindings and partial test doubles need typed adapters to remove these casts.
+      files: [
+        'examples/grpc-node/tests/decoy.ts',
+        'examples/tls-bff-node/src/bff.ts',
+        'packages/playwright/src/{fixtures,websocket}.test.ts',
+        'packages/testplane/src/{plugin,plugin.test}.ts',
+      ],
+      rules: { 'quality/no-chained-type-assertions': 'off' },
+    },
+    {
+      // Existing protocol and fixture casts; keep the rule enabled outside this list.
+      files: [
+        'examples/grpc-node/tests/{approvals.test,decoy}.ts',
+        'examples/grpc-node/transformers/approval-id.ts',
+        'examples/tls-bff-node/{src/bff,tests/bff.test}.ts',
+        'examples/ws-node/tests/decoy.ts',
+        'examples/ws-transformer-node/acme/decoy-transformer-{binary-rpc,typed-envelope}/index.ts',
+        'examples/ws-transformer-node/tests/{decoy,sockets.test}.ts',
+        'examples/ws-transformer-node/workers/binary-rpc.test.ts',
+        'packages/playwright/src/{fixtures.test,websocket,websocket.test}.ts',
+        'packages/runner-core/src/{server,server.test}.ts',
+        'packages/testplane/src/{plugin,plugin.test,routing.test}.ts',
+        'packages/transformer/src/{serve,serve.test}.ts',
+      ],
+      rules: { 'typescript/no-unsafe-type-assertion': 'off' },
     },
   ],
 })
