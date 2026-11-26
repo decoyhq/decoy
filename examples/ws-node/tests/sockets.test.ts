@@ -41,6 +41,7 @@ void test('message Cases answer with templates; unmatched messages are skipped',
 
   friend.send({ id: 8, type: 'subscribe', topic: 'news' })
   assert.deepEqual(await friend.nextJson(), { id: 8, type: 'subscribed', topic: 'news' })
+  assert.deepEqual(await friend.nextJson(), { type: 'snapshot', topic: 'news' })
   assert.deepEqual(await friend.nextJson(), { type: 'update', topic: 'news', count: 1 })
 })
 
@@ -68,7 +69,7 @@ void test('useRoute changes the next message on an open socket', async () => {
 })
 
 // A bound, so a socket that never closes fails the test instead of hanging the run.
-void test('a Behavior can close the socket after its message', { timeout: 5000 }, async () => {
+void test('a Behavior flushes ordered messages before closing', { timeout: 5000 }, async () => {
   await control('denied', 'useRoute', {
     route: 'friend-socket',
     case: 'hello',
@@ -76,6 +77,7 @@ void test('a Behavior can close the socket after its message', { timeout: 5000 }
   })
   const friend = await open('my-friend-webservice', 'denied')
   assert.deepEqual(await friend.nextJson(), { type: 'error', reason: 'unauthorized' })
+  assert.equal(await friend.next(), 'goodbye')
   const closed = await friend.closed
   assert.equal(closed.code, 4001)
   assert.equal(closed.reason, 'unauthorized')

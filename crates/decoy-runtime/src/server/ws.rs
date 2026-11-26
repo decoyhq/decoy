@@ -175,8 +175,33 @@ async fn serve_socket(
                 // its own task (Q16), so back-to-back messages are answered in order.
                 let (now, later) = split(reply);
                 let mut open = true;
-                for frame in now {
-                    open = open && send(sink, stream, &mut queued, codec, frame).await;
+                // Batch only synchronous encoding: an output Pipeline must not hold an earlier
+                // frame while it waits for the next transform.
+                if now.len() > 1 && codec.pipeline.as_ref().is_none_or(|p| !p.has_output()) {
+                    for frame in now {
+                        match frame {
+                            Outgoing::Message { message, .. } => {
+                                if sink
+                                    .feed(Message::Text(crate::ws::encode_text(&message).into()))
+                                    .await
+                                    .is_err()
+                                {
+                                    return;
+                                }
+                            }
+                            Outgoing::Close(close) => {
+                                if sink.flush().await.is_ok() {
+                                    close_socket(sink, stream, close).await;
+                                }
+                                return;
+                            }
+                        }
+                    }
+                    open = sink.flush().await.is_ok();
+                } else {
+                    for frame in now {
+                        open = open && send(sink, stream, &mut queued, codec, frame).await;
+                    }
                 }
                 if let Some(later) = later {
                     replies.spawn(schedule(later, outbox.clone()));

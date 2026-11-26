@@ -10,7 +10,9 @@ cases:
       ping: { message: ping }
       silent: { messages: [] }
       unauthorized:
-        message: { type: error, reason: unauthorized }
+        messages:
+          - { payload: { type: error, reason: unauthorized } }
+          - { payload: goodbye }
         close: { code: 4001, reason: unauthorized }
   status:
     match: { message: { type: get-status } } # runs on each matching message
@@ -31,4 +33,5 @@ cases:
       updates:
         messages:
           - { payload: { id: '${ message.id }', type: subscribed, topic: '${ message.topic }' } }
+          - { payload: { type: snapshot, topic: '${ message.topic }' } }
           - { payload: { type: update, topic: '${ message.topic }', count: 1 }, delay: 200ms }
