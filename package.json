@@ -20,6 +20,7 @@
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
+    "@cloudflare/oxlint-config": "0.2.0",
     "@commitlint/cli": "^21.2.4",
     "@commitlint/config-conventional": "^21.2.4",
     "@rslib/core": "^1.0.3",
