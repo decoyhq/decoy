@@ -21,13 +21,13 @@ pub(crate) struct WsCall {
 }
 
 impl Catalog {
-    pub(crate) fn execute_ws(
+    pub(crate) fn execute_ws<'envelope>(
         &self,
         collection_id: &str,
         overrides: &[Activation],
         connection: &WsConnection,
         trigger: Trigger,
-        envelope: &Value,
+        envelope: &impl Fn() -> &'envelope Value,
         capture: bool,
     ) -> WsCall {
         match self.resolve_ws_with(
@@ -51,7 +51,7 @@ impl Catalog {
                     }),
                 outcome: capture.then(|| {
                     Outcome::Hit(Match {
-                        path_params: path_params(envelope),
+                        path_params: path_params(&connection.envelope),
                         activation,
                         skipped,
                         conditions: conditions.clone(),
@@ -66,14 +66,14 @@ impl Catalog {
     }
 }
 
-fn respond(
+fn respond<'envelope>(
     response: &ResponseBehavior,
-    envelope: &Value,
+    envelope: &impl Fn() -> &'envelope Value,
     behavior: String,
 ) -> Result<WsReply, String> {
     let jmes = OnceCell::new();
     let rendered = render_ws_response(response, &|| {
-        jmes.get_or_init(|| to_rcvar(envelope)).clone()
+        jmes.get_or_init(|| to_rcvar(envelope())).clone()
     })
     .map_err(|error| error.to_string())?;
     let single = rendered.message.map(|message| (None, message));
@@ -129,10 +129,28 @@ mod tests {
                 &[],
                 &connection,
                 Trigger::Message,
-                &envelope,
+                &|| &envelope,
                 false,
             )
             .reply
+    }
+
+    #[test]
+    fn a_literal_reply_without_conditions_needs_no_message_envelope() {
+        let catalog = catalog("      b: { message: pong }\n");
+        let connection = catalog.ws_upgrade("/live", &BTreeMap::new()).unwrap();
+        let call = catalog.execute_ws(
+            "default",
+            &[],
+            &connection,
+            Trigger::Message,
+            &|| panic!("no condition or template reads the Message Envelope"),
+            false,
+        );
+        assert_eq!(
+            call.reply.unwrap().unwrap().messages,
+            [(None, json!("pong"))]
+        );
     }
 
     #[test]
