@@ -103,6 +103,5 @@ task release:tag -- 0.1.0-alpha.1   # tag origin/main and push the tag; CI build
 
 ## TypeScript
 
-`tsc` is TypeScript 7 (`@typescript/native` → `typescript@7`). Tools that load the JavaScript
-`typescript` API still get the 6.0 alias (`@typescript/typescript6`). Oxlint uses `tsrs` for
-type-aware linting; `pnpm typecheck` still runs the compiler separately.
+`pnpm typecheck` runs TypeScript 7. Rslib uses the native compiler to emit declaration files,
+and Oxlint uses `tsrs` for type-aware linting.
