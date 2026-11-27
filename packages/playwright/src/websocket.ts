@@ -1,6 +1,7 @@
 import type { WebSocketRoute } from '@playwright/test'
 import { SESSION_HEADER } from '@decoyhq/runner-core'
-import { patternList, type UrlPatterns } from './options'
+import { patternList } from './options'
+import type { UrlPatterns } from './options'
 
 /** The page side of a routed socket; Playwright's `WebSocketRoute` satisfies it. */
 export type RoutableWebSocket = Pick<

@@ -1,0 +1,60 @@
+import { PackageManagerTabs } from '@rspress/core/theme'
+
+# Testplane
+
+Плагин `@decoyhq/testplane` запускает Decoy на время прогона [Testplane](https://testplane.io) и направляет в него запросы браузера. У каждого теста своя сессия. Чтобы менять ответы из теста, используйте `decoy(browser)`. Нужны Node.js 24 или новее и Testplane 8 или новее.
+
+<PackageManagerTabs
+  command={{
+    npm: 'npm install -D @decoyhq/cli @decoyhq/testplane',
+    pnpm: 'pnpm add -D @decoyhq/cli @decoyhq/testplane',
+    bun: 'bun add -d @decoyhq/cli @decoyhq/testplane',
+  }}
+/>
+
+Для настройки нужна одна запись в `plugins`:
+
+```ts title=".testplane.conf.ts"
+import type { DecoyOptions } from '@decoyhq/testplane'
+import type { ConfigInput } from 'testplane'
+
+export default {
+  gridUrl: 'local',
+  baseUrl: 'http://127.0.0.1:4173',
+  browsers: { chrome: { desiredCapabilities: { browserName: 'chrome' } } },
+
+  plugins: {
+    '@decoyhq/testplane': {
+      command: 'decoy serve --config mocks/decoy.yaml',
+      urls: '**/api/**', // browser requests sent to Decoy
+      collection: 'happy-path', // each test's Session starts here
+    } satisfies DecoyOptions,
+  },
+} satisfies ConfigInput
+```
+
+Теперь [переключите ответы в тесте](responses/index.md).
+
+## Параметры
+
+| Параметр              | По умолчанию                  | Назначение                                                                         |
+| --------------------- | ----------------------------- | ---------------------------------------------------------------------------------- |
+| `enabled`             | `true`                        | `false` отключает плагин, не удаляя его.                                           |
+| `url`                 | `http://127.0.0.1:8080`       | Адрес Decoy.                                                                       |
+| `command`             | `decoy serve`                 | Команда оболочки, которую плагин запускает, если Decoy не работает.                |
+| `cwd`                 | Каталог файла конфигурации    | Рабочий каталог для `command`.                                                     |
+| `reuseExistingServer` | `true` локально, `false` в CI | Использовать уже работающий Decoy, если он отвечает на проверку работоспособности. |
+| `timeout`             | `60000`                       | Сколько миллисекунд плагин ждёт успешной проверки.                                 |
+| `urls`                | Нет                           | Шаблон glob (`*` внутри сегмента, `**` через сегменты), RegExp или список.         |
+| `collection`          | Collection Decoy по умолчанию | Коллекция, с которой начинается каждый тест.                                       |
+
+Как и в Playwright, шаблон glob в `urls` проверяет полный URL запроса: `*` действует в пределах одного сегмента пути, `**` может захватывать несколько, а `{api,graphql}` подходит для любого из двух вариантов. Шаблон должен начинаться с `*` или схемы (`'**/api/**'`, `'http://localhost:3000/api/**'`). При загрузке плагин отклоняет шаблоны вроде `'/api/**'`, которые не могут совпасть с полным URL. Запросы, не совпавшие ни с одним шаблоном, идут в реальную сеть.
+
+При запуске `command` в `PATH` добавляется `node_modules/.bin` (поиск от `cwd` вверх). В конце прогона плагин отправляет SIGTERM. Если Decoy не остановился за 8 секунд, плагин отправляет SIGKILL, а в Windows вызывает `taskkill /T /F`.
+
+## Ограничения
+
+- Для перенаправления запросов (`urls`) нужен Chrome или Chromium: плагин использует CDP через `browser.getPuppeteer()` как в WebDriver Classic, так и в BiDi (`webSocketUrl: true`). В других браузерах каждый тест завершится с сообщением об ошибке.
+- Testplane использует один браузер для нескольких тестов. Если запрос ещё выполняется к концу теста, он может попасть в сессию следующего. Перед завершением теста дождитесь, пока на странице закончатся запросы.
+
+Полный пример есть в [`examples/testplane-ts-e2e`](https://github.com/decoyhq/decoy/tree/main/examples/testplane-ts-e2e).

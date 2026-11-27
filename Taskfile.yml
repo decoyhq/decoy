@@ -43,7 +43,7 @@ tasks:
       - pnpm test
 
   lint:
-    desc: Check formatting and lint (cargo fmt, clippy, ESLint, Prettier)
+    desc: Check formatting and lint (cargo fmt, clippy, Oxlint, Prettier)
     deps: [lint:rust, lint:js]
 
   lint:rust:

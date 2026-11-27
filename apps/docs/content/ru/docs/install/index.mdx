@@ -1,0 +1,49 @@
+import { PackageManagerTabs } from '@rspress/core/theme'
+
+# Установка
+
+Для работы Decoy достаточно исполняемого файла `decoy`. Его можно установить отдельно или добавить в проект как зависимость.
+
+## Скрипт установки (отдельный бинарный файл)
+
+```sh title="macOS / Linux"
+curl -fsSL https://github.com/decoyhq/decoy/releases/latest/download/install.sh | sh
+```
+
+```powershell title="Windows PowerShell"
+irm 'https://github.com/decoyhq/decoy/releases/latest/download/install.ps1' | iex
+```
+
+Скрипт берёт релиз с пометкой Latest, сверяет контрольную сумму с файлом `SHA256SUMS` и устанавливает Decoy в `~/.decoy/bin`. Предварительную версию скрипт установит, только если у неё есть пометка Latest. Переменная `DECOY_INSTALL_DIR` задаёт другой каталог установки. В Windows скрипт добавляет каталог в пользовательский `PATH`; в macOS и Linux это нужно сделать вручную.
+
+Чтобы зафиксировать версию, например в CI, замените `latest/download` в URL установщика на `download/<tag>`, подставив точный тег из [GitHub Releases](https://github.com/decoyhq/decoy/releases). По умолчанию установщик из релиза устанавливает именно этот релиз. Чтобы выбрать другую версию, задайте `DECOY_VERSION` перед запуском или передайте версию shell-скрипту через `sh -s -- <version>`.
+
+Чтобы обновить Decoy, выполните `decoy upgrade`. Команда запускает установщик Latest и заменяет текущий файл. Если у вас уже Latest или более свежая предварительная версия, команда ничего не меняет. Чтобы перейти на другую версию, запустите её установщик, задав `DECOY_INSTALL_DIR`. Если Decoy установлен как зависимость проекта, обновляйте его через менеджер пакетов.
+
+## Установка в проект JavaScript или TypeScript
+
+Для npm-пакета нужен Node.js 24 или новее. Добавьте `@decoyhq/cli` в зависимости для разработки из каталога проекта. Отдельному бинарному файлу Node.js не нужен.
+
+<PackageManagerTabs
+  command={{
+    npm: 'npm install -D @decoyhq/cli',
+    pnpm: 'pnpm add -D @decoyhq/cli',
+    bun: 'bun add -d @decoyhq/cli',
+  }}
+/>
+
+`@decoyhq/cli` использует необязательные зависимости, чтобы скачать только бинарный файл для вашей платформы: Linux x64/arm64, macOS x64/arm64 или Windows x64. Скрипты установки пакетов при этом не запускаются.
+
+Проверьте установку из каталога проекта: `npm exec -- decoy --version`, `pnpm exec decoy --version` или `bun run decoy --version`.
+
+## Релизы на GitHub
+
+Для каждого релиза опубликованы архивы для тех же платформ и файл `SHA256SUMS`: `decoy-<version>-<target>.tar.gz` (`.zip` в Windows). Распакуйте архив и поместите `decoy` в каталог из `PATH`. Бинарные файлы для Linux собраны с musl и используют mimalloc. При параллельной нагрузке он намного быстрее аллокатора musl, но удерживает больше памяти (около 30 МБ в простое).
+
+## Сборка из исходников
+
+```sh title="Build the Decoy binary"
+cargo build --release -p decoy
+```
+
+Проверьте сборку командой `./target/release/decoy --version` (в Windows — с расширением `.exe`). Чтобы `@decoyhq/cli` запускал этот файл, укажите его полный путь в `DECOY_BINARY_PATH`.

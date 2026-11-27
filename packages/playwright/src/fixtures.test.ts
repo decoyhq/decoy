@@ -3,13 +3,8 @@ import { describe, expect, test } from '@rstest/core'
 import { expectTypeOf } from 'expect-type'
 import { startFakeDecoy } from '@decoyhq/runner-core/testing'
 import type { DecoyRouter } from '@decoyhq/runner-core'
-import {
-  createDecoyFixtures,
-  type DecoyFixtures,
-  decoySession,
-  provideDecoy,
-  sessionIdFor,
-} from './fixtures'
+import { createDecoyFixtures, decoySession, provideDecoy, sessionIdFor } from './fixtures'
+import type { DecoyFixtures } from './fixtures'
 
 const testInfo = { titlePath: ['users.spec.ts', 'Shows a User!'] }
 const ignoreRouter = () => Promise.resolve()

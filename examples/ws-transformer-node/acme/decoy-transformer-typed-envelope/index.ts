@@ -27,7 +27,9 @@ export function typedEnvelope({
 
     // Inbound: frame bytes → the JSON the Cases match on.
     async input(bytes, ctx) {
-      if (!(bytes instanceof Uint8Array)) return bytes
+      if (!(bytes instanceof Uint8Array)) {
+        return bytes
+      }
 
       if (ctx.frame === 'text') {
         const text = new TextDecoder().decode(bytes)
@@ -46,7 +48,9 @@ export function typedEnvelope({
         miss('binary frame is not msgpack')
       }
 
-      if (!isEnvelope(envelope)) miss('binary frame is missing its envelope type')
+      if (!isEnvelope(envelope)) {
+        miss('binary frame is missing its envelope type')
+      }
       const type = envelope[typeField]
       if (typeof type !== 'string' || !(await ctx.protobuf.has(type))) {
         miss(`unknown type ${String(type)}`)
@@ -60,7 +64,9 @@ export function typedEnvelope({
 
     // Outbound: a rendered message → a string (text frame) or bytes (binary frame).
     async output(value, ctx) {
-      if (!isEnvelope(value)) return JSON.stringify(value)
+      if (!isEnvelope(value)) {
+        return JSON.stringify(value)
+      }
 
       const type = value[typeField] as string
       const data = await ctx.protobuf.encode(type, value[dataField])
@@ -70,7 +76,9 @@ export function typedEnvelope({
 
     // At startup, on each outbound literal as written: a typo in `data` fails here.
     async check(value, ctx) {
-      if (!isEnvelope(value)) return
+      if (!isEnvelope(value)) {
+        return
+      }
 
       await ctx.protobuf.encode(value[typeField] as string, value[dataField])
     },

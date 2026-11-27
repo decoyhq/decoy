@@ -1,9 +1,11 @@
 import { ok } from 'node:assert/strict'
 import { PassThrough } from 'node:stream'
 import { describe, expect, test } from '@rstest/core'
-import { defineTransformer, miss, type Transformer } from './index'
+import { defineTransformer, miss } from './index'
+import type { Transformer } from './index'
 import { serve } from './serve'
-import { MAX_MESSAGE, read, type WireMessage, write } from './wire'
+import { MAX_MESSAGE, read, write } from './wire'
+import type { WireMessage } from './wire'
 
 /** Serves `transformer` on in-memory pipes; `next()` resolves with its next message to Decoy. */
 function start(transformer: Transformer) {
@@ -19,8 +21,11 @@ function start(transformer: Transformer) {
     fromWorker,
     (message) => {
       const resolve = waiting.shift()
-      if (resolve) resolve(message)
-      else inbox.push(message)
+      if (resolve) {
+        resolve(message)
+      } else {
+        inbox.push(message)
+      }
     },
     (error) => {
       throw error
@@ -36,8 +41,11 @@ function start(transformer: Transformer) {
     next: () =>
       new Promise<WireMessage>((resolve) => {
         const message = inbox.shift()
-        if (message) resolve(message)
-        else waiting.push(resolve)
+        if (message) {
+          resolve(message)
+        } else {
+          waiting.push(resolve)
+        }
       }),
   }
 }
@@ -48,14 +56,22 @@ const envelope = defineTransformer({
   name: 'envelope',
   version: '1.2.3',
   async input(bytes, ctx) {
-    if (!(bytes instanceof Uint8Array)) return bytes
+    if (!(bytes instanceof Uint8Array)) {
+      return bytes
+    }
 
     const text = new TextDecoder().decode(bytes)
 
     // A few frames that drive the edge cases.
-    if (text === 'nope') miss('not an envelope')
-    if (text === 'boom') throw new Error('bad frame')
-    if (text === 'proto') return ctx.protobuf.decode('users.v1.User', bytes)
+    if (text === 'nope') {
+      miss('not an envelope')
+    }
+    if (text === 'boom') {
+      throw new Error('bad frame')
+    }
+    if (text === 'proto') {
+      return ctx.protobuf.decode('users.v1.User', bytes)
+    }
 
     // Counts frames per connection, to show `ctx.state`.
     const seen = ((ctx.state.get('seen') as number | undefined) ?? 0) + 1

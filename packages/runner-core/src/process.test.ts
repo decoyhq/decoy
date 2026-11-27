@@ -29,7 +29,9 @@ describe('stopProcess', () => {
     'falls back to SIGKILL when SIGTERM is ignored',
     async () => {
       const child = spawn(`node ${STUBBORN}`, { shell: true, detached: true, stdio: 'pipe' })
-      await new Promise((ready) => child.stdout.once('data', ready))
+      await new Promise((ready) => {
+        child.stdout.once('data', ready)
+      })
 
       await stopProcess(child, 200)
 
@@ -40,7 +42,9 @@ describe('stopProcess', () => {
 
   test('does nothing for a process that already exited', async () => {
     const child = spawn('exit 0', { shell: true, detached: process.platform !== 'win32' })
-    await new Promise((done) => child.once('exit', done))
+    await new Promise((done) => {
+      child.once('exit', done)
+    })
     await stopProcess(child, 200)
   })
 })

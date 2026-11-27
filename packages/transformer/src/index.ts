@@ -6,7 +6,7 @@ if (process.env.DECOY_TRANSFORMER === '1') {
   console.log = console.info = console.debug = console.error
 }
 
-/** Protocol version this SDK speaks (`apps/docs/content/docs/transformer-worker-protocol/index.md`). */
+/** Protocol version this SDK speaks (`apps/docs/content/en/docs/transformer-worker-protocol/index.md`). */
 export const PROTOCOL = 1
 
 /** JSON data, as Cases and Behaviors see it. */
@@ -86,7 +86,9 @@ export function miss(reason: string): never {
  * unit test importing the file) it only returns the transformer.
  */
 export function defineTransformer<P extends Transformer>(transformer: P): P {
-  if (process.env.DECOY_TRANSFORMER === '1') serve(transformer)
+  if (process.env.DECOY_TRANSFORMER === '1') {
+    serve(transformer)
+  }
 
   return transformer
 }

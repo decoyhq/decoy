@@ -16,4 +16,4 @@ built-in gRPC steps remain `grpc-frame` and `protobuf`.
 The transport owns framing. On WebSocket output, a worker can return text or bytes to choose the
 frame kind. A terminal command produces bytes. This lets applications combine existing tools and
 stateful workers while keeping wire formats out of Cases. See the [original proposal](https://github.com/decoyhq/decoy/pull/415)
-and the [worker protocol](../../apps/docs/content/docs/transformer-worker-protocol/index.md).
+and the [worker protocol](../../apps/docs/content/en/docs/transformer-worker-protocol/index.md).

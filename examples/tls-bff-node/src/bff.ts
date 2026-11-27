@@ -1,8 +1,8 @@
 import { createServer } from 'node:http'
-import type { AddressInfo } from 'node:net'
 import { fileURLToPath } from 'node:url'
-import * as grpc from '@grpc/grpc-js'
-import * as protoLoader from '@grpc/proto-loader'
+import { credentials, loadPackageDefinition, Metadata } from '@grpc/grpc-js'
+import type { Client, ServiceClientConstructor, ServiceError } from '@grpc/grpc-js'
+import { loadSync } from '@grpc/proto-loader'
 
 /** Where the BFF finds its backends; in this example all three are Decoy. */
 export interface Backends {
@@ -23,20 +23,20 @@ interface Stock {
   sku: string
   available: number
 }
-type StockCallback = (error: grpc.ServiceError | null, reply?: Stock) => void
-interface InventoryClient extends grpc.Client {
-  getStock(request: { sku: string }, metadata: grpc.Metadata, callback: StockCallback): void
+type StockCallback = (error: ServiceError | null, reply?: Stock) => void
+interface InventoryClient extends Client {
+  getStock(request: { sku: string }, metadata: Metadata, callback: StockCallback): void
 }
 interface InventoryPackage {
-  inventory: { v1: { Inventory: grpc.ServiceClientConstructor } }
+  inventory: { v1: { Inventory: ServiceClientConstructor } }
 }
 
-const definition = protoLoader.loadSync('inventory/v1/inventory.proto', {
+const definition = loadSync('inventory/v1/inventory.proto', {
   includeDirs: [fileURLToPath(new URL('../proto', import.meta.url))],
   defaults: true,
 })
-const { Inventory } = (grpc.loadPackageDefinition(definition) as unknown as InventoryPackage)
-  .inventory.v1
+const { Inventory } = (loadPackageDefinition(definition) as unknown as InventoryPackage).inventory
+  .v1
 
 /**
  * A tiny BFF: `GET /orders/{id}` joins a payment (https), a customer (http) and stock (gRPC over
@@ -46,7 +46,7 @@ export async function startBff(backends: Backends): Promise<Bff> {
   // No custom CA here: Node trusts what NODE_EXTRA_CA_CERTS points at, for fetch and grpc-js alike.
   const inventory = new Inventory(
     backends.inventoryAddress,
-    grpc.credentials.createSsl(),
+    credentials.createSsl(),
   ) as unknown as InventoryClient
 
   const server = createServer((request, response) => {
@@ -65,7 +65,7 @@ export async function startBff(backends: Backends): Promise<Bff> {
       }
       return reply.json()
     }
-    const metadata = new grpc.Metadata()
+    const metadata = new Metadata()
     for (const [key, value] of Object.entries(headers)) {
       metadata.set(key, value)
     }
@@ -93,10 +93,15 @@ export async function startBff(backends: Backends): Promise<Bff> {
         response.end(String(error))
       })
   })
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
-  const { port } = server.address() as AddressInfo
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', resolve)
+  })
+  const address = server.address()
+  if (address === null || typeof address === 'string') {
+    throw new Error('expected a TCP address')
+  }
   return {
-    url: `http://127.0.0.1:${port}`,
+    url: `http://127.0.0.1:${address.port}`,
     close: () => {
       inventory.close()
       server.close()

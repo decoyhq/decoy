@@ -55,8 +55,12 @@ export function binaryRpc({ topics, kinds = {} }: BinaryRpcOptions) {
   /** The proto type of a message's payload, from the topic's options. */
   const typeOf = (m: Message) => {
     const types = topics[m.topic]
-    if (m.kind === 'REQUEST') return types?.request
-    if (m.kind === 'EVENT') return types?.event
+    if (m.kind === 'REQUEST') {
+      return types?.request
+    }
+    if (m.kind === 'EVENT') {
+      return types?.event
+    }
     return types?.reply
   }
 
@@ -69,32 +73,46 @@ export function binaryRpc({ topics, kinds = {} }: BinaryRpcOptions) {
 
     // Inbound: frame bytes → the JSON the Cases match on.
     async input(bytes, ctx) {
-      if (!(bytes instanceof Uint8Array)) return bytes
+      if (!(bytes instanceof Uint8Array)) {
+        return bytes
+      }
 
-      if (ctx.frame === 'text') return JSON.parse(utf8.decode(bytes)) as unknown
+      if (ctx.frame === 'text') {
+        return JSON.parse(utf8.decode(bytes)) as unknown
+      }
 
       const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
 
       // `miss` skips the frame: Decoy logs the reason and keeps the socket open.
       const kind = kindOf(bytes[0])
-      if (!kind) miss(`unknown kind byte ${bytes[0]}`)
-      if (bytes.length < 3) miss('frame ends before its topic length')
+      if (!kind) {
+        miss(`unknown kind byte ${bytes[0]}`)
+      }
+      if (bytes.length < 3) {
+        miss('frame ends before its topic length')
+      }
 
       const topicEnd = 3 + view.getUint16(1)
-      if (bytes.length < topicEnd + 4) miss('frame ends before its id')
+      if (bytes.length < topicEnd + 4) {
+        miss('frame ends before its id')
+      }
 
       const topic = utf8.decode(bytes.subarray(3, topicEnd))
       const id = view.getUint32(topicEnd)
       const body = bytes.subarray(topicEnd + 4)
 
       if (kind === 'ERROR') {
-        if (body.length < 2) miss('ERROR frame ends before its code')
+        if (body.length < 2) {
+          miss('ERROR frame ends before its code')
+        }
         const code = new DataView(body.buffer, body.byteOffset).getUint16(0)
         return { kind, topic, id, error: { code, reason: utf8.decode(body.subarray(2)) } }
       }
 
       const type = typeOf({ kind, topic })
-      if (!type) miss(`no proto type for a ${kind} on topic ${topic}`)
+      if (!type) {
+        miss(`no proto type for a ${kind} on topic ${topic}`)
+      }
 
       // Decoy's compiled protos; the transformer loads no .proto files.
       return { kind, topic, id, payload: await ctx.protobuf.decode(type, body) }
@@ -102,7 +120,9 @@ export function binaryRpc({ topics, kinds = {} }: BinaryRpcOptions) {
 
     // Outbound: a rendered message → a string (text frame) or bytes (binary frame).
     async output(value, ctx) {
-      if (!isMessage(value)) return JSON.stringify(value)
+      if (!isMessage(value)) {
+        return JSON.stringify(value)
+      }
 
       let id = value.id
       if (id === undefined && value.kind === 'EVENT') {
@@ -110,21 +130,23 @@ export function binaryRpc({ topics, kinds = {} }: BinaryRpcOptions) {
         id = ((ctx.state.get('events') as number | undefined) ?? 0) + 1
       }
 
-      const wireId = unsigned(id ?? 0, 0xffffffff, 'id')
+      const wireId = unsigned(id ?? 0, 0xff_ff_ff_ff, 'id')
       const topic = text.encode(value.topic)
-      unsigned(topic.length, 0xffff, 'topic length')
+      unsigned(topic.length, 0xff_ff, 'topic length')
       let body: Uint8Array
       if (value.kind === 'ERROR') {
         const reason = text.encode(value.error?.reason ?? '')
         body = new Uint8Array(2 + reason.length)
         new DataView(body.buffer).setUint16(
           0,
-          unsigned(value.error?.code ?? 0, 0xffff, 'error code'),
+          unsigned(value.error?.code ?? 0, 0xff_ff, 'error code'),
         )
         body.set(reason, 2)
       } else {
         const type = typeOf(value)
-        if (!type) throw new Error(`no proto type for a ${value.kind} on topic ${value.topic}`)
+        if (!type) {
+          throw new Error(`no proto type for a ${value.kind} on topic ${value.topic}`)
+        }
         body = await ctx.protobuf.encode(type, value.payload ?? {})
       }
 
@@ -137,16 +159,22 @@ export function binaryRpc({ topics, kinds = {} }: BinaryRpcOptions) {
       view.setUint32(3 + topic.length, wireId)
       frame.set(body, 3 + topic.length + 4)
 
-      if (value.kind === 'EVENT' && value.id === undefined) ctx.state.set('events', wireId)
+      if (value.kind === 'EVENT' && value.id === undefined) {
+        ctx.state.set('events', wireId)
+      }
       return frame
     },
 
     // At startup, on each outbound literal as written: a typo in a payload fails here.
     async check(value, ctx) {
-      if (!isMessage(value) || value.kind === 'ERROR') return
+      if (!isMessage(value) || value.kind === 'ERROR') {
+        return
+      }
 
       const type = typeOf(value)
-      if (!type) throw new Error(`no proto type for a ${value.kind} on topic ${value.topic}`)
+      if (!type) {
+        throw new Error(`no proto type for a ${value.kind} on topic ${value.topic}`)
+      }
 
       await ctx.protobuf.encode(type, value.payload ?? {})
     },

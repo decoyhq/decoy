@@ -1,12 +1,15 @@
-import { createServer, type Server } from 'node:http'
+import { createServer } from 'node:http'
+import type { Server } from 'node:http'
 import { isHealthy } from '@decoyhq/runner-core'
 import { FAKE_DECOY } from '@decoyhq/runner-core/testing'
-import { defineConfig, type FullConfig } from '@playwright/test'
+import { defineConfig } from '@playwright/test'
+import type { FullConfig } from '@playwright/test'
 import { describe, expect, test } from '@rstest/core'
 import { expectTypeOf } from 'expect-type'
 import type { DecoyTestOptions } from './fixtures'
 import type { DecoyOptions } from './options'
-import { type SetupConfig, setup } from './setup'
+import { setup } from './setup'
+import type { SetupConfig } from './setup'
 
 describe('config typing', () => {
   test('a typed Playwright config fits setup', () => {
@@ -26,7 +29,9 @@ function config(decoyOptions: DecoyOptions | undefined): SetupConfig {
 }
 
 async function listen(server: Server): Promise<number> {
-  await new Promise<void>((done) => server.listen(0, '127.0.0.1', done))
+  await new Promise<void>((done) => {
+    server.listen(0, '127.0.0.1', done)
+  })
   const address = server.address()
   if (address === null || typeof address === 'string') {
     throw new Error('expected a TCP address')
@@ -37,7 +42,9 @@ async function listen(server: Server): Promise<number> {
 async function freePort(): Promise<number> {
   const server = createServer()
   const port = await listen(server)
-  await new Promise((done) => server.close(done))
+  await new Promise((done) => {
+    server.close(done)
+  })
   return port
 }
 

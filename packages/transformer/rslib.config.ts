@@ -2,7 +2,8 @@ import { defineConfig } from '@rslib/core'
 
 // Each format ships its own declarations (`.d.ts` for ESM, `.d.cts` for CJS) with explicit
 // extensions, so `moduleResolution: nodenext` consumers resolve them in either mode.
-const dts = { autoExtension: true }
+// Bundle each format separately: native unbundled emit races on the shared .d.ts files.
+const dts = { autoExtension: true, bundle: true }
 const redirect = { dts: { extension: true } }
 
 export default defineConfig({

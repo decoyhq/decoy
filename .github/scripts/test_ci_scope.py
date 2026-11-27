@@ -14,9 +14,9 @@ class ScopeTest(TestCase):
         self.assertEqual(result['codeql'], list(codeql))
 
     def test_docs_even_under_source_roots(self):
-        self.assert_scope(['apps/docs/content/docs/routes/index.md', 'crates/decoy-runtime/AGENTS.md', 'packages/cli/README.md'], jobs=['lint'])
+        self.assert_scope(['apps/docs/content/en/docs/routes/index.md', 'crates/decoy-runtime/AGENTS.md', 'packages/cli/README.md'], jobs=['lint'])
 
-    def test_docs_app_sources_run_eslint_without_product_tests(self):
+    def test_docs_app_sources_run_js_lint_without_product_tests(self):
         self.assert_scope(['apps/docs/theme/landing.tsx'], jobs=['lint', 'js-lint'], codeql=['javascript-typescript'])
 
     def test_unrelated_automation_does_not_run_product_jobs(self):
@@ -40,7 +40,7 @@ class ScopeTest(TestCase):
         self.assert_scope(['.cargo/config.toml'], jobs=['rust', 'e2e'], codeql=['rust'])
 
     def test_configs_only_run_their_consumers(self):
-        self.assert_scope(['eslint.config.ts'], jobs=['lint', 'js-lint'], codeql=['javascript-typescript'])
+        self.assert_scope(['oxlint.config.ts'], jobs=['lint', 'js-lint'], codeql=['javascript-typescript'])
         self.assert_scope(['.prettierignore'], jobs=['lint'])
         self.assert_scope(['.coderabbit.yaml'], jobs=['lint'])
         self.assert_scope(['deny.toml'], jobs=['rust'])

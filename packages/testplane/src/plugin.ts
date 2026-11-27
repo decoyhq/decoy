@@ -1,16 +1,11 @@
 import { dirname } from 'node:path'
-import {
-  type DecoyRouter,
-  newSessionId,
-  openSession,
-  resolveServerOptions,
-  startDecoy,
-  type Teardown,
-} from '@decoyhq/runner-core'
+import { newSessionId, openSession, resolveServerOptions, startDecoy } from '@decoyhq/runner-core'
+import type { DecoyRouter, Teardown } from '@decoyhq/runner-core'
 import type Testplane from 'testplane'
 import type { TestFunctionCtx } from 'testplane'
 import type { DecoyOptions } from './options'
-import { type CdpSession, routeToDecoy, type SessionHolder, toMatchers } from './routing'
+import { routeToDecoy, toMatchers } from './routing'
+import type { CdpSession, SessionHolder } from './routing'
 
 /** Per-browser state: Testplane reuses one browser for many tests, one test at a time. */
 interface BrowserState {

@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto'
-import { createRouter, type DecoyRouter } from './control'
+import { createRouter } from './control'
+import type { DecoyRouter } from './control'
 import { isHealthy } from './health'
 
 /** A readable, unique Session id: `<title slug>-<uuid>`, so Decoy's logs point at the test. */
 export function newSessionId(title: string): string {
   // Runs collapse to one '-', so at most one sits at each end; slicing beats a /^-+|-+$/ regex,
   // which backtracks polynomially on long runs of '-'.
-  let readable = title.toLowerCase().replace(/[^a-z0-9]+/g, '-')
+  let readable = title.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-')
   readable = readable.slice(
     readable.startsWith('-') ? 1 : 0,
     readable.endsWith('-') ? -1 : undefined,

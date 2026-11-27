@@ -1,5 +1,6 @@
 import { test as base } from '@playwright/test'
-import { createDecoyFixtures, type DecoyFixtures } from './fixtures'
+import { createDecoyFixtures } from './fixtures'
+import type { DecoyFixtures } from './fixtures'
 
 export type { DecoyConnection, DecoyRouter } from '@decoyhq/runner-core'
 export { createDecoyFixtures, type DecoyFixtures, type DecoyTestOptions } from './fixtures'

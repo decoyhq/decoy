@@ -6,12 +6,8 @@ import type {
   PlaywrightWorkerOptions,
   TestInfo,
 } from '@playwright/test'
-import {
-  type DecoyRouter,
-  newSessionId,
-  openSession,
-  resolveServerOptions,
-} from '@decoyhq/runner-core'
+import { newSessionId, openSession, resolveServerOptions } from '@decoyhq/runner-core'
+import type { DecoyRouter } from '@decoyhq/runner-core'
 import type { DecoyOptions } from './options'
 import { fetchWithoutCookies, routeToDecoy } from './routing'
 import { routeWebSocketsToDecoy } from './websocket'

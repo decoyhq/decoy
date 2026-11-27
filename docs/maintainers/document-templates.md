@@ -65,7 +65,7 @@ Start with <first task and link>.
 
 ## Tutorial or quickstart
 
-Use `apps/docs/content/docs/`. See [First mock](../../apps/docs/content/docs/quick-start/index.mdx).
+Use `apps/docs/content/en/docs/`. See [First mock](../../apps/docs/content/en/docs/quick-start/index.mdx).
 
 ```markdown
 # <Outcome to achieve>
@@ -88,7 +88,7 @@ In <working directory>, create <filename> with <contents>.
 
 ## Task or integration guide
 
-Use `apps/docs/content/docs/`. See [Playwright](../../apps/docs/content/docs/playwright/index.mdx).
+Use `apps/docs/content/en/docs/`. See [Playwright](../../apps/docs/content/en/docs/playwright/index.mdx).
 
 ```markdown
 # <Task or integration>
@@ -111,7 +111,7 @@ Use this when <reader goal>. You need <prerequisites>.
 
 ## Product reference
 
-Use `apps/docs/content/docs/`. See [Configuration](../../apps/docs/content/docs/config/index.md).
+Use `apps/docs/content/en/docs/`. See [Configuration](../../apps/docs/content/en/docs/config/index.md).
 
 ```markdown
 # <Command, schema, or API>
@@ -133,7 +133,7 @@ Use `apps/docs/content/docs/`. See [Configuration](../../apps/docs/content/docs/
 
 ## Implementation contract
 
-Use `apps/docs/content/docs/`. See [Transformer worker protocol](../../apps/docs/content/docs/transformer-worker-protocol/index.md).
+Use `apps/docs/content/en/docs/`. See [Transformer worker protocol](../../apps/docs/content/en/docs/transformer-worker-protocol/index.md).
 
 ```markdown
 # <Protocol name and version>

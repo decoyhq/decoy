@@ -191,7 +191,7 @@ export function toMatchers(urls: NonNullable<DecoyOptions['urls']>): RegExp[] {
   return patterns.map((pattern) =>
     typeof pattern === 'string'
       ? globToRegExp(pattern)
-      : new RegExp(pattern.source, pattern.flags.replace(/[gy]/g, '')),
+      : new RegExp(pattern.source, pattern.flags.replaceAll(/[gy]/g, '')),
   )
 }
 
@@ -212,7 +212,9 @@ function globToRegExp(glob: string): RegExp {
       source += double ? '.*' : '[^/]*'
       i += double ? 1 : 0
     } else if (char === '{') {
-      if (inGroup) fail('has a nested `{`, which is not supported')
+      if (inGroup) {
+        fail('has a nested `{`, which is not supported')
+      }
       inGroup = true
       source += '(?:'
     } else if (char === '}' && inGroup) {
@@ -221,9 +223,11 @@ function globToRegExp(glob: string): RegExp {
     } else if (char === ',' && inGroup) {
       source += '|'
     } else {
-      source += char.replace(/[.+?^${}()|[\]\\/]/g, '\\$&')
+      source += char.replaceAll(/[.+?^${}()|[\]\\/]/g, String.raw`\$&`)
     }
   }
-  if (inGroup) fail('has an unclosed `{`')
+  if (inGroup) {
+    fail('has an unclosed `{`')
+  }
   return new RegExp(`^${source}$`)
 }

@@ -23,7 +23,7 @@ what CI gates on). Without it, use the underlying commands:
 | `cargo clippy --workspace --all-targets -- -D warnings` | Rust lint                   |
 | `cargo fmt --check`                                     | Rust format check           |
 | `pnpm build` / `pnpm typecheck` / `pnpm test`           | JS workspace packages       |
-| `pnpm check` / `pnpm fix`                               | ESLint + Prettier           |
+| `pnpm check` / `pnpm fix`                               | Oxlint + Prettier           |
 
 Run `task bench:rust` to measure HTTP hits, gRPC replies, live connection fan-out, and TUI log
 frames. The benchmarks use in-process fixtures and report median release timings over five batches.
@@ -62,9 +62,9 @@ For a new ADR, take the next four-digit number in [the index](docs/adr/README.md
 If a later decision changes it, give the new decision its own number and link both records,
 stating which part changed.
 
-When a user-visible change ships, update the relevant [guide](apps/docs/content/docs/index.md) in the same PR.
+When a user-visible change ships, update the relevant [guide](apps/docs/content/en/docs/index.md) in the same PR.
 Keep wire-level contracts for other implementations in the manual as well; see the
-[Transformer worker protocol](apps/docs/content/docs/transformer-worker-protocol/index.md).
+[Transformer worker protocol](apps/docs/content/en/docs/transformer-worker-protocol/index.md).
 When moving or retiring a page, update its index and check for references in package READMEs and
 source comments.
 
@@ -103,6 +103,5 @@ task release:tag -- 0.1.0-alpha.1   # tag origin/main and push the tag; CI build
 
 ## TypeScript
 
-`tsc` is TypeScript 7 (`@typescript/native` → `typescript@7`). The `typescript` package itself is
-the 6.0 API (`@typescript/typescript6`) because typescript-eslint cannot use TypeScript 7 until 7.1
-restores the programmatic API. Shortcut: drop the 6.0 alias once typescript-eslint supports 7.1.
+`pnpm typecheck` runs TypeScript 7. Rslib uses the native compiler to emit declaration files,
+and Oxlint uses `tsrs` for type-aware linting.

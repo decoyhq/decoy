@@ -1,4 +1,5 @@
-import { type ChildProcess, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
+import type { ChildProcess } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 export const DECOY_URL = 'http://127.0.0.1:8094'
@@ -29,7 +30,9 @@ export async function startDecoy(): Promise<() => void> {
       child.kill()
       throw new Error('decoy did not become healthy')
     }
-    await new Promise((resolve) => setTimeout(resolve, 100))
+    await new Promise((resolve) => {
+      setTimeout(resolve, 100)
+    })
   }
   return () => child.kill()
 }

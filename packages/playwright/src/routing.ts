@@ -1,6 +1,7 @@
 import type { Request, Route } from '@playwright/test'
 import { SESSION_HEADER } from '@decoyhq/runner-core'
-import { patternList, type UrlPatterns } from './options'
+import { patternList } from './options'
+import type { UrlPatterns } from './options'
 
 /** The response shape forwarding needs; Playwright's `APIResponse` satisfies it. */
 export interface DecoyResponse {
