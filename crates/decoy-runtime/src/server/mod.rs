@@ -72,7 +72,7 @@ pub async fn serve(
     config: ServeConfig,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<Server, ServeError> {
-    config.validate_transformer_names()?;
+    config.validate()?;
     let events = crate::events::channel();
     // Before the Catalog: Routes name Transformer steps.
     let (workers, supervisor) = crate::workers::start(&config.workers, &events).await?;
@@ -81,7 +81,7 @@ pub async fn serve(
     crate::pipeline::check_routes(&startup.catalog)
         .await
         .map_err(crate::workers::WorkerError::Check)?;
-    let mut notices = empty_pipeline_warnings(startup.catalog.runtime());
+    let mut notices = Vec::new();
     let controller =
         Controller::new(startup.catalog, startup.default_collection).with_events(events.clone());
     let controller = Arc::new(RwLock::new(controller));
@@ -189,25 +189,11 @@ fn load(config: &ServeConfig, workers: &crate::workers::Workers) -> Result<Start
                 .iter()
                 .map(|(name, spec)| (name.clone(), spec.expand(workers, &config.commands)))
                 .collect(),
-            empty_shared_pipelines: config
-                .pipelines
-                .iter()
-                .filter(|(_, spec)| matches!(spec, crate::config::PipelineSpec::Shorthand(steps) if steps.is_empty()))
-                .map(|(name, _)| name.clone())
-                .collect(),
             commands: config.commands.clone(),
             workers: workers.clone(),
         },
         config.collection.as_deref(),
     )?)
-}
-
-fn empty_pipeline_warnings(runtime: &RuntimeConfig) -> Vec<String> {
-    runtime
-        .empty_shared_pipelines
-        .iter()
-        .map(|name| format!("warning: Pipeline `{name}` has an empty shared step list"))
-        .collect()
 }
 
 impl Server {

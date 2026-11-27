@@ -25,9 +25,10 @@ when the two directions need different steps or a different order.
 
 ## Use a shared step list
 
-A list runs left to right on input and right to left on output. Decoy skips steps that don't
-support the current direction. For example, `[approvals]` uses that Transformer in whichever
-directions it supports, and `[gzip, approvals]` is shorthand for the `approvals-feed` mapping above.
+Use `[approvals]` to name a Transformer once instead of repeating it under `input` and `output`.
+Decoy runs a shared list left to right on input and right to left on output, skipping steps that
+don't support the current direction. For example, `[gzip, approvals]` is shorthand for the
+`approvals-feed` mapping above.
 
 ```yaml title="Named Pipeline shorthand"
 pipelines:
@@ -56,8 +57,8 @@ and the [gRPC example](https://github.com/decoyhq/decoy/tree/main/examples/grpc-
 
 ## Validation and execution limits
 
-An empty shared list (`[]`) warns at startup and runs no steps. It does not insert the default
-gRPC codec.
+A named Pipeline must declare at least one step. Blank or `null` values, empty shared lists (`[]`),
+and mappings with no steps are errors. In an explicit mapping, you can omit one direction.
 
 Unknown Transformer names are errors in either form. In an explicit mapping, listing a Transformer
 in a direction it doesn't support is also an error. A worker can check the authored output literal

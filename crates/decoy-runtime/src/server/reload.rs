@@ -78,12 +78,12 @@ impl Reloader {
         let workers = self.workers.clone();
         let (config, startup) = tokio::task::spawn_blocking(move || {
             let config = read_config()?;
-            config.validate_transformer_names()?;
+            config.validate()?;
             let startup = load(&config, &workers)?;
             Ok::<_, ServeError>((config, startup))
         })
         .await??;
-        let mut warnings = super::empty_pipeline_warnings(startup.catalog.runtime());
+        let mut warnings = Vec::new();
         if ListenerFields::of(&config) != *self.listeners {
             warnings.push("listener changes need restart".to_owned());
         }

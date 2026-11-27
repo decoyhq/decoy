@@ -237,10 +237,10 @@ input type, and the Case sees the worker's result as `message`. Output starts wi
 rendered reply. The worker changes it, `protobuf` encodes it using the method's output
 type, and `grpc-frame` adds the frame the client expects. The same output steps apply to
 each server-streamed reply and to Control API pushes. A nonempty output list must return wire bytes.
-An omitted or empty direction uses the default gRPC codec and its startup protobuf validation.
-An explicitly empty shared list (`approval-ids: []`) is different: Decoy warns at startup, uses
-raw frame bytes as base64 for matching, and expects pre-framed reply bytes as base64. Decoy rejects incompatible adjacent built-ins at startup; a custom step can change the value type. An input command at the end of
-the list must emit JSON for Case matching. A worker can return a JSON value or bytes,
+If a valid named Pipeline has no steps in one direction, that direction uses the default gRPC
+codec and startup protobuf validation. Decoy rejects incompatible adjacent built-ins at startup;
+a custom step can change the value type. An input command at the end of the list must emit JSON
+for Case matching. A worker can return a JSON value or bytes,
 which Cases see as a base64 string. A worker can call `miss` to skip its Route. If no
 other Case matches, the client gets `UNIMPLEMENTED`. A named input step that fails
 ends the call with `INVALID_ARGUMENT`. An authored reply that fails to encode gets `INTERNAL`.

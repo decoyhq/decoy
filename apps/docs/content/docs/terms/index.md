@@ -85,7 +85,7 @@ A Connection handle represents the live connections for a Route in one Session. 
 
 ## Pipeline
 
-A Pipeline lists the transforms to run on a transport payload. For example, a WebSocket Pipeline can decode binary input before a Case matches it. A named Pipeline has separate input and output lists. [Configure a Pipeline](../transformer-pipelines/index.md).
+A Pipeline lists the transforms to run on a transport payload. For example, a WebSocket Pipeline can decode binary input before a Case matches it. A named Pipeline uses a shared step list or separate input and output lists. [Configure a Pipeline](../transformer-pipelines/index.md).
 
 ## Transformer
 

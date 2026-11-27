@@ -17,8 +17,6 @@ unknown names. Transformer definitions must have unique names, even when unused.
 and `protobuf` are reserved globally: existing configurations that shadow either name must
 rename their Transformer. Repeating a step reference does not define a new Transformer.
 
-An explicitly empty shared list (`[]`) warns at startup and runs no steps. Decoy does not insert
-the default gRPC codec to repair that list. An empty direction in a nonempty shared list or an
-explicit mapping still uses the existing transport behavior. Previously accepted explicit YAML
-forms still parse. Decoy does not guess replacements for invalid steps; existing validation and
-execution errors still apply.
+A named Pipeline must declare at least one step. Decoy rejects empty values, empty shared lists,
+and mappings with no steps. An omitted or empty direction in an otherwise valid Pipeline still
+uses the existing transport behavior.

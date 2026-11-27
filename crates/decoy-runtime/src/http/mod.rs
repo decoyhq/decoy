@@ -25,11 +25,18 @@ pub struct RuntimeConfig {
     pub protos: DescriptorPool,
     /// `pipelines:` from the config file, for Routes that name one.
     pub pipelines: std::collections::BTreeMap<String, crate::config::PipelineConfig>,
-    /// Pipelines authored as `[]`, opting out of the default gRPC codec.
-    pub empty_shared_pipelines: std::collections::BTreeSet<String>,
     pub commands: std::collections::BTreeMap<String, crate::config::CommandsConfig>,
     /// Running Transformer workers, indexed by Transformer name.
     pub workers: crate::workers::Workers,
+}
+
+impl RuntimeConfig {
+    pub(crate) fn validate_transformer_names(&self) -> Result<(), crate::config::ConfigError> {
+        crate::config::validate_transformer_names(
+            self.workers.iter().map(|worker| &worker.key),
+            &self.commands,
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

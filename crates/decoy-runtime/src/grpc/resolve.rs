@@ -5,7 +5,7 @@ use jmespath::Rcvar;
 use prost_reflect::MethodDescriptor;
 use serde_json::{Value, json};
 
-use super::codec::{decode, fallback_pipeline, pipeline};
+use super::codec::{decode, pipeline};
 use super::schema::find_method;
 use super::{GrpcRequest, GrpcResponse};
 use crate::collections::Activation;
@@ -106,12 +106,8 @@ impl Catalog {
                         })?
                         .clone()
                 } else {
-                    decode(
-                        &request.body,
-                        fallback_pipeline(route, self.runtime()),
-                        &method.input(),
-                    )
-                    .map_err(|error| error.to_string())
+                    decode(&request.body, pipeline(route), &method.input())
+                        .map_err(|error| error.to_string())
                 };
                 let result = message.map(|message| {
                     let envelope = json!({

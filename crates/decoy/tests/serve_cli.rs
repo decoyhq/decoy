@@ -972,27 +972,20 @@ fn bare_decoy_without_a_terminal_points_to_serve() {
 }
 
 #[test]
-fn empty_shared_pipeline_warns_without_blocking_startup() {
+fn empty_named_pipelines_fail_startup() {
     let fixture = Fixture::new();
-    fixture.write_route("users.yaml", route_with_id("users"));
-    fixture.write_collections("- id: default\n  routes: [users:any:ok]\n");
-    fixture.write_config("pipelines: { plain: [], explicit: {} }\n");
-
-    let server = fixture.spawn(&["--config", "decoy.yaml"]);
-    let mut warnings = Vec::new();
-    loop {
-        let line = server.lines.recv_timeout(Duration::from_secs(10)).unwrap();
-        if line.starts_with("decoy serve listening on ") {
-            break;
-        }
-        if line.contains("empty shared step list") {
-            warnings.push(line);
-        }
+    for value in ["", "null", "~", "[]", "{}", "{input: [], output: []}"] {
+        fixture.write_config(format!(
+            "routes: routes\ncollections: collections.yaml\npipelines:\n  approvals: {value}\n"
+        ));
+        let output = fixture.output(&["--config", "decoy.yaml"]);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "accepted approvals: {value}");
+        assert!(
+            stderr.contains("Pipeline `approvals` must contain at least one step"),
+            "{stderr}"
+        );
     }
-    assert_eq!(
-        warnings,
-        ["decoy serve: warning: Pipeline `plain` has an empty shared step list"]
-    );
 }
 
 #[test]

@@ -404,20 +404,42 @@ fn transformer_definitions<'de, D: serde::Deserializer<'de>>(
     deserializer.deserialize_map(Definitions)
 }
 
+pub(crate) fn validate_transformer_names<'a>(
+    workers: impl Iterator<Item = &'a String>,
+    commands: &'a BTreeMap<String, CommandsConfig>,
+) -> Result<(), ConfigError> {
+    let names = workers
+        .map(|name| (name, commands.contains_key(name)))
+        .chain(commands.keys().map(|name| (name, false)));
+    for (name, duplicate) in names {
+        let reason = if crate::schema::PipelineStep::builtin_named(name).is_some() {
+            "name is reserved for a built-in Pipeline step"
+        } else if duplicate {
+            "duplicate definition"
+        } else {
+            continue;
+        };
+        return Err(ConfigError::InvalidTransformer {
+            key: name.clone(),
+            reason: reason.to_owned(),
+        });
+    }
+    Ok(())
+}
+
 impl ServeConfig {
-    pub(crate) fn validate_transformer_names(&self) -> Result<(), ConfigError> {
-        for name in self.workers.keys().chain(self.commands.keys()) {
-            let reason = if crate::schema::PipelineStep::builtin_named(name).is_some() {
-                "name is reserved for a built-in Pipeline step"
-            } else if self.workers.contains_key(name) && self.commands.contains_key(name) {
-                "duplicate definition"
-            } else {
-                continue;
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
+        validate_transformer_names(self.workers.keys(), &self.commands)?;
+        for (name, spec) in &self.pipelines {
+            let empty = match spec {
+                PipelineSpec::Explicit(config) => {
+                    config.input.is_empty() && config.output.is_empty()
+                }
+                PipelineSpec::Shorthand(steps) => steps.is_empty(),
             };
-            return Err(ConfigError::InvalidTransformer {
-                key: name.clone(),
-                reason: reason.to_owned(),
-            });
+            if empty {
+                return Err(ConfigError::EmptyPipeline { name: name.clone() });
+            }
         }
         Ok(())
     }
@@ -614,7 +636,7 @@ impl ServeConfig {
             pipelines,
             commands,
         };
-        config.validate_transformer_names()?;
+        config.validate()?;
         Ok(config)
     }
 }
@@ -726,6 +748,8 @@ pub enum ConfigError {
     MissingValue { name: &'static str },
     #[error("Transformer `{key}`: {reason}")]
     InvalidTransformer { key: String, reason: String },
+    #[error("Pipeline `{name}` must contain at least one step")]
+    EmptyPipeline { name: String },
 }
 
 #[cfg(test)]
@@ -897,15 +921,12 @@ collection: config-collection
     }
 
     #[test]
-    fn pipeline_config_preserves_legacy_explicit_yaml() {
-        for (authored, equivalent) in [
-            ("p:", "p: {}"),
-            ("p: !local {input: [reader]}", "p: {input: [reader]}"),
-        ] {
-            let parse =
-                |yaml| crate::yaml::from_str::<BTreeMap<String, PipelineSpec>>(yaml).unwrap();
-            assert_eq!(parse(authored), parse(equivalent));
-        }
+    fn pipeline_config_preserves_tagged_explicit_yaml() {
+        let parse = |yaml| crate::yaml::from_str::<BTreeMap<String, PipelineSpec>>(yaml).unwrap();
+        assert_eq!(
+            parse("p: !local {input: [reader]}"),
+            parse("p: {input: [reader]}")
+        );
     }
 
     #[test]
