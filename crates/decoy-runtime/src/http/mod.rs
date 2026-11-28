@@ -30,6 +30,15 @@ pub struct RuntimeConfig {
     pub workers: crate::workers::Workers,
 }
 
+impl RuntimeConfig {
+    pub(crate) fn validate_transformer_names(&self) -> Result<(), crate::config::ConfigError> {
+        crate::config::validate_transformer_names(
+            self.workers.iter().map(|worker| &worker.key),
+            &self.commands,
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RequestMetadata {
     pub original_base_url: Option<String>,

@@ -18,9 +18,7 @@ transformers:
     worker: [node, ../workers/http-context.ts]
 
 pipelines:
-  typed-approvals:
-    input: [env]
-    output: [env]
+  typed-approvals: [env]
   compressed-approvals:
     input: [gzip, env]
     output: [env, gzip]

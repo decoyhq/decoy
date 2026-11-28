@@ -69,6 +69,26 @@ pipelines:
 
 #[cfg(unix)]
 #[tokio::test]
+async fn shorthand_pipeline_reverses_output_and_skips_missing_directions() {
+    let route = ROUTE.replace("transport: grpc", "transport: grpc\npipeline: shorthand");
+    let config = r#"
+transformers:
+  read: { input: [sed, 's/incoming/a-1/g'] }
+  write: { output: [sed, 's/a-1/outgoing/g'] }
+pipelines:
+  shorthand: [grpc-frame, protobuf, read, write]
+"#;
+    let server = Server::start_with_config(&route, COLLECTIONS, false, config).await;
+    let mut client = server.client().await;
+    let reply = client.get(json!({ "id": "incoming" }), &[]).await.unwrap();
+    assert_eq!(
+        reply,
+        json!({ "id": "outgoing", "state": "PENDING", "approvers": ["alice"] })
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn named_pipeline_matches_transformed_messages_and_encodes_each_reply() {
     let route = ROUTE.replace(
         "transport: grpc",

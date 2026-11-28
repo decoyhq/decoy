@@ -28,6 +28,11 @@ impl Catalog {
         collections: CollectionsFile,
         runtime: RuntimeConfig,
     ) -> Result<Self, CatalogError> {
+        runtime
+            .validate_transformer_names()
+            .map_err(|error| CatalogError::Pipeline {
+                reason: error.to_string(),
+            })?;
         for (index, route) in routes.iter().enumerate() {
             route.validate()?;
             crate::pipeline::Pipeline::validate_route(route, &runtime)

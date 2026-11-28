@@ -10,6 +10,24 @@ Route declares `Content-Encoding: gzip` so the client knows to decompress it.
 [`POST /http-context`](mocks/routes/http-context.yaml) shows a worker selecting a Case based on a
 `preview=1` cookie and using the original request metadata again on output.
 
+[`mocks/decoy.yaml`](mocks/decoy.yaml) uses shorthand for the shared envelope Pipeline:
+
+```yaml title="Shorthand"
+pipelines:
+  typed-approvals: [env]
+```
+
+Because `env` supports both directions, this is equivalent to:
+
+```yaml title="Explicit directions"
+pipelines:
+  typed-approvals:
+    input: [env]
+    output: [env]
+```
+
+The same config keeps `compressed-approvals` explicit to show how to set each direction's order.
+
 ```sh title="Run the Transformer tests"
 pnpm --filter ./examples/ws-transformer-node test:e2e
 ```

@@ -9,3 +9,4 @@ Read these records for the reasons behind a design choice. For when to add or am
 | [0003](0003-runtime-layering.md)                  | Separate the transport-neutral engine, transport implementations, and edge adapters.                             |
 | [0004](0004-built-in-steps-only-for-grpc.md)      | Give named Pipelines independent input and output directions and reserve built-in steps for gRPC.                |
 | [0005](0005-session-control-commands.md)          | Expose changes to a Session’s Selection as Controller commands.                                                  |
+| [0006](0006-shared-pipeline-step-lists.md)        | Let named Pipelines share a step list without losing explicit direction ordering.                                |

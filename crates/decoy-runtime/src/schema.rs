@@ -63,6 +63,16 @@ pub enum PipelineStep {
     Protobuf,
 }
 
+impl PipelineStep {
+    pub(crate) fn builtin_named(name: &str) -> Option<Self> {
+        match name {
+            "grpc-frame" => Some(Self::GrpcFrame),
+            "protobuf" => Some(Self::Protobuf),
+            _ => None,
+        }
+    }
+}
+
 impl std::fmt::Display for PipelineStep {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

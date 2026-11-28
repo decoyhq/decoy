@@ -20,9 +20,25 @@ pipelines:
     output: [approvals, gzip]
 ```
 
+With explicit `input` and `output` lists, each direction runs in the order written. Use this form
+when the two directions need different steps or a different order.
+
+## Use a shared step list
+
+Use `[approvals]` to name a Transformer once instead of repeating it under `input` and `output`.
+Decoy runs a shared list left to right on input and right to left on output, skipping steps that
+don't support the current direction. For example, `[gzip, approvals]` is shorthand for the
+`approvals-feed` mapping above.
+
+```yaml title="Named Pipeline shorthand"
+pipelines:
+  approvals-feed: [gzip, approvals]
+  grpc-wire: [grpc-frame, protobuf] # gRPC Routes only
+```
+
 ## Select a Pipeline on a Route
 
-Set `pipeline` alongside `id`, `transport`, and `match` in the Route file. Both directions run in the listed order. Several compatible Routes can share one named Pipeline.
+Set `pipeline` alongside `id`, `transport`, and `match` in the Route file. Several compatible Routes can share one named Pipeline.
 
 ```yaml title="Route excerpt: select a named Pipeline"
 pipeline: approvals-feed
@@ -34,12 +50,19 @@ pipeline: approvals-feed
 | [gRPC](../grpc/index.md#pipelines)                     | Framed request bytes and replies. Include `grpc-frame` and `protobuf` in the appropriate order if your Transformer works with decoded messages. |
 | [WebSocket](../websocket/index.md#websocket-pipelines) | Incoming frame payloads and outgoing messages, including Control API pushes.                                                                    |
 
-In a named gRPC Pipeline, a configured Transformer takes precedence over a built-in step with the same name. For working configurations, see the [shared HTTP and WebSocket example](https://github.com/decoyhq/decoy/tree/main/examples/ws-transformer-node) and the [gRPC example](https://github.com/decoyhq/decoy/tree/main/examples/grpc-node).
+Transformer names must be unique. `grpc-frame` and `protobuf` are reserved for gRPC built-ins,
+so they cannot be used as Transformer names even in configurations without gRPC Routes. For
+working configurations, see the [shared HTTP and WebSocket example](https://github.com/decoyhq/decoy/tree/main/examples/ws-transformer-node)
+and the [gRPC example](https://github.com/decoyhq/decoy/tree/main/examples/grpc-node).
 
 ## Validation and execution limits
 
-Decoy validates referenced Transformers and directions when loading Routes. A worker can also
-check the authored output literal at startup when it is the first output step. Restart Decoy to
+A named Pipeline must declare at least one step. Blank or `null` values, empty shared lists (`[]`),
+and mappings with no steps are errors. In an explicit mapping, you can omit one direction.
+
+Unknown Transformer names are errors in either form. In an explicit mapping, listing a Transformer
+in a direction it doesn't support is also an error. A worker can check the authored output literal
+at startup when it is the first output step. Restart Decoy to
 apply worker config changes.
 
 A one-shot Transformer command has 5 seconds to finish. Decoy fails the transform if stdout exceeds 16 MiB or stderr exceeds 64 KiB. At most eight one-shot commands can run at once in the Decoy process. When all slots are busy, the next command fails the transform before spawning.

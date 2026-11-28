@@ -72,6 +72,7 @@ pub async fn serve(
     config: ServeConfig,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> Result<Server, ServeError> {
+    config.validate()?;
     let events = crate::events::channel();
     // Before the Catalog: Routes name Transformer steps.
     let (workers, supervisor) = crate::workers::start(&config.workers, &events).await?;
@@ -80,9 +81,9 @@ pub async fn serve(
     crate::pipeline::check_routes(&startup.catalog)
         .await
         .map_err(crate::workers::WorkerError::Check)?;
+    let mut notices = Vec::new();
     let controller =
         Controller::new(startup.catalog, startup.default_collection).with_events(events.clone());
-    let mut notices = Vec::new();
     let controller = Arc::new(RwLock::new(controller));
     let max_body_bytes = Arc::new(AtomicUsize::new(config.max_body_bytes));
     let connections = crate::connections::Connections::default();
@@ -183,7 +184,11 @@ fn load(config: &ServeConfig, workers: &crate::workers::Workers) -> Result<Start
                 .clone()
                 .map(|base_url| PassthroughTarget { base_url }),
             protos,
-            pipelines: config.pipelines.clone(),
+            pipelines: config
+                .pipelines
+                .iter()
+                .map(|(name, spec)| (name.clone(), spec.expand(workers, &config.commands)))
+                .collect(),
             commands: config.commands.clone(),
             workers: workers.clone(),
         },

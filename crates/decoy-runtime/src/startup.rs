@@ -101,6 +101,9 @@ pub fn load_catalog_from_files(
     let routes_dir = routes_dir.as_ref();
     let collections_file = collections_file.as_ref();
 
+    runtime.validate_transformer_names().map_err(|error| {
+        StartupError::new(StartupDiagnosticKind::Schema, routes_dir, error.to_string())
+    })?;
     for name in runtime.pipelines.keys() {
         crate::pipeline::Pipeline::named(&runtime, name).map_err(|reason| {
             StartupError::new(StartupDiagnosticKind::Schema, routes_dir, reason)
@@ -399,6 +402,37 @@ mod tests {
     use crate::http::RuntimeConfig;
     use crate::schema::PassthroughTarget;
     use crate::startup::{StartupDiagnosticKind, load_catalog_from_files};
+
+    #[test]
+    fn rejects_reserved_transformer_names_even_when_unused() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["grpc-frame", "protobuf"] {
+            let runtime = RuntimeConfig {
+                commands: std::collections::BTreeMap::from([(
+                    name.to_owned(),
+                    crate::config::CommandsConfig {
+                        input: Some(vec!["cat".to_owned()]),
+                        output: None,
+                        dir: dir.path().to_path_buf(),
+                    },
+                )]),
+                ..RuntimeConfig::default()
+            };
+            let error = load_catalog_from_files(
+                dir.path(),
+                dir.path().join("collections.yaml"),
+                runtime,
+                None,
+            )
+            .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("Transformer `{name}`: name is reserved")),
+                "{error}"
+            );
+        }
+    }
 
     #[test]
     fn rejects_unused_pipelines_with_unknown_transformers_or_directions() {

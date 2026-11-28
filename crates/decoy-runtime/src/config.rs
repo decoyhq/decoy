@@ -40,7 +40,7 @@ pub struct ServeConfig {
     /// Transformers configured with a persistent worker.
     pub workers: BTreeMap<String, WorkerConfig>,
     /// Named step lists a Route uses with `pipeline: <name>`.
-    pub pipelines: BTreeMap<String, PipelineConfig>,
+    pub pipelines: BTreeMap<String, PipelineSpec>,
     pub commands: BTreeMap<String, CommandsConfig>,
 }
 
@@ -64,6 +64,92 @@ pub struct PipelineConfig {
     pub input: Vec<String>,
     #[serde(default)]
     pub output: Vec<String>,
+}
+
+/// A named Pipeline as authored in decoy.yaml.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PipelineSpec {
+    Explicit(PipelineConfig),
+    Shorthand(Vec<String>),
+}
+
+impl<'de> Deserialize<'de> for PipelineSpec {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use serde::de::value::{MapAccessDeserializer, SeqAccessDeserializer};
+
+        struct PipelineVisitor;
+        impl<'de> serde::de::Visitor<'de> for PipelineVisitor {
+            type Value = PipelineSpec;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a list of steps or a mapping with `input` and `output`")
+            }
+
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(
+                self,
+                seq: A,
+            ) -> Result<Self::Value, A::Error> {
+                Vec::deserialize(SeqAccessDeserializer::new(seq)).map(PipelineSpec::Shorthand)
+            }
+
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                map: A,
+            ) -> Result<Self::Value, A::Error> {
+                PipelineConfig::deserialize(MapAccessDeserializer::new(map))
+                    .map(PipelineSpec::Explicit)
+            }
+
+            fn visit_unit<E: serde::de::Error>(self) -> Result<Self::Value, E> {
+                Ok(PipelineSpec::Explicit(PipelineConfig::default()))
+            }
+
+            fn visit_enum<A: serde::de::EnumAccess<'de>>(
+                self,
+                data: A,
+            ) -> Result<Self::Value, A::Error> {
+                use serde::de::VariantAccess;
+                let (_, variant) = data.variant::<serde::de::IgnoredAny>()?;
+                variant.newtype_variant().map(PipelineSpec::Explicit)
+            }
+        }
+        deserializer.deserialize_any(PipelineVisitor)
+    }
+}
+
+impl PipelineSpec {
+    /// Expand after workers have announced the directions they support.
+    pub(crate) fn expand(
+        &self,
+        workers: &crate::workers::Workers,
+        commands: &BTreeMap<String, CommandsConfig>,
+    ) -> PipelineConfig {
+        use crate::workers::Op;
+
+        let steps = match self {
+            Self::Explicit(config) => return config.clone(),
+            Self::Shorthand(steps) => steps,
+        };
+        let mut config = PipelineConfig::default();
+        for name in steps {
+            let (input, output) = if let Some(worker) = workers.get(name) {
+                (worker.supports(Op::Input), worker.supports(Op::Output))
+            } else if let Some(command) = commands.get(name) {
+                (command.input.is_some(), command.output.is_some())
+            } else {
+                // Built-ins run both ways; leave unknown names for normal validation.
+                (true, true)
+            };
+            if input {
+                config.input.push(name.clone());
+            }
+            if output {
+                config.output.push(name.clone());
+            }
+        }
+        config.output.reverse();
+        config
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -283,13 +369,81 @@ struct NativeConfigFile {
     passthrough_base_url: Option<String>,
     protos: Option<ProtoSources>,
     max_body_bytes: Option<usize>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "transformer_definitions")]
     transformers: BTreeMap<String, TransformerFile>,
     #[serde(default)]
-    pipelines: BTreeMap<String, PipelineConfig>,
+    pipelines: BTreeMap<String, PipelineSpec>,
+}
+
+fn transformer_definitions<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, TransformerFile>, D::Error> {
+    struct Definitions;
+    impl<'de> serde::de::Visitor<'de> for Definitions {
+        type Value = BTreeMap<String, TransformerFile>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a map of Transformer definitions")
+        }
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> Result<Self::Value, A::Error> {
+            use serde::de::Error;
+            let mut definitions = BTreeMap::new();
+            while let Some(name) = map.next_key::<String>()? {
+                if definitions.contains_key(&name) {
+                    return Err(A::Error::custom(format!("duplicate Transformer `{name}`")));
+                }
+                definitions.insert(name, map.next_value()?);
+            }
+            Ok(definitions)
+        }
+    }
+    deserializer.deserialize_map(Definitions)
+}
+
+pub(crate) fn validate_transformer_names<'a>(
+    workers: impl Iterator<Item = &'a String>,
+    commands: &'a BTreeMap<String, CommandsConfig>,
+) -> Result<(), ConfigError> {
+    let names = workers
+        .map(|name| (name, commands.contains_key(name)))
+        .chain(commands.keys().map(|name| (name, false)));
+    for (name, duplicate) in names {
+        let reason = if crate::schema::PipelineStep::builtin_named(name).is_some() {
+            "name is reserved for a built-in Pipeline step"
+        } else if duplicate {
+            "duplicate definition"
+        } else {
+            continue;
+        };
+        return Err(ConfigError::InvalidTransformer {
+            key: name.clone(),
+            reason: reason.to_owned(),
+        });
+    }
+    Ok(())
 }
 
 impl ServeConfig {
+    pub(crate) fn validate(&self) -> Result<(), ConfigError> {
+        validate_transformer_names(self.workers.keys(), &self.commands)?;
+        for (name, spec) in &self.pipelines {
+            let empty = match spec {
+                PipelineSpec::Explicit(config) => {
+                    config.input.is_empty() && config.output.is_empty()
+                }
+                PipelineSpec::Shorthand(steps) => steps.is_empty(),
+            };
+            if empty {
+                return Err(ConfigError::EmptyPipeline { name: name.clone() });
+            }
+        }
+        Ok(())
+    }
+
     pub fn from_options(options: ServeCliOptions, cwd: &Path) -> Result<Self, ConfigError> {
         let (file_config, config_base) = match &options.config_file {
             Some(path) => {
@@ -468,7 +622,7 @@ impl ServeConfig {
             })
             .unwrap_or_default();
 
-        Ok(Self {
+        let config = Self {
             routes,
             collections,
             port,
@@ -481,7 +635,9 @@ impl ServeConfig {
             workers,
             pipelines,
             commands,
-        })
+        };
+        config.validate()?;
+        Ok(config)
     }
 }
 
@@ -592,6 +748,8 @@ pub enum ConfigError {
     MissingValue { name: &'static str },
     #[error("Transformer `{key}`: {reason}")]
     InvalidTransformer { key: String, reason: String },
+    #[error("Pipeline `{name}` must contain at least one step")]
+    EmptyPipeline { name: String },
 }
 
 #[cfg(test)]
@@ -760,6 +918,36 @@ collection: config-collection
             },
             base,
         )
+    }
+
+    #[test]
+    fn pipeline_config_preserves_tagged_explicit_yaml() {
+        let parse = |yaml| crate::yaml::from_str::<BTreeMap<String, PipelineSpec>>(yaml).unwrap();
+        assert_eq!(
+            parse("p: !local {input: [reader]}"),
+            parse("p: {input: [reader]}")
+        );
+    }
+
+    #[test]
+    fn pipeline_config_rejects_duplicate_transformer_definitions() {
+        let dir = tempdir().unwrap();
+        for (transformers, name) in [
+            ("  protobuf: {input: [cat]}\n", "protobuf"),
+            ("  grpc-frame: {input: [cat]}\n", "grpc-frame"),
+            (
+                "  reader: {input: [cat]}\n  reader: {output: [cat]}\n",
+                "reader",
+            ),
+        ] {
+            fs::write(
+                dir.path().join("decoy.yaml"),
+                format!("routes: r\ncollections: c.yaml\ntransformers:\n{transformers}"),
+            )
+            .unwrap();
+            let error = load_raw(dir.path()).expect_err(name).to_string();
+            assert!(error.contains(name), "{error}");
+        }
     }
 
     #[test]
