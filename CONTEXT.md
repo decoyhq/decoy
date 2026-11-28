@@ -161,10 +161,10 @@ An ordered series of **Pipeline steps** between transport payloads and the value
 _Avoid_: implicit step ordering outside a shared step list.
 
 **Transformer**:
-A named definition for one reusable input or output transformation. A Transformer uses a persistent worker or commands for its supported directions.
+A reusable transformation for one or both Pipeline directions. Decoy provides built-in Transformers; authors define others using a persistent worker or commands.
 
 **Pipeline step**:
-One use of a Transformer in a Pipeline direction, or one of the built-in gRPC transforms.
+One use of a Transformer in a Pipeline direction.
 _Avoid_: "codec stage", "middleware".
 
 **Transformer worker**:

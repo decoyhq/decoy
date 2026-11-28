@@ -47,9 +47,7 @@ impl Host for ProtoHost {
                 let Some(Msgpack::Binary(bytes)) = args.get(1) else {
                     return Err("`protobuf.decode` takes bytes".to_owned());
                 };
-                let decoded = DynamicMessage::decode(message.clone(), bytes.as_slice())
-                    .map_err(|error| format!("not a valid {}: {error}", message.full_name()))?;
-                let json = crate::grpc::schema::request_json(&decoded)
+                let json = crate::transformers::protobuf::input(bytes, &message)
                     .map_err(|error| error.to_string())?;
                 Ok(to_msgpack(&json))
             }

@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, HashMap};
 use prost_reflect::{DescriptorPool, MethodDescriptor};
 use serde_json::{Value, json};
 
-use super::codec::{encode, pipeline};
 use super::schema::{STATUS_CODES, find_method};
+use super::transform::{pipeline, run_output};
 use super::{GrpcResponse, OK};
 use crate::collections::Activation;
 use crate::expression::to_rcvar;
@@ -68,7 +68,7 @@ pub(super) fn respond(
 ) -> Result<GrpcResponse, String> {
     let (mut reply, message) = prepare_unary(response, envelope)?;
     if let Some(message) = message {
-        reply.body = encode(message, pipeline(route), &method.output())
+        reply.body = run_output(message, pipeline(route), &method.output())
             .map_err(|error| error.to_string())?;
     }
     Ok(reply)

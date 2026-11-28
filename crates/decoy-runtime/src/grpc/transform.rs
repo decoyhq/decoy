@@ -5,15 +5,13 @@ use crate::workers::{
     value::{to_json, to_msgpack},
 };
 use base64::Engine as _;
-use prost::Message as _;
-use prost_reflect::{DynamicMessage, MessageDescriptor};
+use prost_reflect::MessageDescriptor;
 use rmpv::Value as Msgpack;
 use serde_json::Value;
-use thiserror::Error;
 
 use super::DEFAULT_PIPELINE;
-use super::schema::request_json;
 use crate::schema::{PipelineStep, Route};
+use crate::transformers::{TransformError, grpc_frame, protobuf};
 
 fn base64_engine() -> &'static impl base64::Engine {
     #[cfg(any(
@@ -39,39 +37,8 @@ pub(super) fn pipeline(route: &Route) -> &[PipelineStep] {
     route.pipeline.as_deref().unwrap_or(&DEFAULT_PIPELINE)
 }
 
-/// Why a gRPC message didn't decode or encode. The text reaches grpc-message and miss reasons.
-#[derive(Debug, Error)]
-pub enum GrpcCodecError {
-    #[error("{0}")]
-    Transform(String),
-    #[error("gRPC frame shorter than its 5-byte header")]
-    ShortFrame,
-    #[error("compressed gRPC messages are not supported")]
-    Compressed,
-    #[error(
-        "gRPC frame declares {declared} bytes but carries {carried}; unary calls take one message"
-    )]
-    FrameLength { declared: usize, carried: usize },
-    #[error("not a valid {message}: {error}")]
-    InvalidMessage {
-        message: String,
-        error: prost::DecodeError,
-    },
-    #[error("{0}")]
-    ToJson(serde_json::Error),
-    #[error("response does not fit {message}: {error}")]
-    DoesNotFit {
-        message: String,
-        error: serde_json::Error,
-    },
-    #[error("message is not base64: {0}")]
-    NotBase64(base64::DecodeError),
-    #[error("expected a base64 string, got {0}")]
-    NotAString(Value),
-}
-
 /// A named Pipeline gets the full gRPC frame. Each direction runs in authored order.
-pub(super) async fn decode_named(
+pub(super) async fn run_named_input(
     body: &[u8],
     pipeline: &Pipeline,
     descriptor: &MessageDescriptor,
@@ -83,10 +50,10 @@ pub(super) async fn decode_named(
             };
             match step {
                 PipelineStep::GrpcFrame => {
-                    unframe(&bytes).map(|data| Msgpack::Binary(data.to_vec()))
+                    grpc_frame::input(&bytes).map(|data| Msgpack::Binary(data.to_vec()))
                 }
                 PipelineStep::Protobuf => {
-                    decode(&bytes, &[step], descriptor).map(|json| to_msgpack(&json))
+                    protobuf::input(&bytes, descriptor).map(|json| to_msgpack(&json))
                 }
             }
             .map_err(|error| error.to_string())
@@ -103,38 +70,38 @@ pub(super) async fn decode_named(
     .map_err(|reason| pipeline.invalid_result(Op::Input, reason))
 }
 
-/// Encodes one unary reply, stream item, or Control API push through the configured Pipeline.
-pub async fn encode_response_async(
+/// Runs the output Pipeline for a unary reply, stream item, or Control API push.
+pub async fn run_named_output(
     route: &Route,
     runtime: &RuntimeConfig,
     message: Value,
     descriptor: &MessageDescriptor,
-) -> Result<Vec<u8>, GrpcCodecError> {
-    let named = Pipeline::of(route, runtime).map_err(GrpcCodecError::Transform)?;
+) -> Result<Vec<u8>, TransformError> {
+    let named = Pipeline::of(route, runtime).map_err(TransformError::Transform)?;
     let Some(named) = named.filter(Pipeline::has_output) else {
-        return encode(message, pipeline(route), descriptor);
+        return run_output(message, pipeline(route), descriptor);
     };
     let value = named
         .run_grpc(Op::Output, to_msgpack(&message), |step, value| {
-            encode_output_step(step, value, descriptor).map(Msgpack::Binary)
+            run_output_step(step, value, descriptor).map(Msgpack::Binary)
         })
         .await
-        .map_err(|error| GrpcCodecError::Transform(error.to_string()))?;
+        .map_err(|error| TransformError::Transform(error.to_string()))?;
     match value {
         Msgpack::Binary(bytes) => Ok(bytes),
-        _ => Err(GrpcCodecError::Transform(
+        _ => Err(TransformError::Transform(
             "gRPC output Pipeline must return bytes".into(),
         )),
     }
 }
 
-fn encode_output_step(
+fn run_output_step(
     step: PipelineStep,
     value: Msgpack,
     descriptor: &MessageDescriptor,
 ) -> Result<Vec<u8>, String> {
     match (step, value) {
-        (PipelineStep::GrpcFrame, Msgpack::Binary(bytes)) => Ok(frame(&bytes)),
+        (PipelineStep::GrpcFrame, Msgpack::Binary(bytes)) => Ok(grpc_frame::output(&bytes)),
         (PipelineStep::GrpcFrame, _) => Err("gRPC output step `grpc-frame` requires bytes".into()),
         (PipelineStep::Protobuf, value) => {
             let json = match value {
@@ -143,7 +110,7 @@ fn encode_output_step(
                 }
                 value => to_json(&value)?,
             };
-            encode_protobuf(json, descriptor).map_err(|error| error.to_string())
+            protobuf::output(json, descriptor).map_err(|error| error.to_string())
         }
     }
 }
@@ -154,97 +121,53 @@ enum Data {
     Json(Value),
 }
 
-/// Run the Pipeline top to bottom over the request body. Bytes left at the end become a base64
-/// string.
-pub(super) fn decode(
+/// Run the input direction over the request body. Bytes left at the end become a base64 string.
+pub(super) fn run_input(
     body: &[u8],
     steps: &[PipelineStep],
     input: &MessageDescriptor,
-) -> Result<Value, GrpcCodecError> {
+) -> Result<Value, TransformError> {
     // Borrowed throughout: the body is only read, and `protobuf` is the last step.
     let mut bytes = body;
     for (index, step) in steps.iter().enumerate() {
         match step {
-            PipelineStep::GrpcFrame => bytes = unframe(bytes)?,
+            PipelineStep::GrpcFrame => bytes = grpc_frame::input(bytes)?,
             PipelineStep::Protobuf => {
                 // `validate_pipeline` keeps `protobuf` last and each step once.
                 assert_eq!(index, steps.len() - 1, "no step follows `protobuf`");
-                let message = DynamicMessage::decode(input.clone(), bytes).map_err(|error| {
-                    GrpcCodecError::InvalidMessage {
-                        message: input.full_name().to_owned(),
-                        error,
-                    }
-                })?;
-                return request_json(&message).map_err(GrpcCodecError::ToJson);
+                return protobuf::input(bytes, input);
             }
         }
     }
     Ok(Value::String(base64_engine().encode(bytes)))
 }
 
-/// Run the Pipeline bottom to top over the response message. Without a `protobuf` step the
+/// Run the output direction in reverse over the response message. Without a `protobuf` step the
 /// message must be a base64 string.
-pub(super) fn encode(
+pub(super) fn run_output(
     message: Value,
     steps: &[PipelineStep],
     output: &MessageDescriptor,
-) -> Result<Vec<u8>, GrpcCodecError> {
+) -> Result<Vec<u8>, TransformError> {
     let mut data = Data::Json(message);
     for step in steps.iter().rev() {
         data = match (step, data) {
             (PipelineStep::Protobuf, Data::Json(value)) => {
-                Data::Bytes(encode_protobuf(value, output)?)
+                Data::Bytes(protobuf::output(value, output)?)
             }
-            (PipelineStep::GrpcFrame, data) => Data::Bytes(frame(&bytes(data)?)),
+            (PipelineStep::GrpcFrame, data) => Data::Bytes(grpc_frame::output(&bytes(data)?)),
             (PipelineStep::Protobuf, Data::Bytes(_)) => unreachable!("no step follows `protobuf`"),
         };
     }
     bytes(data)
 }
 
-fn encode_protobuf(value: Value, output: &MessageDescriptor) -> Result<Vec<u8>, GrpcCodecError> {
-    let message = DynamicMessage::deserialize(output.clone(), value).map_err(|error| {
-        GrpcCodecError::DoesNotFit {
-            message: output.full_name().to_owned(),
-            error,
-        }
-    })?;
-    Ok(message.encode_to_vec())
-}
-
-fn bytes(data: Data) -> Result<Vec<u8>, GrpcCodecError> {
+fn bytes(data: Data) -> Result<Vec<u8>, TransformError> {
     match data {
         Data::Bytes(bytes) => Ok(bytes),
         Data::Json(Value::String(text)) => base64_engine()
             .decode(text)
-            .map_err(GrpcCodecError::NotBase64),
-        Data::Json(other) => Err(GrpcCodecError::NotAString(other)),
+            .map_err(TransformError::NotBase64),
+        Data::Json(other) => Err(TransformError::NotAString(other)),
     }
-}
-
-/// One uncompressed length-prefixed message.
-pub(super) fn unframe(bytes: &[u8]) -> Result<&[u8], GrpcCodecError> {
-    let [compressed, a, b, c, d, rest @ ..] = bytes else {
-        return Err(GrpcCodecError::ShortFrame);
-    };
-    if *compressed != 0 {
-        return Err(GrpcCodecError::Compressed);
-    }
-    let length = u32::from_be_bytes([*a, *b, *c, *d]) as usize;
-    if rest.len() != length {
-        return Err(GrpcCodecError::FrameLength {
-            declared: length,
-            carried: rest.len(),
-        });
-    }
-    Ok(rest)
-}
-
-pub(super) fn frame(message: &[u8]) -> Vec<u8> {
-    let length = u32::try_from(message.len()).unwrap_or(u32::MAX);
-    let mut framed = Vec::with_capacity(message.len() + 5);
-    framed.push(0);
-    framed.extend_from_slice(&length.to_be_bytes());
-    framed.extend_from_slice(message);
-    framed
 }

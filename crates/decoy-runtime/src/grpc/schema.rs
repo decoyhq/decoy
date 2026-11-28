@@ -12,7 +12,6 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use prost_reflect::{
     DescriptorPool, DynamicMessage, FieldDescriptor, Kind, MessageDescriptor, MethodDescriptor,
-    SerializeOptions,
 };
 use serde_json::Value;
 
@@ -41,15 +40,7 @@ pub const STATUS_CODES: [&str; 17] = [
     "UNAUTHENTICATED",
 ];
 
-/// How a decoded request message becomes the envelope's `message`: protobuf JSON with default
-/// fields included, so a match on a zero value (`priority: 0`, `state: STATE_UNSPECIFIED`) works.
-pub fn request_json(message: &DynamicMessage) -> Result<Value, serde_json::Error> {
-    // Through text, not `value::Serializer`: that widens f32 (`0.1` -> 0.10000000149011612).
-    let mut text = Vec::new();
-    let options = SerializeOptions::new().skip_default_fields(false);
-    message.serialize_with_options(&mut serde_json::Serializer::new(&mut text), &options)?;
-    serde_json::from_slice(&text)
-}
+pub use crate::transformers::protobuf::message_json as request_json;
 
 /// A Route's Pipeline: steps run in order, at most once each. gRPC bodies are always framed, so
 /// `grpc-frame` comes first. With only the two built-ins, that leaves `protobuf` last.

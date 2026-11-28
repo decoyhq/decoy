@@ -7,9 +7,9 @@ use prost_reflect::MethodDescriptor;
 use serde_json::Value;
 use tokio::sync::mpsc;
 
-use super::codec::{decode, decode_named, encode_response_async, pipeline};
 use super::plan::{prepare_unary, render, status_code, status_only};
 use super::resolve::GrpcResolution;
+use super::transform::{pipeline, run_input, run_named_input, run_named_output};
 use super::{GrpcRequest, GrpcResponse, INTERNAL, INVALID_ARGUMENT, OK, StreamPart, UNAVAILABLE};
 use crate::collections::Activation;
 use crate::connections::{Connections, Registration};
@@ -101,7 +101,8 @@ impl Catalog {
                         Err(error) => return failed(error, candidates),
                     };
                     let result =
-                        match decode_named(&request.body, &pipeline, &pending.method.input()).await
+                        match run_named_input(&request.body, &pipeline, &pending.method.input())
+                            .await
                         {
                             Ok(value) => Ok(value),
                             Err(error @ PipelineError::Miss { .. }) => Err(error.to_string()),
@@ -180,14 +181,10 @@ impl Catalog {
                         if let Some(message) = message {
                             let captured =
                                 (capture && route.pipeline_name.is_some()).then(|| message.clone());
-                            reply.body = encode_response_async(
-                                route,
-                                self.runtime(),
-                                message,
-                                &method.output(),
-                            )
-                            .await
-                            .map_err(|error| error.to_string())?;
+                            reply.body =
+                                run_named_output(route, self.runtime(), message, &method.output())
+                                    .await
+                                    .map_err(|error| error.to_string())?;
                             logical_reply = captured;
                         }
                         Ok(reply)
@@ -199,7 +196,7 @@ impl Catalog {
                 let decoded = capture && route.decodes_protobuf();
                 let message = logical_reply.or_else(|| {
                     (decoded && !response.body.is_empty())
-                        .then(|| decode(&response.body, pipeline(route), &method.output()).ok())
+                        .then(|| run_input(&response.body, pipeline(route), &method.output()).ok())
                         .flatten()
                 });
                 GrpcCall {
@@ -312,7 +309,7 @@ async fn respond_stream(
     let rendered = render(response, envelope)?;
     let mut messages = Vec::new();
     for item in rendered.stream.unwrap_or_default() {
-        let message = encode_response_async(route, runtime, item.message, &method.output())
+        let message = run_named_output(route, runtime, item.message, &method.output())
             .await
             .map_err(|error| error.to_string())?;
         messages.push((item.delay, message));
